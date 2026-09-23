@@ -355,6 +355,15 @@ export const probeRunSchema = z.object({
       latency_ms: z.number(),
       warnings: z.array(z.string()),
       error: z.string().nullable(),
+      tls_challenges: z
+        .array(
+          z.object({
+            version: z.string(),
+            outcome: z.string(),
+            detail: z.string(),
+          }),
+        )
+        .default([]),
       verification: z
         .object({
           passive_session_id: z.string().nullable(),
@@ -407,7 +416,190 @@ export async function triggerAssetProbe(
     }),
   );
 }
+export const postureCategoryScoreSchema = z.object({
+  category: z.string(),
+  score: z.number(),
+  weight: z.number(),
+  weighted_score: z.number(),
+  finding_rule_ids: z.array(z.string()),
+  rationale: z.string(),
+});
+export type PostureCategoryScore = z.infer<typeof postureCategoryScoreSchema>;
+
+export const postureDeductionSchema = z.object({
+  rule_id: z.string(),
+  finding_id: z.string(),
+  severity: z.string(),
+  category: z.string(),
+  points: z.number(),
+  evidence_description: z.string(),
+});
+export type PostureDeduction = z.infer<typeof postureDeductionSchema>;
+
+export const securityPostureSchema = z.object({
+  id: z.string(),
+  score_version: z.string(),
+  subject_kind: z.enum(["asset", "session", "investigation"]),
+  subject_id: z.string(),
+  score: z.number(),
+  grade: z.enum(["strong", "good", "moderate", "weak", "critical"]),
+  score_capped: z.boolean(),
+  pre_cap_score: z.number(),
+  categories: z.array(postureCategoryScoreSchema),
+  deductions: z.array(postureDeductionSchema),
+  worst_findings: z.array(z.string()),
+  findings_considered: z.number(),
+  computed_at: z.string(),
+});
+export type SecurityPosture = z.infer<typeof securityPostureSchema>;
+
+export const remediationGuidanceSchema = z.object({
+  id: z.string(),
+  kind: z.enum(["remediation", "best_practice"]),
+  finding_id: z.string().nullable(),
+  rule_id: z.string(),
+  title: z.string(),
+  observed: z.string(),
+  why_it_matters: z.string(),
+  recommendation: z.string(),
+  recommended_state: z.string(),
+  compatibility_caveats: z.array(z.string()),
+  verification: z.string(),
+  evidence: z.array(
+    z.object({
+      session_id: z.string().nullable(),
+      observation_id: z.string().nullable(),
+      description: z.string(),
+    }),
+  ),
+  severity: z.string(),
+  category: z.string(),
+  generated_at: z.string(),
+});
+export type RemediationGuidance = z.infer<typeof remediationGuidanceSchema>;
+
+export const remediationStateSchema = z.enum([
+  "in_progress",
+  "applied",
+  "verifying",
+  "verified_fixed",
+  "still_present",
+  "inconclusive",
+]);
+export const remediationRecordSchema = z.object({
+  id: z.string(),
+  asset_id: z.string(),
+  investigation_id: z.string().nullable(),
+  finding: findingSchema,
+  guidance: remediationGuidanceSchema,
+  before: emailSessionSchema,
+  condition: z.string(),
+  state: remediationStateSchema,
+  revision: z.number(),
+  started_at: z.string(),
+  applied_at: z.string().nullable(),
+  analyst_note: z.string().nullable(),
+  attempts: z.array(
+    z.object({
+      request_id: z.string(),
+      probe_id: z.string(),
+      requested_at: z.string(),
+      completed_at: z.string().nullable(),
+      outcome: remediationStateSchema.nullable(),
+      explanation: z.string(),
+      after: probeRunSchema.nullable(),
+    }),
+  ),
+});
+export type RemediationRecord = z.infer<typeof remediationRecordSchema>;
+async function remediationPost(path: string, body: unknown) {
+  return remediationRecordSchema.parse(
+    await request(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+}
+export function startRemediation(
+  assetId: string,
+  findingId: string,
+  sessionId?: string,
+) {
+  return remediationPost(`/api/v1/assets/${assetId}/remediations`, {
+    finding_id: findingId,
+    session_id: sessionId,
+  });
+}
+export function applyRemediation(id: string, note: string) {
+  return remediationPost(`/api/v1/remediations/${id}/applied`, { note });
+}
+export function verifyRemediation(id: string, requestId: string) {
+  return remediationPost(`/api/v1/remediations/${id}/verify`, {
+    request_id: requestId,
+  });
+}
+export async function fetchRemediation(id: string) {
+  return remediationRecordSchema.parse(
+    await request(`/api/v1/remediations/${id}`),
+  );
+}
+
+export const assetPostureResponseSchema = z.object({
+  posture: securityPostureSchema,
+  guidance: z.array(remediationGuidanceSchema),
+  remediations: z.array(remediationRecordSchema).default([]),
+  asset_id: z.string().nullable().default(null),
+  verification_conditions: z.record(z.string(), z.string()).default({}),
+});
+export type AssetPostureResponse = z.infer<typeof assetPostureResponseSchema>;
+
+export async function fetchAssetPosture(
+  id: string,
+): Promise<AssetPostureResponse> {
+  return assetPostureResponseSchema.parse(
+    await request(`/api/v1/assets/${id}/posture`),
+  );
+}
+
+export async function fetchSessionPosture(
+  id: string,
+): Promise<AssetPostureResponse> {
+  return assetPostureResponseSchema.parse(
+    await request(`/api/v1/sessions/${id}/posture`),
+  );
+}
+
+export type ReportFormat = "json" | "html" | "pdf";
+
+/** Generate and download a forensic report for an asset in the chosen format. */
+export async function downloadAssetReport(
+  id: string,
+  format: ReportFormat,
+): Promise<void> {
+  const response = await fetch(`/api/v1/assets/${id}/report?format=${format}`, {
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!response.ok)
+    throw new Error(
+      `Report generation failed (${response.status}): ${(await response.text()).slice(0, 300)}`,
+    );
+  const disposition = response.headers.get("content-disposition") ?? "";
+  const match = disposition.match(/filename="?([^";]+)"?/);
+  const filename = match?.[1] ?? `mailent-report-${id.slice(0, 8)}.${format}`;
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
 export const investigationSchema = z.object({
+  remediations: z.array(remediationRecordSchema).default([]),
   id: z.string(),
   asset_id: z.string(),
   title: z.string(),
@@ -425,4 +617,10 @@ export async function fetchInvestigations() {
   return z
     .array(investigationSchema)
     .parse(await request("/api/v1/investigations"));
+}
+
+export async function fetchInvestigation(id: string) {
+  return investigationSchema.parse(
+    await request(`/api/v1/investigations/${id}`),
+  );
 }

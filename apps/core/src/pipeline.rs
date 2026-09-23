@@ -317,6 +317,7 @@ pub async fn process_observation(
     // 7. Persist findings
     for finding in &findings {
         state.findings.save(finding.clone()).await?;
+        state.findings.link_asset(finding.id, asset_id).await?;
     }
 
     // 8. Baseline & Anomaly Detection

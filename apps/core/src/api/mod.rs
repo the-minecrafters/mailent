@@ -7,7 +7,10 @@ pub mod intelligence;
 pub mod investigations;
 pub mod metrics;
 pub mod observations;
+pub mod posture;
 pub mod probes;
+pub mod remediation;
+pub mod reports;
 pub mod sensors;
 pub mod sessions;
 pub mod training;
@@ -34,9 +37,26 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/api/v1/sessions", get(sessions::list_sessions_handler))
         .route("/api/v1/sessions/{id}", get(sessions::get_session_handler))
+        .route(
+            "/api/v1/sessions/{id}/posture",
+            get(posture::get_session_posture_handler),
+        )
         .route("/api/v1/findings", get(findings::list_findings_handler))
         .route("/api/v1/findings/{id}", get(findings::get_finding_handler))
         .route("/api/v1/assets", get(assets::list_assets_handler))
+        .route(
+            "/api/v1/assets/{id}/remediations",
+            get(remediation::list).post(remediation::start),
+        )
+        .route("/api/v1/remediations/{id}", get(remediation::get))
+        .route(
+            "/api/v1/remediations/{id}/applied",
+            post(remediation::applied),
+        )
+        .route(
+            "/api/v1/remediations/{id}/verify",
+            post(remediation::verify),
+        )
         .route("/api/v1/assets/{id}", get(assets::get_asset_handler))
         .route(
             "/api/v1/assets/{id}/drift",
@@ -57,6 +77,18 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/v1/assets/{id}/intelligence",
             get(assets::get_asset_intelligence_handler),
+        )
+        .route(
+            "/api/v1/assets/{id}/posture",
+            get(posture::get_asset_posture_handler),
+        )
+        .route(
+            "/api/v1/assets/{id}/report",
+            get(reports::get_asset_report_handler),
+        )
+        .route(
+            "/api/v1/investigations/{id}/report",
+            get(reports::get_investigation_report_handler),
         )
         .route(
             "/api/v1/assets/{id}/baseline",
@@ -111,6 +143,10 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/v1/investigations/{id}",
             get(investigations::get_investigation_handler),
+        )
+        .route(
+            "/api/v1/investigations/{id}/posture",
+            get(posture::get_investigation_posture_handler),
         )
         .route(
             "/api/v1/investigations/{id}/status",

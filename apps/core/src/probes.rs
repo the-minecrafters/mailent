@@ -27,6 +27,34 @@ pub async fn schedule_probe(
     asset_id: Uuid,
     req: ProbeRequest,
 ) -> Result<Uuid, (StatusCode, String)> {
+    schedule(state, asset_id, req, None).await
+}
+
+pub async fn schedule_remediation_probe(
+    state: &AppState,
+    record: &RemediationRecord,
+    probe_id: Uuid,
+) -> Result<Uuid, (StatusCode, String)> {
+    schedule(
+        state,
+        record.asset_id,
+        ProbeRequest {
+            protocol: Some(record.before.protocol),
+            port: Some(record.before.flow.dst_port),
+            trigger: Some(ProbeTrigger::ManualAnalyst),
+            investigation_id: record.investigation_id,
+        },
+        Some((record, probe_id)),
+    )
+    .await
+}
+
+async fn schedule(
+    state: &AppState,
+    asset_id: Uuid,
+    req: ProbeRequest,
+    remediation: Option<(&RemediationRecord, Uuid)>,
+) -> Result<Uuid, (StatusCode, String)> {
     let asset = state
         .assets
         .find_by_id(asset_id)
@@ -71,7 +99,7 @@ pub async fn schedule_probe(
             "probe concurrency limit reached".into(),
         )
     })?;
-    let run = ProbeRun::new(
+    let mut run = ProbeRun::new(
         asset_id,
         target,
         protocol,
@@ -79,6 +107,13 @@ pub async fn schedule_probe(
         req.trigger.unwrap_or(ProbeTrigger::ManualAnalyst),
         req.investigation_id,
     );
+    if let Some((record, id)) = remediation {
+        run.id = id;
+        run.remediation_id = Some(record.id);
+        run.verification_condition = Some(record.condition);
+        // Keep the normal authorized target (and its SNI/identity). The verifier
+        // additionally requires DNS to reach the original affected address.
+    }
     if !state
         .probes
         .reserve(&run, state.probe_config.cooldown_seconds)
@@ -114,7 +149,7 @@ async fn execute(state: &AppState, mut run: ProbeRun) -> Result<(), StorageError
     } else {
         mailent_probe::smtp::probe_implicit_tls(&run.target, run.port, &limits, &scope).await
     };
-    let (outcome, result) = match response {
+    let (outcome, mut result) = match response {
         Ok(mut result) => {
             enrich_expectations(state, &run, &mut result).await?;
             let outcome = if result.error.is_some() {
@@ -139,6 +174,39 @@ async fn execute(state: &AppState, mut run: ProbeRun) -> Result<(), StorageError
             (outcome, result)
         }
     };
+    if run.verification_condition == Some(RemediationCondition::LegacyTlsDisabled)
+        && outcome == ProbeOutcome::Success
+    {
+        for version in [TlsVersion::Tls10, TlsVersion::Tls11] {
+            let challenge_limits = ProbeLimits {
+                forced_tls_version: Some(version.clone()),
+                ..limits
+            };
+            let challenged = if run.protocol == EmailProtocol::Smtp && run.port != 465 {
+                mailent_probe::probe_smtp_starttls(
+                    &run.target,
+                    run.port,
+                    "mailent-probe",
+                    &challenge_limits,
+                    &scope,
+                )
+                .await
+            } else {
+                mailent_probe::smtp::probe_implicit_tls(
+                    &run.target,
+                    run.port,
+                    &challenge_limits,
+                    &scope,
+                )
+                .await
+            };
+            result.tls_challenges.push(classify_challenge(
+                version,
+                challenged,
+                result.resolved_ip.as_deref(),
+            ));
+        }
+    }
     run.finish(outcome, Some(result));
     // Persist transport evidence before applying derived context; no network replay on retry.
     state.probes.update(&run).await?;
@@ -146,7 +214,61 @@ async fn execute(state: &AppState, mut run: ProbeRun) -> Result<(), StorageError
     state.probes.update(&run).await?;
     // Merge by probe id so retries are idempotent and analyst status is untouched.
     state.investigations.attach_probe(&run).await?;
+    crate::remediation::complete_probe(state, &run).await?;
     Ok(())
+}
+
+/// Only an explicit server protocol-version alert establishes refusal. Local
+/// OpenSSL limitations, EOF, timeouts and generic handshake failures do not.
+fn classify_challenge(
+    version: TlsVersion,
+    response: Result<ProbeResult, SmtpProbeError>,
+    expected_ip: Option<&str>,
+) -> TlsChallenge {
+    let evidence = match response {
+        Ok(evidence) => evidence,
+        Err(SmtpProbeError::Partial { evidence, .. }) => *evidence,
+        Err(error) => {
+            return TlsChallenge {
+                version,
+                outcome: ChallengeOutcome::Unavailable,
+                detail: error.to_string(),
+            };
+        }
+    };
+    let (outcome, detail) =
+        if evidence.resolved_ip.as_deref() != expected_ip || expected_ip.is_none() {
+            (
+                ChallengeOutcome::Unavailable,
+                "Challenge did not reach the same address".into(),
+            )
+        } else if evidence.tls_version.as_ref() == Some(&version) {
+            (
+                ChallengeOutcome::Accepted,
+                "Constrained legacy TLS handshake established".into(),
+            )
+        } else if evidence
+            .error
+            .as_ref()
+            .is_some_and(|e| e.contains("alert protocol version") || e.contains("alert number 70"))
+        {
+            (
+                ChallengeOutcome::Rejected,
+                evidence.error.unwrap_or_default(),
+            )
+        } else {
+            (
+                ChallengeOutcome::Unavailable,
+                evidence
+                    .error
+                    .unwrap_or_else(|| "No explicit protocol refusal captured".into()),
+            )
+        };
+    TlsChallenge {
+        version,
+        outcome,
+        detail,
+    }
 }
 
 /// Uses already collected intelligence, avoiding unrelated/unauthorized HTTP requests.
@@ -395,7 +517,7 @@ pub async fn apply_evidence(state: &AppState, run: &mut ProbeRun) -> Result<(), 
 pub async fn recover_stale_probes(state: &AppState) -> Result<(), StorageError> {
     for mut run in state.probes.unfinished().await? {
         if OffsetDateTime::now_utc() - run.started_at
-            > time::Duration::seconds(state.probe_config.timeout_seconds as i64 + 30)
+            > time::Duration::seconds(state.probe_config.timeout_seconds as i64 * 3 + 30)
         {
             run.finish(ProbeOutcome::InternalError, Some(ProbeResult::unavailable(&run.target, Some("Probe interrupted or completion could not be persisted; request reverification after cooldown".into()))));
             state.probes.update(&run).await?;
@@ -420,6 +542,8 @@ pub async fn recover_stale_probes(state: &AppState) -> Result<(), StorageError> 
         {
             state.investigations.attach_probe(&run).await?;
         }
+        crate::remediation::complete_probe(state, &run).await?;
     }
+    crate::remediation::recover(state).await?;
     Ok(())
 }

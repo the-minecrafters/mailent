@@ -1094,10 +1094,13 @@ dependencies = [
  "mailent-integrations",
  "mailent-policy",
  "mailent-probe",
+ "mailent-reporting",
  "mailent-sensor",
  "mailent-storage",
+ "reqwest",
  "serde",
  "serde_json",
+ "sqlx",
  "thiserror",
  "time",
  "tokio",
@@ -1226,8 +1229,10 @@ dependencies = [
  "mailent-domain",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror",
  "time",
+ "uuid",
 ]
 
 [[package]]

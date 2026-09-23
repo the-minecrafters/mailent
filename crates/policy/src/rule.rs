@@ -9,6 +9,7 @@ use crate::PolicyError;
 pub enum Predicate {
     TlsVersionIn { versions: Vec<TlsVersion> },
     CertificateExpired,
+    SmtpStartTlsNotAdvertised,
     KeyExchangeIn { values: Vec<KeyExchange> },
 }
 

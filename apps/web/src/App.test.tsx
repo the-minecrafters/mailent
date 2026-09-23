@@ -434,12 +434,118 @@ describe("observation console", () => {
       },
     ];
 
+    const mockPosture = {
+      posture: {
+        id: "p-1",
+        score_version: "1.0.0",
+        subject_kind: "asset",
+        subject_id: mockAsset.id,
+        score: 25,
+        grade: "critical",
+        score_capped: true,
+        pre_cap_score: 82,
+        categories: [
+          {
+            category: "transport_security",
+            score: 30,
+            weight: 0.4,
+            weighted_score: 12,
+            finding_rule_ids: ["TLS_LEGACY_VERSION"],
+            rationale: "Deductions applied.",
+          },
+          {
+            category: "certificate_hygiene",
+            score: 100,
+            weight: 0.25,
+            weighted_score: 25,
+            finding_rule_ids: [],
+            rationale: "No deductions.",
+          },
+          {
+            category: "protocol_configuration",
+            score: 100,
+            weight: 0.25,
+            weighted_score: 25,
+            finding_rule_ids: [],
+            rationale: "No deductions.",
+          },
+          {
+            category: "anomaly_risk_context",
+            score: 100,
+            weight: 0.1,
+            weighted_score: 10,
+            finding_rule_ids: [],
+            rationale: "No signals.",
+          },
+        ],
+        deductions: [
+          {
+            rule_id: "TLS_LEGACY_VERSION",
+            finding_id: "f-1",
+            severity: "critical",
+            category: "transport_security",
+            points: 70,
+            evidence_description: "Observed TLS 1.0",
+          },
+        ],
+        worst_findings: ["TLS_LEGACY_VERSION"],
+        findings_considered: 1,
+        computed_at: "2026-09-22T10:00:00Z",
+      },
+      guidance: [
+        {
+          id: "g-1",
+          kind: "remediation",
+          finding_id: "f-1",
+          rule_id: "TLS_LEGACY_VERSION",
+          title: "Deprecated TLS Version Negotiated",
+          observed: "Observed TLS 1.0 on connection",
+          why_it_matters: "Legacy TLS is deprecated.",
+          recommendation: "Disable TLS 1.0/1.1.",
+          recommended_state: "TLS 1.2 minimum.",
+          compatibility_caveats: [
+            "Observed compatibility: 2 historical peer(s) negotiated legacy TLS.",
+          ],
+          verification: "Run an active Mailent probe.",
+          evidence: [
+            {
+              session_id: null,
+              observation_id: "o-1",
+              description: "Observed TLS 1.0",
+            },
+          ],
+          severity: "critical",
+          category: "tls_configuration",
+          generated_at: "2026-09-22T10:00:00Z",
+        },
+        {
+          id: "g-2",
+          kind: "best_practice",
+          finding_id: null,
+          rule_id: "BP_ENABLE_TLS13",
+          title: "TLS 1.3 not observed on this asset",
+          observed: "No TLS 1.3 handshake observed.",
+          why_it_matters: "Hardening.",
+          recommendation: "Enable TLS 1.3.",
+          recommended_state: "TLS 1.3 enabled.",
+          compatibility_caveats: [],
+          verification: "Verify passively.",
+          evidence: [],
+          severity: "low",
+          category: "tls_configuration",
+          generated_at: "2026-09-22T10:00:00Z",
+        },
+      ],
+    };
+
     const fetcher = vi.fn((url: string) => {
       if (url === "/ready") return Promise.resolve(response(ready));
       if (url === "/api/v1/assets")
         return Promise.resolve(response([mockAsset]));
       if (url === `/api/v1/assets/${mockAsset.id}`)
         return Promise.resolve(response(mockAsset));
+      if (url === `/api/v1/assets/${mockAsset.id}/posture`)
+        return Promise.resolve(response(mockPosture));
       if (url === `/api/v1/assets/${mockAsset.id}/drift`)
         return Promise.resolve(response(mockDrift));
       if (url === `/api/v1/assets/${mockAsset.id}/certificates`)
@@ -469,6 +575,38 @@ describe("observation console", () => {
       screen.getByText("TLSv1.3 negotiated for the first time."),
     ).toBeVisible();
     expect(screen.getByText("CN=Let's Encrypt")).toBeVisible();
+
+    // Posture surface: versioned model, capped score, category breakdown.
+    expect(
+      await screen.findByText("Security Posture (model v1.0.0)"),
+    ).toBeVisible();
+    expect(screen.getByText("25 / 100")).toBeVisible();
+    expect(screen.getByText("82 → 25")).toBeVisible();
+    expect(screen.getByText("transport security")).toBeVisible();
+    const postureSection = screen
+      .getByLabelText("Security Posture")
+      .closest("section");
+    expect(postureSection).toHaveTextContent("TLS_LEGACY_VERSION");
+
+    // Guidance surfaces stay distinct: Remediation vs Best Practice.
+    expect(await screen.findByText("Remediation Guidance (1)")).toBeVisible();
+    expect(screen.getByText("Observed compatibility caveats")).toBeVisible();
+    expect(
+      screen.getByText(/2 historical peer\(s\) negotiated legacy TLS/),
+    ).toBeVisible();
+    expect(screen.getByText("Best Practice Guidance (1)")).toBeVisible();
+    expect(screen.getByText("Best Practice")).toBeVisible();
+    expect(screen.getByText("Enable TLS 1.3.")).toBeVisible();
+
+    // Forensic report export surface present for the analyst.
+    expect(await screen.findByText("Forensic Report")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Export JSON" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Export HTML" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Export PDF" })).toBeEnabled();
+    expect(screen.getByText("View HTML report")).toHaveAttribute(
+      "href",
+      `/api/v1/assets/${mockAsset.id}/report?format=html`,
+    );
   });
 
   it("renders sensors list and telemetry status", async () => {

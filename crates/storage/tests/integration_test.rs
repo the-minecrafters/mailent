@@ -1,3 +1,5 @@
+#[path = "../../../tests/support/databases.rs"]
+mod databases;
 use mailent_domain::{
     Asset, AssetEndpoint, AssetIdentity, CertificateRecord, DriftEvent, DriftKind, EmailProtocol,
     Finding, FindingCategory, FindingSeverity, NetworkFlow, NormalizedObservation,
@@ -16,18 +18,12 @@ use uuid::Uuid;
 
 #[tokio::test]
 async fn test_postgres_integration() {
-    let database_url = std::env::var("MAILENT_DATABASE_URL").unwrap_or_else(|_| {
-        "postgres://mailent:mailent_dev_password@127.0.0.1:5432/mailent".to_string()
-    });
-
-    let storage = match PostgresStorage::connect(&database_url).await {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Skipping test_postgres_integration: {e}");
-            return;
-        }
+    let Some(db) = databases::TestDatabases::start().await else {
+        return;
     };
-
+    let storage = PostgresStorage::connect(&db.postgres_url)
+        .await
+        .expect("isolated PostgreSQL migration");
     // 1. Asset test
     let asset_id = Uuid::new_v4();
     let now = OffsetDateTime::now_utc();
@@ -327,20 +323,18 @@ async fn test_postgres_integration() {
         .expect("list decision records");
     assert!(!decs.is_empty());
     assert_eq!(decs[0].provider, "jev");
+    storage.pool().close().await;
+    db.finish().await;
 }
 
 #[tokio::test]
 async fn test_clickhouse_integration() {
-    let clickhouse_url = std::env::var("MAILENT_CLICKHOUSE_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:8123".to_string());
-
-    let storage = match ClickHouseStorage::connect(&clickhouse_url, "mailent").await {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Skipping test_clickhouse_integration: {e}");
-            return;
-        }
+    let Some(db) = databases::TestDatabases::start().await else {
+        return;
     };
+    let storage = ClickHouseStorage::connect(&db.clickhouse_url, &db.clickhouse_database)
+        .await
+        .expect("isolated ClickHouse migration");
 
     let now = OffsetDateTime::now_utc();
     let obs_id = Uuid::new_v4();
@@ -378,4 +372,5 @@ async fn test_clickhouse_integration() {
         .expect("observation found");
     assert_eq!(found.observation_id, obs_id);
     assert_eq!(found.protocol, EmailProtocol::Smtp);
+    db.finish().await;
 }

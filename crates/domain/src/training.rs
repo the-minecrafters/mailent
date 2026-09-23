@@ -40,6 +40,8 @@ pub struct TrainingRecord {
     pub analyst_label: Option<AnalystLabel>,
     #[serde(with = "time::serde::rfc3339::option")]
     pub labeled_at: Option<OffsetDateTime>,
+    #[serde(default)]
+    pub remediation_outcomes: std::collections::BTreeMap<Uuid, crate::RemediationTrainingOutcome>,
 }
 
 /// The original, structured feature snapshot persisted at decision time.
@@ -269,6 +271,17 @@ pub struct AnalystLabel {
 }
 
 impl TrainingRecord {
+    /// Labels can evolve; the original decision-time snapshot cannot.
+    pub fn same_snapshot(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.investigation_id == other.investigation_id
+            && self.asset_id == other.asset_id
+            && self.feature_schema_version == other.feature_schema_version
+            && self.captured_at.unix_timestamp_nanos() / 1000
+                == other.captured_at.unix_timestamp_nanos() / 1000
+            && self.features == other.features
+            && self.automated_label == other.automated_label
+    }
     pub fn new(
         investigation_id: Uuid,
         asset_id: Uuid,
@@ -286,6 +299,7 @@ impl TrainingRecord {
             automated_label,
             analyst_label: None,
             labeled_at: None,
+            remediation_outcomes: Default::default(),
         }
     }
 }

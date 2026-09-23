@@ -6,8 +6,10 @@ import legacy from "../../../fixtures/synthetic/smtp_tls10_legacy.json";
 import modern from "../../../fixtures/synthetic/smtp_tls13_healthy.json";
 import {
   type Asset,
+  type AssetPostureResponse,
   type CertificateRecord,
   type DriftEvent,
+  downloadAssetReport,
   type EmailSession,
   evaluateObservation,
   type Finding,
@@ -15,19 +17,280 @@ import {
   fetchAssetCertificates,
   fetchAssetDrift,
   fetchAssetFindings,
+  fetchAssetPosture,
   fetchAssetSessions,
   fetchAssets,
   fetchDriftEvents,
   fetchFindings,
   fetchSensors,
   fetchSessionDetail,
+  fetchSessionPosture,
   fetchSessions,
+  type RemediationGuidance,
+  type ReportFormat,
   readReadiness,
+  type SecurityPosture,
   type SensorRecord,
   type SessionListItem,
   type TimelineEvent,
 } from "./api";
 import { ProbePanel } from "./ProbePanel";
+import { RemediationWorkflow } from "./RemediationWorkflow";
+
+function PostureGradeBadge({ grade }: { grade: string }) {
+  return <span className={`badge ${grade}`}>{grade}</span>;
+}
+
+function PosturePanel({ posture }: { posture: SecurityPosture }) {
+  return (
+    <section className="posture-section" aria-label="Security Posture">
+      <h3 className="section-title">
+        Security Posture (model v{posture.score_version})
+      </h3>
+      <div className="posture-summary">
+        <div className="meta-card">
+          <span className="meta-label">Score</span>
+          <span
+            className={`meta-value posture-score posture-grade-${posture.grade}`}
+          >
+            {posture.score.toFixed(0)} / 100
+          </span>
+        </div>
+        <div className="meta-card">
+          <span className="meta-label">Grade</span>
+          <PostureGradeBadge grade={posture.grade} />
+        </div>
+        <div className="meta-card">
+          <span className="meta-label">Findings Considered</span>
+          <span className="meta-value">{posture.findings_considered}</span>
+        </div>
+        {posture.score_capped && (
+          <div className="meta-card">
+            <span className="meta-label">Serious-Finding Cap</span>
+            <span className="meta-value">
+              {posture.pre_cap_score.toFixed(0)} → {posture.score.toFixed(0)}
+            </span>
+          </div>
+        )}
+      </div>
+      <div className="posture-categories">
+        {posture.categories.map((cat) => (
+          <div key={cat.category} className="posture-category">
+            <div className="posture-category-header">
+              <span>{cat.category.replace(/_/g, " ")}</span>
+              <span className="mono">
+                {cat.score.toFixed(0)} × {cat.weight.toFixed(2)}
+              </span>
+            </div>
+            <div className="posture-bar" aria-label={`${cat.category} score`}>
+              <div
+                className={`posture-bar-fill ${posture.grade}`}
+                style={{ width: `${Math.max(0, Math.min(100, cat.score))}%` }}
+              />
+            </div>
+            {cat.finding_rule_ids.length > 0 && (
+              <p className="mono posture-category-findings">
+                {cat.finding_rule_ids.join(", ")}
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
+      {posture.deductions.length > 0 && (
+        <details className="posture-deductions">
+          <summary>Deduction trace ({posture.deductions.length})</summary>
+          {posture.deductions.map((d) => (
+            <div
+              key={`${d.rule_id}:${d.finding_id}`}
+              className="deduction-item"
+            >
+              <code>{d.rule_id}</code> −{d.points.toFixed(0)} pts ({d.severity})
+              <p className="mono">{d.evidence_description}</p>
+            </div>
+          ))}
+        </details>
+      )}
+    </section>
+  );
+}
+
+function GuidanceCard({
+  guidance,
+  workflow,
+}: {
+  guidance: RemediationGuidance;
+  workflow?: React.ReactNode;
+}) {
+  const isRemediation = guidance.kind === "remediation";
+  return (
+    <article
+      className={`finding guidance-card ${isRemediation ? "guidance-remediation" : "guidance-best-practice"}`}
+    >
+      <div className="finding-heading">
+        <span
+          className={`severity ${isRemediation ? guidance.severity : "low"}`}
+        >
+          {isRemediation ? "Remediation" : "Best Practice"}
+        </span>
+        <code>{guidance.rule_id}</code>
+      </div>
+      <h3>{guidance.title}</h3>
+      <dl>
+        <dt>Observed</dt>
+        <dd>{guidance.observed}</dd>
+        <dt>Why it matters</dt>
+        <dd>{guidance.why_it_matters}</dd>
+        <dt>Recommendation</dt>
+        <dd>{guidance.recommendation}</dd>
+        <dt>Recommended secure state</dt>
+        <dd>{guidance.recommended_state}</dd>
+        {guidance.compatibility_caveats.length > 0 && (
+          <>
+            <dt>Observed compatibility caveats</dt>
+            {guidance.compatibility_caveats.map((c, i) => (
+              <dd key={`${c.slice(0, 24)}:${i}`}>{c}</dd>
+            ))}
+          </>
+        )}
+        <dt>Verification</dt>
+        <dd>{guidance.verification}</dd>
+      </dl>
+      {workflow}
+    </article>
+  );
+}
+
+function useAssetPosture(assetId: string) {
+  return useQuery({
+    queryKey: ["asset-posture", assetId],
+    queryFn: () => fetchAssetPosture(assetId),
+  });
+}
+
+function ReportExportControls({ assetId }: { assetId: string }) {
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [busyFormat, setBusyFormat] = useState<ReportFormat | null>(null);
+
+  const generate = async (format: ReportFormat) => {
+    setReportError(null);
+    setBusyFormat(format);
+    try {
+      await downloadAssetReport(assetId, format);
+    } catch (error) {
+      setReportError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusyFormat(null);
+    }
+  };
+
+  return (
+    <section className="report-section" aria-label="Forensic Report Export">
+      <h3 className="section-title">Forensic Report</h3>
+      <p className="notice">
+        Generates a deterministic forensic report from stored evidence: case
+        metadata, reconstructed sessions, certificates with crypto details,
+        findings, anomalies, posture, guidance, and active verification —
+        identical content in every format.
+      </p>
+      <div className="report-buttons">
+        <button
+          type="button"
+          onClick={() => generate("json")}
+          disabled={busyFormat !== null}
+        >
+          {busyFormat === "json" ? "Generating…" : "Export JSON"}
+        </button>
+        <button
+          type="button"
+          onClick={() => generate("html")}
+          disabled={busyFormat !== null}
+        >
+          {busyFormat === "html" ? "Generating…" : "Export HTML"}
+        </button>
+        <button
+          type="button"
+          onClick={() => generate("pdf")}
+          disabled={busyFormat !== null}
+        >
+          {busyFormat === "pdf" ? "Generating…" : "Export PDF"}
+        </button>
+        <a
+          className="inspect-btn"
+          href={`/api/v1/assets/${assetId}/report?format=html`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          View HTML report
+        </a>
+      </div>
+      {reportError && (
+        <p role="alert" className="error">
+          {reportError}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function PostureAndGuidanceSection({
+  postureData,
+}: {
+  postureData: AssetPostureResponse;
+}) {
+  const remediations = postureData.guidance.filter(
+    (g) => g.kind === "remediation",
+  );
+  const bestPractices = postureData.guidance.filter(
+    (g) => g.kind === "best_practice",
+  );
+  return (
+    <>
+      <PosturePanel posture={postureData.posture} />
+      <section className="guidance-section" aria-label="Guidance">
+        <h3 className="section-title">
+          Remediation Guidance ({remediations.length})
+        </h3>
+        {remediations.length === 0 ? (
+          <p className="notice">
+            No active findings require remediation for this asset.
+          </p>
+        ) : (
+          remediations.map((g) => (
+            <GuidanceCard
+              key={g.id}
+              guidance={g}
+              workflow={
+                postureData.asset_id &&
+                postureData.verification_conditions[g.id] ? (
+                  <RemediationWorkflow
+                    assetId={postureData.asset_id}
+                    guidance={g}
+                    initial={postureData.remediations.find(
+                      (r) => r.finding.id === g.finding_id,
+                    )}
+                  />
+                ) : (
+                  <p>
+                    Issue-specific active verification is unavailable for this
+                    guidance.
+                  </p>
+                )
+              }
+            />
+          ))
+        )}
+        <h3 className="section-title">
+          Best Practice Guidance ({bestPractices.length})
+        </h3>
+        {bestPractices.length === 0 ? (
+          <p className="notice">No additional hardening suggestions.</p>
+        ) : (
+          bestPractices.map((g) => <GuidanceCard key={g.id} guidance={g} />)
+        )}
+      </section>
+    </>
+  );
+}
 
 const samples = {
   legacy: { label: "SMTP · TLS 1.0 + static RSA", observation: legacy },
@@ -167,6 +430,10 @@ function SessionInspector({
   const detailQuery = useQuery({
     queryKey: ["session", sessionId],
     queryFn: () => fetchSessionDetail(sessionId),
+  });
+  const postureQuery = useQuery({
+    queryKey: ["session-posture", sessionId],
+    queryFn: () => fetchSessionPosture(sessionId),
   });
 
   if (detailQuery.isPending) {
@@ -309,6 +576,10 @@ function SessionInspector({
           findings.map((f) => <FindingCard key={f.id} finding={f} />)
         )}
       </div>
+
+      {postureQuery.data && (
+        <PostureAndGuidanceSection postureData={postureQuery.data} />
+      )}
     </div>
   );
 }
@@ -342,6 +613,7 @@ function AssetDetailView({
     queryKey: ["asset-sessions", assetId],
     queryFn: () => fetchAssetSessions(assetId),
   });
+  const postureQuery = useAssetPosture(assetId);
 
   if (assetQuery.isPending) {
     return <p role="status">Loading asset profile…</p>;
@@ -415,6 +687,12 @@ function AssetDetailView({
       </div>
 
       <ProbePanel asset={asset} />
+
+      <ReportExportControls assetId={asset.id} />
+
+      {postureQuery.data && (
+        <PostureAndGuidanceSection postureData={postureQuery.data} />
+      )}
       {/* Configuration Drift Events */}
       <section
         className="drift-section"

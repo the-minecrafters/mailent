@@ -26,10 +26,12 @@ pub struct TrainingRecordResponse {
     pub asset_id: Uuid,
     pub feature_schema_version: u32,
     pub captured_at: String,
-    pub automated_label: Option<serde_json::Value>,
-    pub analyst_label: Option<serde_json::Value>,
+    pub automated_label: Option<mailent_domain::AutomatedLabel>,
+    pub analyst_label: Option<mailent_domain::AnalystLabel>,
     pub labeled_at: Option<String>,
-    pub features: serde_json::Value,
+    pub features: mailent_domain::TrainingFeatures,
+    pub remediation_outcomes:
+        std::collections::BTreeMap<Uuid, mailent_domain::RemediationTrainingOutcome>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,16 +54,11 @@ fn to_response(record: &mailent_domain::TrainingRecord) -> TrainingRecordRespons
         asset_id: record.asset_id,
         feature_schema_version: record.feature_schema_version,
         captured_at: record.captured_at.to_string(),
-        automated_label: record
-            .automated_label
-            .as_ref()
-            .and_then(|l| serde_json::to_value(l).ok()),
-        analyst_label: record
-            .analyst_label
-            .as_ref()
-            .and_then(|l| serde_json::to_value(l).ok()),
+        automated_label: record.automated_label.clone(),
+        analyst_label: record.analyst_label.clone(),
         labeled_at: record.labeled_at.map(|t| t.to_string()),
-        features: serde_json::to_value(&record.features).unwrap_or_default(),
+        features: record.features.clone(),
+        remediation_outcomes: record.remediation_outcomes.clone(),
     }
 }
 

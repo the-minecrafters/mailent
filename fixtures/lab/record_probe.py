@@ -1,5 +1,5 @@
 """Record a transport-only SMTP conversation in the running probe lab.
-Usage: python3 record_probe.py /tmp/passive.pcap 12526 [TLSv1.2|TLSv1.3]
+Usage: python3 record_probe.py /tmp/passive.pcap 12526 [TLSv1|TLSv1.1|TLSv1.2|TLSv1.3]
 No authentication or mail commands. Capture requires the lab's tcpdump capability.
 """
 import signal
@@ -20,14 +20,15 @@ while True:
     if b"listening on" in line:
         break
     if not line:
-        raise RuntimeError("tcpdump did not start")
+        raise RuntimeError(f"tcpdump did not start (exit {capture.poll()}): use a fresh writable capture path and CAP_NET_RAW")
 try:
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE  # Deliberately expired, self-signed lab certificate.
-    context.minimum_version = context.maximum_version = (
-        ssl.TLSVersion.TLSv1_2 if version == "TLSv1.2" else ssl.TLSVersion.TLSv1_3
-    )
+    versions = {"TLSv1": ssl.TLSVersion.TLSv1, "TLSv1.1": ssl.TLSVersion.TLSv1_1,
+                "TLSv1.2": ssl.TLSVersion.TLSv1_2, "TLSv1.3": ssl.TLSVersion.TLSv1_3}
+    context.minimum_version = context.maximum_version = versions[version]
+    context.set_ciphers("ALL:@SECLEVEL=0")  # Explicit weak-protocol lab challenges only.
     with smtplib.SMTP("127.0.0.1", port, timeout=5) as client:
         client.ehlo("mailent-probe-lab")
         client.starttls(context=context)

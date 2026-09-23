@@ -17,6 +17,22 @@ pub fn evaluate(session: &EmailSession, policy: &PolicyPack) -> Vec<FindingCandi
                         format!("Observed {} on connection {}", version, session.flow),
                     )
                 }
+                Predicate::SmtpStartTlsNotAdvertised => {
+                    if session.protocol != mailent_domain::EmailProtocol::Smtp
+                        || session.starttls_state
+                            != Some(mailent_domain::StartTlsState::NotAdvertised)
+                        || session.flow.dst_port == 465
+                    {
+                        return None;
+                    }
+                    (
+                        FindingCategory::TlsConfiguration,
+                        format!(
+                            "Completed SMTP capability exchange did not advertise STARTTLS on {}",
+                            session.flow
+                        ),
+                    )
+                }
                 Predicate::CertificateExpired => {
                     let cert = session.certificate.as_ref()?;
                     if !cert.validity.is_expired_at(session.last_seen) {
@@ -144,6 +160,7 @@ mod tests {
             },
             is_self_signed: Some(false),
             san: vec!["mail.legacy-corp.example".to_string()],
+            crypto_details: None,
         };
 
         let session = sample_session(

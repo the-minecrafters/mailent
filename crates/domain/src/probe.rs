@@ -131,6 +131,8 @@ pub struct ProbeResult {
     pub error: Option<String>,
     #[serde(default)]
     pub certificate_trusted: Option<bool>,
+    #[serde(default)]
+    pub tls_challenges: Vec<crate::TlsChallenge>,
     /// Ephemeral input for existing DANE validation; not part of persisted/public evidence.
     #[serde(skip)]
     pub certificate_der: Vec<u8>,
@@ -144,6 +146,10 @@ pub struct ProbeResult {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProbeRun {
     pub id: Uuid,
+    #[serde(default)]
+    pub remediation_id: Option<Uuid>,
+    #[serde(default)]
+    pub verification_condition: Option<crate::RemediationCondition>,
     /// Asset this probe belongs to.
     pub asset_id: Uuid,
     /// Domain or host probed.
@@ -184,6 +190,8 @@ impl ProbeRun {
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
+            remediation_id: None,
+            verification_condition: None,
             asset_id,
             target,
             protocol,
@@ -350,6 +358,7 @@ impl ProbeResult {
             certificate: None,
             certificate_hostname_valid: None,
             certificate_trusted: None,
+            tls_challenges: vec![],
             mta_sts_mode: None,
             mta_sts_result: None,
             dane_status: DaneStatus::DaneUnverifiable,

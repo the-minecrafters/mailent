@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
+use crate::cert_crypto::CertificateCryptoDetails;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CertificateReference {
     pub sha256_fingerprint: String,
@@ -32,6 +34,10 @@ pub struct CertificateObservation {
     pub validity: ValidityPeriod,
     pub is_self_signed: Option<bool>,
     pub san: Vec<String>,
+    /// Extended crypto details; `None` when the evidence path could not
+    /// extract them (they are then reported as unavailable, never guessed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crypto_details: Option<CertificateCryptoDetails>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

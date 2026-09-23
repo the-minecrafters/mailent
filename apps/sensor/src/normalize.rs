@@ -389,6 +389,9 @@ pub fn normalize(
                             .iter()
                             .map(|s| (*s).into())
                             .collect(),
+                        // Zeek's ssl.log does not expose PKI details; left None
+                        // so reports honestly mark these fields unavailable.
+                        crypto_details: None,
                     });
                     sources.push(cert.source.clone());
                 } else {

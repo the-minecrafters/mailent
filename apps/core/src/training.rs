@@ -1,8 +1,8 @@
 use mailent_domain::{
-    AnalystLabel, Asset, AssetBaseline, AutomatedLabel, BaselineFeatures, CertificateFeature,
-    DaneStatus, DecisionResult, DeliveryContextFeatures, DriftEvent, EmailSession, Finding,
-    Investigation, MtaStsMode, PolicyFindingFeature, ProbeRun, ProbeStartTlsResult,
-    TrainingFeatures, TrainingRecord, name_hash,
+    Asset, AssetBaseline, AutomatedLabel, BaselineFeatures, CertificateFeature, DaneStatus,
+    DecisionResult, DeliveryContextFeatures, DriftEvent, EmailSession, Finding, Investigation,
+    MtaStsMode, PolicyFindingFeature, ProbeRun, ProbeStartTlsResult, TrainingFeatures,
+    TrainingRecord, name_hash,
 };
 use mailent_storage::StorageError;
 use serde::Serialize;
@@ -78,15 +78,18 @@ fn build_features(ctx: &CaptureContext<'_>) -> TrainingFeatures {
         }
     });
 
-    let jev = ctx.jev_decision.map(|d| mailent_domain::JevFeature {
-        role: "teacher".to_string(),
-        provider: d.provider_info.clone(),
-        risk: d.risk,
-        anomalous: d.anomalous,
-        human_review: d.human_review,
-        priority: d.priority,
-        confidence: d.confidence,
-    });
+    let jev =
+        ctx.jev_decision
+            .filter(|d| !d.is_deterministic())
+            .map(|d| mailent_domain::JevFeature {
+                role: "teacher".to_string(),
+                provider: d.provider_info.clone(),
+                risk: d.risk,
+                anomalous: d.anomalous,
+                human_review: d.human_review,
+                priority: d.priority,
+                confidence: d.confidence,
+            });
 
     TrainingFeatures {
         asset: mailent_domain::AssetFeatures {
@@ -194,21 +197,16 @@ pub async fn capture_training(
 /// separate from analyst labels; Jev output is a teacher signal, never ground truth.
 fn automated_label(ctx: &CaptureContext<'_>) -> Option<AutomatedLabel> {
     ctx.jev_decision.map(|d| AutomatedLabel {
-        source: format!("jev/{}", d.provider_info),
+        source: if d.is_deterministic() {
+            d.provider_info.clone()
+        } else {
+            format!("jev/{}", d.provider_info)
+        },
         risk: Some(d.risk),
         priority: Some(d.priority),
         anomalous: d.anomalous,
         human_review: d.human_review,
     })
-}
-
-/// Attach an analyst/final outcome label without touching the original snapshot.
-pub async fn attach_analyst_label(
-    state: &AppState,
-    record_id: uuid::Uuid,
-    label: &AnalystLabel,
-) -> Result<(), StorageError> {
-    state.training.attach_analyst_label(record_id, label).await
 }
 
 fn snake_str<T: Serialize>(v: &T) -> String {

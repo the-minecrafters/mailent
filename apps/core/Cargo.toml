@@ -15,6 +15,7 @@ mailent-storage = { workspace = true }
 mailent-decision = { workspace = true }
 mailent-integrations = { workspace = true }
 mailent-baseline = { workspace = true }
+mailent-reporting = { workspace = true }
 mailent-probe = { path = "../probe" }
 
 tokio = { workspace = true }
@@ -30,6 +31,8 @@ uuid = { workspace = true }
 time = { workspace = true }
 
 [dev-dependencies]
+sqlx = { workspace = true }
+reqwest = { workspace = true }
 async-trait = { workspace = true }
 tower = { workspace = true, features = ["util"] }
 http-body-util = "0.1"

@@ -3,12 +3,13 @@ import { useState } from "react";
 import {
   type Asset,
   fetchAssetProbes,
+  fetchInvestigation,
   fetchInvestigations,
   type ProbeRun,
   triggerAssetProbe,
 } from "./api";
 
-function ProbeEvidence({ run }: { run: ProbeRun }) {
+export function ProbeEvidence({ run }: { run: ProbeRun }) {
   const r = run.result;
   return (
     <article className="drift-card">
@@ -53,6 +54,11 @@ function ProbeEvidence({ run }: { run: ProbeRun }) {
               </p>
             </details>
           )}
+          {r.tls_challenges?.map((c) => (
+            <p key={c.version}>
+              Protocol challenge {c.version}: {c.outcome} · {c.detail}
+            </p>
+          ))}
           <p>MTA-STS: {r.mta_sts_result ?? "Unavailable"}</p>
           <p>DANE: {r.dane_result ?? "Unavailable"}</p>
           {r.error && <p role="alert">{r.error}</p>}
@@ -100,6 +106,31 @@ function ProbeEvidence({ run }: { run: ProbeRun }) {
         </>
       )}
     </article>
+  );
+}
+
+function InvestigationRemediationContext({ id }: { id: string }) {
+  const query = useQuery({
+    queryKey: ["investigation", id],
+    queryFn: () => fetchInvestigation(id),
+    refetchInterval: 3000,
+  });
+  return (
+    <>
+      {query.data?.remediations.map((r) => (
+        <div key={r.id}>
+          <p>
+            Remediation {r.finding.rule_id}: {r.state.replaceAll("_", " ")}
+          </p>
+          {r.attempts.map((a) => (
+            <p key={a.request_id}>
+              {a.explanation} · {a.completed_at ?? "Pending"}
+            </p>
+          ))}
+        </div>
+      ))}
+      {query.isError && <p role="alert">{query.error.message}</p>}
+    </>
   );
 }
 
@@ -201,6 +232,7 @@ export function ProbePanel({ asset }: { asset: Asset }) {
             {i.title} · {i.status}
           </summary>
           <p>{i.summary}</p>
+          <InvestigationRemediationContext id={i.id} />
           <p>Anomalies: {i.anomaly_ids.join(", ") || "None"}</p>
           <button type="button" onClick={() => setInvestigationId(i.id)}>
             Link next verification to this investigation

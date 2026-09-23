@@ -41,7 +41,7 @@ test("synthetic observations produce core findings rendered with their evidence"
       await expect(
         finding.getByText(`Observation: ${data.session_id}`, { exact: true }),
       ).toBeVisible();
-      await expect(finding.getByText(/modern v1.0.0/)).toBeVisible();
+      await expect(finding.getByText(/modern v1.1.0/)).toBeVisible();
     } else {
       await expect(
         page.getByText("No violations found by the evaluated rules"),
@@ -304,6 +304,14 @@ test("persistent assets, drift events, and sensor telemetry UI", async ({
   await expect(page.getByText("Discovered Mail Assets")).toBeVisible();
   const assetRow = page.locator("tr", { hasText: "10.0.0.25" });
   await expect(assetRow).toBeVisible();
+  // Resolve the asset id from the API for the report assertions below.
+  const assetsResponse = await page.request.get(
+    "http://127.0.0.1:18080/api/v1/assets",
+  );
+  const assets = await assetsResponse.json();
+  const assetId = assets.find((a: { addresses: string[] }) =>
+    a.addresses.includes("10.0.0.25"),
+  ).id as string;
   await assetRow.getByRole("button", { name: /view asset/i }).click();
 
   await expect(
@@ -315,6 +323,46 @@ test("persistent assets, drift events, and sensor telemetry UI", async ({
     page.getByText("Presented X.509 Certificate History"),
   ).toBeVisible();
   await expect(page.getByText("CN=Internal Corporate CA")).toBeVisible();
+
+  // Deterministic posture scoring surface: versioned model with categories.
+  await expect(page.getByText("Security Posture (model v1.0.0)")).toBeVisible();
+  await expect(
+    page.getByText("transport security", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("certificate hygiene", { exact: true }),
+  ).toBeVisible();
+  // No policy findings were correlated for this healthy asset.
+  await expect(page.getByText("Remediation Guidance (0)")).toBeVisible();
+  await expect(page.getByText(/Best Practice Guidance \(\d+\)/)).toBeVisible();
+
+  // Forensic report export: JSON endpoint returns complete evidence for this
+  // asset (real backend, no mocks).
+  const reportResponse = await page.request.get(
+    `http://127.0.0.1:18080/api/v1/assets/${assetId}/report?format=json`,
+  );
+  expect(reportResponse.status()).toBe(200);
+  const report = await reportResponse.json();
+  expect(report.metadata.policy_name).toBe("modern");
+  expect(report.sessions.length).toBeGreaterThan(0);
+  expect(report.sessions[0].tls_version).toMatch(/TLSv1\.[23]/);
+  expect(report.posture).toBeTruthy();
+  expect(Array.isArray(report.remediation)).toBe(true);
+  expect(Array.isArray(report.best_practices)).toBe(true);
+  // Human formats exist and carry the session's server address.
+  const htmlReport = await page.request.get(
+    `http://127.0.0.1:18080/api/v1/assets/${assetId}/report?format=html`,
+  );
+  expect(htmlReport.status()).toBe(200);
+  const html = await htmlReport.text();
+  expect(html).toContain("10.0.0.25");
+  expect(html).toContain("observed fact");
+  const pdfResponse = await page.request.get(
+    `http://127.0.0.1:18080/api/v1/assets/${assetId}/report?format=pdf`,
+  );
+  expect(pdfResponse.status()).toBe(200);
+  const pdfBuffer = await pdfResponse.body();
+  expect(pdfBuffer.subarray(0, 8).toString("latin1")).toContain("%PDF");
 
   expect(errors).toEqual([]);
 });

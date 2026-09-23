@@ -128,13 +128,11 @@ pub async fn list_asset_findings_handler(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let findings = state
-        .findings
-        .list_for_asset(id)
+    let evidence = crate::evidence::EvidenceSnapshot::asset(&state, id)
         .await
-        .map_err(storage_error)?;
-
-    Ok(Json(findings))
+        .map_err(storage_error)?
+        .ok_or((StatusCode::NOT_FOUND, "asset not found".into()))?;
+    Ok(Json(evidence.findings))
 }
 
 pub async fn get_asset_intelligence_handler(

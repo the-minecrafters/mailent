@@ -45,6 +45,8 @@ impl SmtpProbeError {
 }
 
 pub struct ProbeLimits {
+    /// Exact protocol challenge, used only by authorized remediation verification.
+    pub forced_tls_version: Option<TlsVersion>,
     pub connect_timeout: Duration,
     /// Overall deadline covering DNS, connect, greeting, EHLO, and TLS.
     pub read_timeout: Duration,
@@ -54,6 +56,7 @@ pub struct ProbeLimits {
 impl Default for ProbeLimits {
     fn default() -> Self {
         Self {
+            forced_tls_version: None,
             connect_timeout: Duration::from_secs(10),
             read_timeout: Duration::from_secs(15),
             max_line_bytes: 1024,
@@ -183,6 +186,29 @@ async fn exchange(
     let tls_error =
         |e: openssl::error::ErrorStack| SmtpProbeError::TlsHandshakeFailed(e.to_string());
     let mut connector = SslConnector::builder(SslMethod::tls()).map_err(tls_error)?;
+    if let Some(version) = &limits.forced_tls_version {
+        let version = match version {
+            TlsVersion::Tls10 => openssl::ssl::SslVersion::TLS1,
+            TlsVersion::Tls11 => openssl::ssl::SslVersion::TLS1_1,
+            TlsVersion::Tls12 => openssl::ssl::SslVersion::TLS1_2,
+            TlsVersion::Tls13 => openssl::ssl::SslVersion::TLS1_3,
+            TlsVersion::Unknown(_) => {
+                return Err(SmtpProbeError::Protocol(
+                    "unknown TLS challenge version".into(),
+                ));
+            }
+        };
+        connector
+            .set_min_proto_version(Some(version))
+            .map_err(tls_error)?;
+        connector
+            .set_max_proto_version(Some(version))
+            .map_err(tls_error)?;
+        connector.set_security_level(0);
+        connector
+            .set_cipher_list("ALL:@SECLEVEL=0")
+            .map_err(tls_error)?;
+    }
     // Observe invalid chains too, while retaining OpenSSL's verification result.
     connector.set_verify_callback(SslVerifyMode::PEER, |_, _| true);
     let ssl = connector
@@ -222,14 +248,34 @@ async fn exchange(
     } else {
         ForwardSecrecyState::Unknown
     };
-    result.certificate_trusted = Some(ssl.verify_result() == openssl::x509::X509VerifyResult::OK);
+    let verify_ok = ssl.verify_result() == openssl::x509::X509VerifyResult::OK;
+    result.certificate_trusted = Some(verify_ok);
     if let Some(cert) = ssl.peer_certificate() {
         let der = cert.to_der().map_err(tls_error)?;
         result.spki_der = cert
             .public_key()
             .and_then(|k| k.public_key_to_der())
             .map_err(tls_error)?;
-        let (observation, hostname_valid) = parse_certificate(&der, host)?;
+        let (mut observation, hostname_valid) = parse_certificate(&der, host)?;
+        // Chain/trust state is deterministic active-probe evidence from OpenSSL.
+        let details = observation
+            .crypto_details
+            .as_mut()
+            .expect("parsed certificate has crypto details");
+        details.chain_validation = if verify_ok {
+            mailent_domain::ChainValidation::Verified
+        } else {
+            mailent_domain::ChainValidation::Failed
+        };
+        details.public_key.spki_sha256 = {
+            use sha2::{Digest, Sha256};
+            Some(
+                Sha256::digest(&result.spki_der)
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<String>(),
+            )
+        };
         result.certificate = Some(observation);
         result.certificate_hostname_valid = Some(hostname_valid);
         result.certificate_der = der;
@@ -352,6 +398,9 @@ fn parse_certificate(
             },
             is_self_signed: Some(self_signed),
             san: sans,
+            // Extract crypto details (PK algorithm/size, signature algorithm,
+            // extensions) from the same DER the probe already parsed.
+            crypto_details: Some(crate::certificate::crypto_details(&cert)),
         },
         valid,
     ))

@@ -9,3 +9,7 @@ pub use config::CoreConfig;
 pub use state::AppState;
 
 pub mod probes;
+
+pub mod evidence;
+
+pub mod remediation;

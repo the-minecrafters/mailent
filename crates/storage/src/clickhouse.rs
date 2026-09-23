@@ -19,6 +19,15 @@ pub struct ClickHouseStorage {
 
 impl ClickHouseStorage {
     pub async fn connect(endpoint: &str, database: &str) -> Result<Self, StorageError> {
+        if database.is_empty()
+            || !database
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+        {
+            return Err(StorageError::Backend(
+                "invalid ClickHouse database identifier".into(),
+            ));
+        }
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
@@ -35,8 +44,27 @@ impl ClickHouseStorage {
     }
 
     pub async fn migrate(&self) -> Result<(), StorageError> {
+        // Database selection also applies to DDL; never create test tables in mailent.
+        let response = self
+            .client
+            .post(format!("{}/?database=default", self.endpoint))
+            .body(format!("CREATE DATABASE IF NOT EXISTS {}", self.database))
+            .send()
+            .await
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        if !response.status().is_success() {
+            return Err(StorageError::Backend(format!(
+                "ClickHouse database creation failed: {}",
+                response.text().await.unwrap_or_default()
+            )));
+        }
         let migration_sql =
-            include_str!("../migrations/clickhouse/20260922000001_initial_schema.sql");
+            include_str!("../migrations/clickhouse/20260922000001_initial_schema.sql")
+                .replace(
+                    "CREATE DATABASE IF NOT EXISTS mailent",
+                    &format!("CREATE DATABASE IF NOT EXISTS {}", self.database),
+                )
+                .replace("mailent.", &format!("{}.", self.database));
         // Split by statement (semicolon at end of line)
         for stmt in migration_sql.split(';') {
             let trimmed = stmt.trim();

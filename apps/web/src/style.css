@@ -648,3 +648,102 @@ footer {
   font-size: 0.75rem;
   font-family: ui-monospace, monospace;
 }
+
+/* Security posture & guidance */
+.posture-section {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.posture-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+.posture-score {
+  font-size: 1.4rem;
+  font-weight: 700;
+}
+.posture-categories {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.75rem;
+}
+.posture-category {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+}
+.posture-category-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  margin-bottom: 0.35rem;
+}
+.posture-bar {
+  background: var(--border);
+  border-radius: 4px;
+  height: 8px;
+  overflow: hidden;
+}
+.posture-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+}
+.posture-bar-fill.critical,
+.posture-bar-fill.weak {
+  background: var(--danger, #d64545);
+}
+.posture-bar-fill.moderate {
+  background: var(--warning, #d6a53a);
+}
+.posture-bar-fill.good,
+.posture-bar-fill.strong {
+  background: var(--ok, #3fa66a);
+}
+.posture-category-findings {
+  font-size: 0.75rem;
+  margin: 0.35rem 0 0;
+  color: var(--muted, #888);
+}
+.posture-deductions {
+  margin-top: 0.75rem;
+}
+.deduction-item {
+  padding: 0.35rem 0;
+  border-top: 1px dashed var(--border);
+}
+.deduction-item p {
+  margin: 0.15rem 0 0;
+  font-size: 0.8rem;
+}
+.guidance-section {
+  margin-top: 1.5rem;
+}
+.guidance-best-practice {
+  border-left: 4px solid var(--ok, #3fa66a);
+}
+.guidance-remediation {
+  border-left: 4px solid var(--danger, #d64545);
+}
+
+/* Forensic report export */
+.report-section {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.report-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.5rem;
+}
+.report-buttons button,
+.report-buttons .inspect-btn {
+  padding: 0.4rem 0.9rem;
+}

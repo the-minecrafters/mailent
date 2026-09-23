@@ -476,6 +476,7 @@ mod tests {
             },
             is_self_signed: Some(false),
             san: vec!["mail.example.com".to_string()],
+            crypto_details: None,
         });
 
         EmailSession {

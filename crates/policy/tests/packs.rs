@@ -66,3 +66,28 @@ fn expiration_uses_evidence_time_and_inclusive_validity_end() {
         1
     );
 }
+
+#[test]
+fn starttls_finding_requires_explicit_smtp_absence_not_missing_capture_data() {
+    use mailent_domain::{EmailProtocol, StartTlsState};
+    let obs: NormalizedObservation = serde_json::from_str(include_str!(
+        "../../../fixtures/synthetic/smtp_tls13_healthy.json"
+    ))
+    .unwrap();
+    let mut session = EmailSession::from(&obs);
+    for state in [
+        None,
+        Some(StartTlsState::AdvertisedNotUsed),
+        Some(StartTlsState::AdvertisedAndUsed),
+    ] {
+        session.starttls_state = state;
+        assert!(evaluate(&session, &PolicyPack::modern()).is_empty());
+    }
+    session.starttls_state = Some(StartTlsState::NotAdvertised);
+    assert_eq!(
+        evaluate(&session, &PolicyPack::modern())[0].rule_id,
+        "STARTTLS_MISSING"
+    );
+    session.protocol = EmailProtocol::Imap;
+    assert!(evaluate(&session, &PolicyPack::modern()).is_empty());
+}

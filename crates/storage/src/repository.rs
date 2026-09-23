@@ -44,6 +44,7 @@ pub trait SensorRepository: Send + Sync {
 
 #[async_trait]
 pub trait FindingRepository: Send + Sync {
+    async fn link_asset(&self, finding_id: Uuid, asset_id: Uuid) -> Result<(), StorageError>;
     async fn save(&self, finding: Finding) -> Result<(), StorageError>;
     async fn list_all(&self) -> Result<Vec<Finding>, StorageError>;
     async fn find_by_id(&self, id: Uuid) -> Result<Option<Finding>, StorageError>;
@@ -247,6 +248,11 @@ pub trait ProbeRepository: Send + Sync {
 
 #[async_trait]
 pub trait TrainingRecordRepository: Send + Sync {
+    async fn attach_remediation_outcome(
+        &self,
+        id: Uuid,
+        outcome: &mailent_domain::RemediationTrainingOutcome,
+    ) -> Result<(), StorageError>;
     async fn save(&self, record: &mailent_domain::TrainingRecord) -> Result<(), StorageError>;
     async fn list_recent(
         &self,
@@ -269,4 +275,27 @@ pub trait TrainingRecordRepository: Send + Sync {
         id: Uuid,
         label: &mailent_domain::AnalystLabel,
     ) -> Result<(), StorageError>;
+}
+
+#[async_trait]
+pub trait RemediationRepository: Send + Sync {
+    async fn create(
+        &self,
+        record: &mailent_domain::RemediationRecord,
+    ) -> Result<mailent_domain::RemediationRecord, StorageError>;
+    async fn find_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<mailent_domain::RemediationRecord>, StorageError>;
+    async fn list_for_asset(
+        &self,
+        asset_id: Uuid,
+    ) -> Result<Vec<mailent_domain::RemediationRecord>, StorageError>;
+    async fn list_verifying(&self) -> Result<Vec<mailent_domain::RemediationRecord>, StorageError>;
+    /// Compare-and-swap prevents duplicate network jobs and lost analyst updates.
+    async fn update(
+        &self,
+        record: &mailent_domain::RemediationRecord,
+        expected_revision: i64,
+    ) -> Result<bool, StorageError>;
 }

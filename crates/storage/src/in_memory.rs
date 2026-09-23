@@ -25,9 +25,11 @@ use crate::{
 /// and fast iteration during isolated unit tests.
 #[derive(Debug, Default, Clone)]
 pub struct InMemoryStorage {
+    remediations: Arc<RwLock<Vec<mailent_domain::RemediationRecord>>>,
     assets: Arc<RwLock<Vec<Asset>>>,
     drift_events: Arc<RwLock<Vec<DriftEvent>>>,
     findings: Arc<RwLock<Vec<Finding>>>,
+    finding_assets: Arc<RwLock<std::collections::HashMap<Uuid, Uuid>>>,
     sessions: Arc<RwLock<Vec<EmailSession>>>,
     certificates: Arc<RwLock<Vec<CertificateRecord>>>,
     sensors: Arc<RwLock<Vec<SensorRecord>>>,
@@ -219,6 +221,16 @@ impl SensorRepository for InMemoryStorage {
 
 #[async_trait]
 impl FindingRepository for InMemoryStorage {
+    async fn link_asset(&self, finding_id: Uuid, asset_id: Uuid) -> Result<(), StorageError> {
+        let mut links = self.finding_assets.write().await;
+        if links.get(&finding_id).is_some_and(|id| *id != asset_id) {
+            return Err(StorageError::Conflict(
+                "finding already belongs to another asset".into(),
+            ));
+        }
+        links.insert(finding_id, asset_id);
+        Ok(())
+    }
     async fn save(&self, finding: Finding) -> Result<(), StorageError> {
         let mut guard = self.findings.write().await;
         if let Some(existing) = guard.iter_mut().find(|f| f.id == finding.id) {
@@ -263,9 +275,14 @@ impl FindingRepository for InMemoryStorage {
             .collect())
     }
 
-    async fn list_for_asset(&self, _asset_id: Uuid) -> Result<Vec<Finding>, StorageError> {
+    async fn list_for_asset(&self, asset_id: Uuid) -> Result<Vec<Finding>, StorageError> {
+        let links = self.finding_assets.read().await;
         let guard = self.findings.read().await;
-        Ok(guard.clone())
+        Ok(guard
+            .iter()
+            .filter(|f| links.get(&f.id) == Some(&asset_id))
+            .cloned()
+            .collect())
     }
 }
 
@@ -574,7 +591,52 @@ impl InvestigationRepository for InMemoryStorage {
     async fn save(&self, investigation: &Investigation) -> Result<(), StorageError> {
         let mut guard = self.investigations.write().await;
         if let Some(pos) = guard.iter().position(|i| i.id == investigation.id) {
-            guard[pos] = investigation.clone();
+            let existing = &guard[pos];
+            let mut merged = investigation.clone();
+            merged.status = existing.status;
+            merged.first_observed = existing.first_observed.min(investigation.first_observed);
+            merged.last_observed = existing.last_observed.max(investigation.last_observed);
+            merged
+                .finding_ids
+                .extend(existing.finding_ids.iter().cloned());
+            merged.finding_ids.sort();
+            merged.finding_ids.dedup();
+            merged.drift_event_ids.extend(&existing.drift_event_ids);
+            merged.drift_event_ids.sort();
+            merged.drift_event_ids.dedup();
+            merged.anomaly_ids.extend(&existing.anomaly_ids);
+            merged.anomaly_ids.sort();
+            merged.anomaly_ids.dedup();
+            let mut intel = existing
+                .external_intelligence
+                .as_object()
+                .cloned()
+                .unwrap_or_default();
+            intel.extend(
+                investigation
+                    .external_intelligence
+                    .as_object()
+                    .cloned()
+                    .unwrap_or_default(),
+            );
+            let mut probes = existing.external_intelligence["active_verifications"]
+                .as_object()
+                .cloned()
+                .unwrap_or_default();
+            probes.extend(
+                investigation.external_intelligence["active_verifications"]
+                    .as_object()
+                    .cloned()
+                    .unwrap_or_default(),
+            );
+            if !probes.is_empty() {
+                intel.insert(
+                    "active_verifications".into(),
+                    serde_json::Value::Object(probes),
+                );
+            }
+            merged.external_intelligence = serde_json::Value::Object(intel);
+            guard[pos] = merged;
         } else {
             guard.push(investigation.clone());
         }
@@ -724,10 +786,30 @@ impl ProbeRepository for InMemoryStorage {
 
 #[async_trait]
 impl TrainingRecordRepository for InMemoryStorage {
+    async fn attach_remediation_outcome(
+        &self,
+        id: Uuid,
+        outcome: &mailent_domain::RemediationTrainingOutcome,
+    ) -> Result<(), StorageError> {
+        let mut records = self.training_records.write().await;
+        let r = records
+            .iter_mut()
+            .find(|r| r.id == id)
+            .ok_or_else(|| StorageError::NotFound(id.to_string()))?;
+        r.remediation_outcomes
+            .entry(outcome.request_id)
+            .or_insert_with(|| outcome.clone());
+        Ok(())
+    }
+
     async fn save(&self, record: &TrainingRecord) -> Result<(), StorageError> {
         let mut guard = self.training_records.write().await;
-        if let Some(existing) = guard.iter_mut().find(|r| r.id == record.id) {
-            *existing = record.clone();
+        if let Some(existing) = guard.iter().find(|r| r.id == record.id) {
+            if !existing.same_snapshot(record) {
+                return Err(StorageError::Conflict(
+                    "training features are immutable".into(),
+                ));
+            }
         } else {
             guard.push(record.clone());
         }
@@ -784,6 +866,71 @@ impl TrainingRecordRepository for InMemoryStorage {
             )));
         }
         Ok(())
+    }
+}
+
+#[async_trait]
+impl crate::repository::RemediationRepository for InMemoryStorage {
+    async fn create(
+        &self,
+        record: &mailent_domain::RemediationRecord,
+    ) -> Result<mailent_domain::RemediationRecord, StorageError> {
+        let mut records = self.remediations.write().await;
+        if let Some(existing) = records.iter().find(|r| r.id == record.id) {
+            return Ok(existing.clone());
+        }
+        records.push(record.clone());
+        Ok(record.clone())
+    }
+    async fn find_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<mailent_domain::RemediationRecord>, StorageError> {
+        Ok(self
+            .remediations
+            .read()
+            .await
+            .iter()
+            .find(|r| r.id == id)
+            .cloned())
+    }
+    async fn list_for_asset(
+        &self,
+        asset_id: Uuid,
+    ) -> Result<Vec<mailent_domain::RemediationRecord>, StorageError> {
+        Ok(self
+            .remediations
+            .read()
+            .await
+            .iter()
+            .filter(|r| r.asset_id == asset_id)
+            .cloned()
+            .collect())
+    }
+    async fn list_verifying(&self) -> Result<Vec<mailent_domain::RemediationRecord>, StorageError> {
+        Ok(self
+            .remediations
+            .read()
+            .await
+            .iter()
+            .filter(|r| r.state == mailent_domain::RemediationState::Verifying)
+            .cloned()
+            .collect())
+    }
+    async fn update(
+        &self,
+        record: &mailent_domain::RemediationRecord,
+        expected_revision: i64,
+    ) -> Result<bool, StorageError> {
+        let mut records = self.remediations.write().await;
+        if let Some(existing) = records
+            .iter_mut()
+            .find(|r| r.id == record.id && r.revision == expected_revision)
+        {
+            *existing = record.clone();
+            return Ok(true);
+        }
+        Ok(false)
     }
 }
 

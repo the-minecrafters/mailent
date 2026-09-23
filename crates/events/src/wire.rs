@@ -204,6 +204,9 @@ pub fn decode(bytes: &[u8]) -> Result<d::NormalizedObservation, d::DomainError> 
                     },
                     is_self_signed: c.is_self_signed,
                     san: c.san,
+                    // Crypto details are not carried on the protobuf wire yet;
+                    // decoded observations report them as unavailable.
+                    crypto_details: None,
                 })
             })
             .transpose()?,

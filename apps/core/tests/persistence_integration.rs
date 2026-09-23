@@ -1,3 +1,5 @@
+#[path = "../../../tests/support/databases.rs"]
+mod databases;
 use axum::http::StatusCode;
 use mailent_core::{api::create_router, config::CoreConfig, state::AppState};
 use serde_json::Value;
@@ -40,26 +42,20 @@ async fn get_json(app: axum::Router, uri: &str) -> (StatusCode, Value) {
 
 #[tokio::test]
 async fn test_core_persistence_restart_and_drift() {
-    let database_url = std::env::var("MAILENT_DATABASE_URL").unwrap_or_else(|_| {
-        "postgres://mailent:mailent_dev_password@127.0.0.1:5432/mailent".to_string()
-    });
-    let clickhouse_url = std::env::var("MAILENT_CLICKHOUSE_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:8123".to_string());
-
+    let Some(db) = databases::TestDatabases::start().await else {
+        return;
+    };
     let config = CoreConfig {
-        database_url: Some(database_url.clone()),
-        clickhouse_url: Some(clickhouse_url.clone()),
+        database_url: Some(db.postgres_url.clone()),
+        clickhouse_url: Some(db.clickhouse_url.clone()),
+        clickhouse_database: db.clickhouse_database.clone(),
         ..Default::default()
     };
 
     // 1. First Core lifetime
-    let state = match AppState::from_config(&config).await {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Skipping test_core_persistence_restart_and_drift (no DB): {e}");
-            return;
-        }
-    };
+    let state = AppState::from_config(&config)
+        .await
+        .expect("isolated databases");
     let app = create_router(state.clone());
 
     let fixture = include_str!("../../../fixtures/synthetic/smtp_tls10_legacy.json");
@@ -204,4 +200,6 @@ async fn test_core_persistence_restart_and_drift() {
         .await
         .unwrap();
     assert_eq!(status_response.status(), StatusCode::OK);
+    drop(restarted_app);
+    db.finish().await;
 }

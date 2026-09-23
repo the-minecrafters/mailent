@@ -129,5 +129,6 @@ pnpm --filter @mailent/web test:e2e
 
 - [Persistent Storage & Sensor Architecture](docs/persistence.md)
 - [Initialization Notes](docs/initialization.md)
+- [Remediation and fix verification](docs/remediation.md)
 - [Project Vision](notes/project.md)
 - [Target Architecture](notes/architecture.md)

@@ -61,7 +61,24 @@ pub async fn get_investigation_handler(
             )
         })?;
 
-    Ok(Json(investigation))
+    #[derive(Serialize)]
+    struct InvestigationContext {
+        #[serde(flatten)]
+        investigation: mailent_domain::Investigation,
+        remediations: Vec<mailent_domain::RemediationRecord>,
+    }
+    let remediations = state
+        .remediations
+        .list_for_asset(investigation.asset_id)
+        .await
+        .map_err(storage_error)?
+        .into_iter()
+        .filter(|r| r.investigation_id == Some(id))
+        .collect();
+    Ok(Json(InvestigationContext {
+        investigation,
+        remediations,
+    }))
 }
 
 pub async fn update_investigation_status_handler(

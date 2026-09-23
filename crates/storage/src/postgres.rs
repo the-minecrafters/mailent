@@ -582,6 +582,22 @@ impl SensorRepository for PostgresStorage {
 
 #[async_trait]
 impl FindingRepository for PostgresStorage {
+    async fn link_asset(&self, finding_id: Uuid, asset_id: Uuid) -> Result<(), StorageError> {
+        let updated = sqlx::query(
+            "UPDATE findings SET asset_id=$2 WHERE id=$1 AND (asset_id IS NULL OR asset_id=$2)",
+        )
+        .bind(finding_id)
+        .bind(asset_id)
+        .execute(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(e.to_string()))?;
+        if updated.rows_affected() == 0 {
+            return Err(StorageError::Conflict(
+                "finding missing or belongs to another asset".into(),
+            ));
+        }
+        Ok(())
+    }
     async fn save(&self, finding: Finding) -> Result<(), StorageError> {
         let mut tx = self
             .pool
@@ -616,7 +632,11 @@ impl FindingRepository for PostgresStorage {
         for ev in &finding.evidence {
             sqlx::query(
                 r#"INSERT INTO finding_evidence (id, finding_id, session_id, observation_id, description)
-                   VALUES ($1, $2, $3, $4, $5)"#
+                   SELECT $1, $2, $3, $4, $5 WHERE NOT EXISTS (
+                       SELECT 1 FROM finding_evidence WHERE finding_id=$2
+                       AND session_id IS NOT DISTINCT FROM $3 AND observation_id IS NOT DISTINCT FROM $4
+                       AND description=$5
+                   )"#
             )
             .bind(Uuid::new_v4())
             .bind(finding.id)
@@ -776,7 +796,7 @@ impl PostgresStorage {
         finding_id: Uuid,
     ) -> Result<Vec<EvidenceRef>, StorageError> {
         let rows = sqlx::query(
-            "SELECT session_id, observation_id, description FROM finding_evidence WHERE finding_id = $1"
+            "SELECT DISTINCT session_id, observation_id, description FROM finding_evidence WHERE finding_id = $1 ORDER BY session_id, observation_id, description"
         )
         .bind(finding_id)
         .fetch_all(&*self.pool)
@@ -1568,15 +1588,16 @@ impl InvestigationRepository for PostgresStorage {
                ON CONFLICT (id) DO UPDATE SET
                    title = EXCLUDED.title,
                    summary = EXCLUDED.summary,
-                   status = EXCLUDED.status,
                    risk = EXCLUDED.risk,
                    priority = EXCLUDED.priority,
-                   finding_ids = EXCLUDED.finding_ids,
-                   drift_event_ids = EXCLUDED.drift_event_ids,
-                   anomaly_ids = EXCLUDED.anomaly_ids,
-                   external_intelligence = EXCLUDED.external_intelligence,
+                   finding_ids = ARRAY(SELECT DISTINCT x FROM unnest(investigations.finding_ids || EXCLUDED.finding_ids) x ORDER BY x),
+                   drift_event_ids = ARRAY(SELECT DISTINCT x FROM unnest(investigations.drift_event_ids || EXCLUDED.drift_event_ids) x ORDER BY x),
+                   anomaly_ids = ARRAY(SELECT DISTINCT x FROM unnest(investigations.anomaly_ids || EXCLUDED.anomaly_ids) x ORDER BY x),
+                   external_intelligence = investigations.external_intelligence || EXCLUDED.external_intelligence ||
+                       jsonb_build_object('active_verifications', COALESCE(investigations.external_intelligence->'active_verifications', '{}'::jsonb) || COALESCE(EXCLUDED.external_intelligence->'active_verifications', '{}'::jsonb)),
                    jev_decision = EXCLUDED.jev_decision,
-                   last_observed = EXCLUDED.last_observed"#
+                   first_observed = LEAST(investigations.first_observed, EXCLUDED.first_observed),
+                   last_observed = GREATEST(investigations.last_observed, EXCLUDED.last_observed)"#
         )
         .bind(inv.id)
         .bind(inv.asset_id)
@@ -1804,8 +1825,8 @@ impl ProbeRepository for PostgresStorage {
         sqlx::query(
             r#"INSERT INTO probe_runs
                (id, asset_id, target, protocol, port, trigger, investigation_id,
-                started_at, finished_at, outcome, result, perspective_mismatches, has_mismatch)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+                started_at, finished_at, outcome, result, perspective_mismatches, has_mismatch, remediation_id, verification_condition)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
                ON CONFLICT (id) DO UPDATE SET
                    finished_at = EXCLUDED.finished_at,
                    outcome = EXCLUDED.outcome,
@@ -1826,6 +1847,8 @@ impl ProbeRepository for PostgresStorage {
         .bind(result_json)
         .bind(mismatches_json)
         .bind(run.has_mismatch)
+        .bind(run.remediation_id)
+        .bind(run.verification_condition.map(|c| serde_json::to_value(c).expect("enum serialization")))
         .execute(&mut *tx)
         .await
         .map_err(|e| StorageError::Backend(format!("save probe_run error: {e}")))?;
@@ -1853,8 +1876,8 @@ impl ProbeRepository for PostgresStorage {
         sqlx::query(
             r#"INSERT INTO probe_runs
                (id, asset_id, target, protocol, port, trigger, investigation_id,
-                started_at, finished_at, outcome, result, perspective_mismatches, has_mismatch)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+                started_at, finished_at, outcome, result, perspective_mismatches, has_mismatch, remediation_id, verification_condition)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
                ON CONFLICT (id) DO UPDATE SET
                    finished_at = EXCLUDED.finished_at,
                    outcome = EXCLUDED.outcome,
@@ -1875,6 +1898,8 @@ impl ProbeRepository for PostgresStorage {
         .bind(result_json)
         .bind(mismatches_json)
         .bind(run.has_mismatch)
+        .bind(run.remediation_id)
+        .bind(run.verification_condition.map(|c| serde_json::to_value(c).expect("enum serialization")))
         .execute(&*self.pool)
         .await
         .map_err(|e| StorageError::Backend(format!("save probe_run error: {e}")))?;
@@ -1884,7 +1909,7 @@ impl ProbeRepository for PostgresStorage {
     async fn find_by_id(&self, id: Uuid) -> Result<Option<ProbeRun>, StorageError> {
         let row = sqlx::query(
             "SELECT id, asset_id, target, protocol, port, trigger, investigation_id,
-                    started_at, finished_at, outcome, result, perspective_mismatches, has_mismatch
+                    started_at, finished_at, outcome, result, perspective_mismatches, has_mismatch, remediation_id, verification_condition
              FROM probe_runs WHERE id = $1",
         )
         .bind(id)
@@ -1901,7 +1926,7 @@ impl ProbeRepository for PostgresStorage {
     ) -> Result<Vec<ProbeRun>, StorageError> {
         let rows = sqlx::query(
             "SELECT id, asset_id, target, protocol, port, trigger, investigation_id,
-                    started_at, finished_at, outcome, result, perspective_mismatches, has_mismatch
+                    started_at, finished_at, outcome, result, perspective_mismatches, has_mismatch, remediation_id, verification_condition
              FROM probe_runs WHERE asset_id = $1 ORDER BY started_at DESC LIMIT $2",
         )
         .bind(asset_id)
@@ -1915,7 +1940,7 @@ impl ProbeRepository for PostgresStorage {
     async fn list_recent(&self, limit: usize) -> Result<Vec<ProbeRun>, StorageError> {
         let rows = sqlx::query(
             "SELECT id, asset_id, target, protocol, port, trigger, investigation_id,
-                    started_at, finished_at, outcome, result, perspective_mismatches, has_mismatch
+                    started_at, finished_at, outcome, result, perspective_mismatches, has_mismatch, remediation_id, verification_condition
              FROM probe_runs ORDER BY started_at DESC LIMIT $1",
         )
         .bind(limit as i64)
@@ -1932,7 +1957,7 @@ impl ProbeRepository for PostgresStorage {
     ) -> Result<Option<ProbeRun>, StorageError> {
         let row = sqlx::query(
             "SELECT id, asset_id, target, protocol, port, trigger, investigation_id,
-                    started_at, finished_at, outcome, result, perspective_mismatches, has_mismatch
+                    started_at, finished_at, outcome, result, perspective_mismatches, has_mismatch, remediation_id, verification_condition
              FROM probe_runs
              WHERE asset_id = $1 AND target = $2
              ORDER BY started_at DESC LIMIT 1",
@@ -1952,6 +1977,17 @@ impl ProbeRepository for PostgresStorage {
 
 #[async_trait]
 impl TrainingRecordRepository for PostgresStorage {
+    async fn attach_remediation_outcome(
+        &self,
+        id: Uuid,
+        outcome: &mailent_domain::RemediationTrainingOutcome,
+    ) -> Result<(), StorageError> {
+        sqlx::query("UPDATE training_records SET remediation_outcomes = remediation_outcomes || jsonb_build_object($2::text, $3::jsonb) WHERE id=$1 AND NOT remediation_outcomes ? $2")
+            .bind(id).bind(outcome.request_id.to_string()).bind(serde_json::to_value(outcome).map_err(|e| StorageError::Backend(e.to_string()))?)
+            .execute(&*self.pool).await.map_err(|e| StorageError::Backend(e.to_string()))?;
+        Ok(())
+    }
+
     async fn save(&self, record: &TrainingRecord) -> Result<(), StorageError> {
         let features_json = serde_json::to_value(&record.features)
             .map_err(|e| StorageError::Backend(e.to_string()))?;
@@ -1964,17 +2000,11 @@ impl TrainingRecordRepository for PostgresStorage {
             .as_ref()
             .map(|l| serde_json::to_value(l).unwrap_or_default());
 
-        sqlx::query(
+        let inserted = sqlx::query(
             r#"INSERT INTO training_records
                (id, investigation_id, asset_id, feature_schema_version, captured_at, features, automated_label, analyst_label, labeled_at)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-               ON CONFLICT (id) DO UPDATE SET
-                   feature_schema_version = EXCLUDED.feature_schema_version,
-                   captured_at = EXCLUDED.captured_at,
-                   features = EXCLUDED.features,
-                   automated_label = EXCLUDED.automated_label,
-                   analyst_label = EXCLUDED.analyst_label,
-                   labeled_at = EXCLUDED.labeled_at"#,
+               ON CONFLICT (id) DO NOTHING"#,
         )
         .bind(record.id)
         .bind(record.investigation_id)
@@ -1988,6 +2018,16 @@ impl TrainingRecordRepository for PostgresStorage {
         .execute(&*self.pool)
         .await
         .map_err(|e| StorageError::Backend(e.to_string()))?;
+        if inserted.rows_affected() == 0 {
+            let stored = TrainingRecordRepository::find_by_id(self, record.id)
+                .await?
+                .ok_or_else(|| StorageError::NotFound(record.id.to_string()))?;
+            if !stored.same_snapshot(record) {
+                return Err(StorageError::Conflict(
+                    "training features are immutable".into(),
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -1998,7 +2038,7 @@ impl TrainingRecordRepository for PostgresStorage {
         limit: usize,
     ) -> Result<Vec<TrainingRecord>, StorageError> {
         let rows = sqlx::query(
-            r#"SELECT id, investigation_id, asset_id, feature_schema_version, captured_at, features, automated_label, analyst_label, labeled_at
+            r#"SELECT id, investigation_id, asset_id, feature_schema_version, captured_at, features, automated_label, analyst_label, labeled_at, remediation_outcomes
                FROM training_records
                WHERE ($1::UUID IS NULL OR investigation_id = $1)
                  AND ($2::UUID IS NULL OR asset_id = $2)
@@ -2011,12 +2051,12 @@ impl TrainingRecordRepository for PostgresStorage {
         .await
         .map_err(|e| StorageError::Backend(e.to_string()))?;
 
-        Ok(rows.into_iter().map(training_record_from_row).collect())
+        rows.into_iter().map(training_record_from_row).collect()
     }
 
     async fn list_unlabeled(&self, limit: usize) -> Result<Vec<TrainingRecord>, StorageError> {
         let rows = sqlx::query(
-            r#"SELECT id, investigation_id, asset_id, feature_schema_version, captured_at, features, automated_label, analyst_label, labeled_at
+            r#"SELECT id, investigation_id, asset_id, feature_schema_version, captured_at, features, automated_label, analyst_label, labeled_at, remediation_outcomes
                FROM training_records WHERE analyst_label IS NULL
                ORDER BY captured_at DESC LIMIT $1"#,
         )
@@ -2025,12 +2065,12 @@ impl TrainingRecordRepository for PostgresStorage {
         .await
         .map_err(|e| StorageError::Backend(e.to_string()))?;
 
-        Ok(rows.into_iter().map(training_record_from_row).collect())
+        rows.into_iter().map(training_record_from_row).collect()
     }
 
     async fn find_by_id(&self, id: Uuid) -> Result<Option<TrainingRecord>, StorageError> {
         let row = sqlx::query(
-            r#"SELECT id, investigation_id, asset_id, feature_schema_version, captured_at, features, automated_label, analyst_label, labeled_at
+            r#"SELECT id, investigation_id, asset_id, feature_schema_version, captured_at, features, automated_label, analyst_label, labeled_at, remediation_outcomes
                FROM training_records WHERE id = $1"#,
         )
         .bind(id)
@@ -2038,7 +2078,7 @@ impl TrainingRecordRepository for PostgresStorage {
         .await
         .map_err(|e| StorageError::Backend(e.to_string()))?;
 
-        Ok(row.map(training_record_from_row))
+        row.map(training_record_from_row).transpose()
     }
 
     async fn attach_analyst_label(
@@ -2067,23 +2107,31 @@ impl TrainingRecordRepository for PostgresStorage {
     }
 }
 
-fn training_record_from_row(r: sqlx::postgres::PgRow) -> TrainingRecord {
-    use sqlx::Row;
-    TrainingRecord {
+fn training_record_from_row(r: sqlx::postgres::PgRow) -> Result<TrainingRecord, StorageError> {
+    let decode = |error: serde_json::Error| {
+        StorageError::Backend(format!("Invalid stored training evidence: {error}"))
+    };
+    Ok(TrainingRecord {
         id: r.get("id"),
         investigation_id: r.get("investigation_id"),
         asset_id: r.get("asset_id"),
         feature_schema_version: r.get::<i32, _>("feature_schema_version") as u32,
         captured_at: r.get("captured_at"),
-        features: serde_json::from_value(r.get("features")).unwrap_or_default(),
+        features: serde_json::from_value(r.get("features")).map_err(decode)?,
         automated_label: r
             .get::<Option<serde_json::Value>, _>("automated_label")
-            .and_then(|v| serde_json::from_value(v).ok()),
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(decode)?,
         analyst_label: r
             .get::<Option<serde_json::Value>, _>("analyst_label")
-            .and_then(|v| serde_json::from_value(v).ok()),
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(decode)?,
         labeled_at: r.get("labeled_at"),
-    }
+        remediation_outcomes: serde_json::from_value(r.get("remediation_outcomes"))
+            .map_err(decode)?,
+    })
 }
 
 fn probe_trigger_to_str(t: &ProbeTrigger) -> &'static str {
@@ -2146,6 +2194,10 @@ fn probe_run_from_row(r: sqlx::postgres::PgRow) -> ProbeRun {
     let trigger_str: String = r.get("trigger");
     let outcome_str: String = r.get("outcome");
     ProbeRun {
+        remediation_id: r.get("remediation_id"),
+        verification_condition: r
+            .get::<Option<serde_json::Value>, _>("verification_condition")
+            .and_then(|v| serde_json::from_value(v).ok()),
         id: r.get("id"),
         asset_id: r.get("asset_id"),
         target: r.get("target"),
@@ -2163,5 +2215,74 @@ fn probe_run_from_row(r: sqlx::postgres::PgRow) -> ProbeRun {
         result,
         perspective_mismatches: mismatches,
         has_mismatch: r.get("has_mismatch"),
+    }
+}
+
+#[async_trait]
+impl crate::repository::RemediationRepository for PostgresStorage {
+    async fn create(
+        &self,
+        record: &mailent_domain::RemediationRecord,
+    ) -> Result<mailent_domain::RemediationRecord, StorageError> {
+        let row: serde_json::Value = sqlx::query_scalar("INSERT INTO remediations(id, asset_id, investigation_id, finding_id, data) VALUES ($1,$2,$3,$4,$5) ON CONFLICT(id) DO UPDATE SET id=EXCLUDED.id RETURNING data")
+            .bind(record.id).bind(record.asset_id).bind(record.investigation_id).bind(record.finding.id).bind(serde_json::to_value(record).map_err(|e| StorageError::Backend(e.to_string()))?)
+            .fetch_one(&*self.pool).await.map_err(|e| StorageError::Backend(e.to_string()))?;
+        serde_json::from_value(row).map_err(|e| StorageError::Backend(e.to_string()))
+    }
+    async fn find_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<mailent_domain::RemediationRecord>, StorageError> {
+        let row: Option<serde_json::Value> =
+            sqlx::query_scalar("SELECT data FROM remediations WHERE id=$1")
+                .bind(id)
+                .fetch_optional(&*self.pool)
+                .await
+                .map_err(|e| StorageError::Backend(e.to_string()))?;
+        row.map(serde_json::from_value)
+            .transpose()
+            .map_err(|e| StorageError::Backend(e.to_string()))
+    }
+    async fn list_for_asset(
+        &self,
+        asset_id: Uuid,
+    ) -> Result<Vec<mailent_domain::RemediationRecord>, StorageError> {
+        let rows: Vec<serde_json::Value> =
+            sqlx::query_scalar("SELECT data FROM remediations WHERE asset_id=$1 ORDER BY id")
+                .bind(asset_id)
+                .fetch_all(&*self.pool)
+                .await
+                .map_err(|e| StorageError::Backend(e.to_string()))?;
+        rows.into_iter()
+            .map(serde_json::from_value)
+            .collect::<Result<_, _>>()
+            .map_err(|e| StorageError::Backend(e.to_string()))
+    }
+    async fn list_verifying(&self) -> Result<Vec<mailent_domain::RemediationRecord>, StorageError> {
+        let rows: Vec<serde_json::Value> =
+            sqlx::query_scalar("SELECT data FROM remediations WHERE data->>'state' = 'verifying'")
+                .fetch_all(&*self.pool)
+                .await
+                .map_err(|e| StorageError::Backend(e.to_string()))?;
+        rows.into_iter()
+            .map(serde_json::from_value)
+            .collect::<Result<_, _>>()
+            .map_err(|e| StorageError::Backend(e.to_string()))
+    }
+    async fn update(
+        &self,
+        record: &mailent_domain::RemediationRecord,
+        expected_revision: i64,
+    ) -> Result<bool, StorageError> {
+        let result = sqlx::query(
+            "UPDATE remediations SET data=$2 WHERE id=$1 AND (data->>'revision')::bigint=$3",
+        )
+        .bind(record.id)
+        .bind(serde_json::to_value(record).map_err(|e| StorageError::Backend(e.to_string()))?)
+        .bind(expected_revision)
+        .execute(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(e.to_string()))?;
+        Ok(result.rows_affected() == 1)
     }
 }

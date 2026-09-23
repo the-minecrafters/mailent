@@ -52,3 +52,11 @@ pub struct DecisionRecord {
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: time::OffsetDateTime,
 }
+
+/// Shared provenance marker for the local deterministic fallback, never an AI assessment.
+pub const DETERMINISTIC_DECISION_PROVIDER: &str = "mailent-deterministic-fallback";
+impl DecisionResult {
+    pub fn is_deterministic(&self) -> bool {
+        self.provider_info == DETERMINISTIC_DECISION_PROVIDER
+    }
+}

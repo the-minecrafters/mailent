@@ -1,3 +1,5 @@
+#[path = "../../../tests/support/databases.rs"]
+mod databases;
 use mailent_core::{
     AppState, CoreConfig,
     probes::{apply_evidence, schedule_probe},
@@ -208,9 +210,13 @@ async fn unknown_passive_is_not_a_mismatch_and_drift_is_separate() {
 #[tokio::test]
 #[ignore = "requires running Postfix/Dovecot lab, PostgreSQL and ClickHouse"]
 async fn real_probe_persists_enriches_and_survives_restart() {
+    let db = databases::TestDatabases::start()
+        .await
+        .expect("local test database");
     let config = CoreConfig {
-        database_url: Some(std::env::var("MAILENT_DATABASE_URL").expect("set test database URL")),
-        clickhouse_url: Some("http://127.0.0.1:8123".into()),
+        database_url: Some(db.postgres_url.clone()),
+        clickhouse_url: Some(db.clickhouse_url.clone()),
+        clickhouse_database: db.clickhouse_database.clone(),
         ..Default::default()
     };
     let mut state = AppState::from_config(&config).await.unwrap();
@@ -300,6 +306,7 @@ async fn real_probe_persists_enriches_and_survives_restart() {
         "verified persistent probe {id}, asset {}, investigation {}",
         asset.id, inv.id
     );
+    db.finish().await;
 }
 
 #[derive(Default)]

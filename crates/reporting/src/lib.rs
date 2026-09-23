@@ -1,13 +1,25 @@
+//! Forensic reporting: one canonical model, deterministic builders, and
+//! JSON / HTML / PDF export. All content derives from Mailent's own persisted
+//! evidence; AI output is only ever carried as clearly labelled supplemental
+//! context.
+//!
+//! The legacy [`ReportModel`] summary is kept for backward compatibility with
+//! the previous metrics surface.
+pub mod builder;
+pub mod export;
+pub mod model;
+
+pub use builder::{ReportInput, build_report};
+pub use export::{ReportError, render_html, render_pdf, to_json};
+pub use model::{
+    ActiveVerificationSection, AiAssessmentSection, CaseMetadata, CertificateSection,
+    ContextSection, FindingSection, ForensicReport, Maybe, ProvenanceClass, RiskPrioritization,
+    SessionRecord, TimelineEntry, UnavailableReason,
+};
+
 use mailent_domain::Finding;
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 use time::OffsetDateTime;
-
-#[derive(Error, Debug)]
-pub enum ReportError {
-    #[error("serialization failed: {0}")]
-    Serialization(#[from] serde_json::Error),
-}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReportSummary {

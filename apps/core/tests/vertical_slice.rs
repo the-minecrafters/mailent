@@ -151,7 +151,10 @@ async fn fixtures_have_reproducible_provenance_and_idempotent_storage() {
         );
         for f in findings {
             assert_eq!(f["policy_name"], "modern");
-            assert_eq!(f["policy_version"], "1.0.0");
+            assert_eq!(
+                f["policy_version"],
+                mailent_policy::PolicyPack::modern().version
+            );
             assert!(f["reference"].as_str().unwrap().len() > 3);
             assert_eq!(f["affected_count"], 1);
             assert_eq!(f["evidence"][0]["observation_id"], response["session_id"]);

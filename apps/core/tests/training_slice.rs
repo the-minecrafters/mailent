@@ -488,3 +488,51 @@ async fn pipeline_automatically_captures_training_record() {
     assert_eq!(rec.asset_id, asset.id);
     let _ = rec;
 }
+
+#[tokio::test]
+async fn deterministic_fallback_is_not_an_ai_teacher_or_report_assessment() {
+    let state = AppState::new();
+    let (asset, mut inv) = seed(&state).await;
+    let s = session(asset.id);
+    let decision = DecisionResult {
+        risk: RiskLevel::High,
+        priority: PriorityLevel::High,
+        anomalous: false,
+        human_review: true,
+        confidence: 1.0,
+        provider_info: DETERMINISTIC_DECISION_PROVIDER.into(),
+        reasons: vec!["Deterministic policy".into()],
+    };
+    let record = mailent_core::training::capture_training(
+        &state,
+        &context(
+            &inv,
+            &asset,
+            &s,
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            Some(&decision),
+            None,
+        ),
+    )
+    .await
+    .unwrap();
+    assert!(record.features.jev.is_none());
+    assert_eq!(
+        record.automated_label.unwrap().source,
+        DETERMINISTIC_DECISION_PROVIDER
+    );
+    inv.jev_decision = Some(decision);
+    let input = mailent_reporting::ReportInput {
+        investigation: Some(&inv),
+        ..Default::default()
+    };
+    assert!(
+        mailent_reporting::build_report("test", "test", &input, now())
+            .ai_assessment
+            .is_none()
+    );
+}

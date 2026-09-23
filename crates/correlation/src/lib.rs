@@ -2,6 +2,10 @@ use mailent_domain::{EmailSession, Finding, FindingCandidate};
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
+pub mod posture;
+
+pub use posture::{PostureInput, build_guidance, compute_posture};
+
 /// Correlator responsible for converting low-level FindingCandidate records
 /// into aggregated, durable Finding domain entities.
 pub struct FindingCorrelator;

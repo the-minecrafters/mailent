@@ -108,7 +108,7 @@ impl JevProvider {
             human_review,
             priority,
             confidence: 0.85,
-            provider_info: "mailent-deterministic-fallback".to_string(),
+            provider_info: mailent_domain::DETERMINISTIC_DECISION_PROVIDER.to_string(),
             reasons,
         }
     }
