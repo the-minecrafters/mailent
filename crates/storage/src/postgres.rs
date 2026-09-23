@@ -16,9 +16,10 @@ use uuid::Uuid;
 use crate::{
     error::StorageError,
     repository::{
-        AssetRepository, BaselineRepository, CertificateRepository, DecisionRepository,
-        FindingRepository, IntelligenceRepository, InvestigationRepository, ProbeRepository,
-        SensorRepository, TrainingRecordRepository,
+        ArchivedReportRepository, AssetRepository, BaselineRepository, CertificateRepository,
+        DecisionRepository, FindingRepository, IntegrationRepository, IntelligenceRepository,
+        InvestigationRepository, PostureRepository, ProbeRepository, SensorRepository,
+        TrainingRecordRepository,
     },
 };
 
@@ -2141,6 +2142,8 @@ fn probe_trigger_to_str(t: &ProbeTrigger) -> &'static str {
         ProbeTrigger::CertificateChange => "certificate_change",
         ProbeTrigger::StartTlsRegression => "starttls_regression",
         ProbeTrigger::Scheduled => "scheduled",
+        ProbeTrigger::DriftTriggered => "drift_triggered",
+        ProbeTrigger::RemediationVerification => "remediation_verification",
     }
 }
 
@@ -2161,6 +2164,8 @@ fn str_to_probe_trigger(s: &str) -> ProbeTrigger {
         "internal_external_inconsistency" => ProbeTrigger::InternalExternalInconsistency,
         "certificate_change" => ProbeTrigger::CertificateChange,
         "starttls_regression" => ProbeTrigger::StartTlsRegression,
+        "drift_triggered" => ProbeTrigger::DriftTriggered,
+        "remediation_verification" => ProbeTrigger::RemediationVerification,
         _ => ProbeTrigger::Scheduled,
     }
 }
@@ -2284,5 +2289,465 @@ impl crate::repository::RemediationRepository for PostgresStorage {
         .await
         .map_err(|e| StorageError::Backend(e.to_string()))?;
         Ok(result.rows_affected() == 1)
+    }
+}
+
+#[async_trait]
+impl PostureRepository for PostgresStorage {
+    async fn save_snapshot(
+        &self,
+        snapshot: &mailent_domain::PostureSnapshot,
+    ) -> Result<(), StorageError> {
+        let worst_findings = serde_json::to_value(&snapshot.worst_findings)
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        let categories = serde_json::to_value(&snapshot.categories)
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        let deductions = serde_json::to_value(&snapshot.deductions)
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        let grade_str = snapshot.grade.to_string().to_lowercase();
+
+        sqlx::query(
+            r#"
+            INSERT INTO posture_snapshots
+            (id, asset_id, score, grade, score_capped, pre_cap_score, findings_considered,
+             worst_findings, categories, deductions, change_reason, score_delta, recorded_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            ON CONFLICT (id) DO UPDATE SET
+                score = EXCLUDED.score,
+                grade = EXCLUDED.grade,
+                score_capped = EXCLUDED.score_capped,
+                pre_cap_score = EXCLUDED.pre_cap_score,
+                findings_considered = EXCLUDED.findings_considered,
+                worst_findings = EXCLUDED.worst_findings,
+                categories = EXCLUDED.categories,
+                deductions = EXCLUDED.deductions,
+                change_reason = EXCLUDED.change_reason,
+                score_delta = EXCLUDED.score_delta,
+                recorded_at = EXCLUDED.recorded_at
+            "#,
+        )
+        .bind(snapshot.id)
+        .bind(snapshot.asset_id)
+        .bind(snapshot.score)
+        .bind(grade_str)
+        .bind(snapshot.score_capped)
+        .bind(snapshot.pre_cap_score)
+        .bind(snapshot.findings_considered as i32)
+        .bind(worst_findings)
+        .bind(categories)
+        .bind(deductions)
+        .bind(&snapshot.change_reason)
+        .bind(snapshot.score_delta)
+        .bind(snapshot.recorded_at)
+        .execute(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("save posture snapshot error: {e}")))?;
+
+        Ok(())
+    }
+
+    async fn list_for_asset(
+        &self,
+        asset_id: Uuid,
+        limit: usize,
+    ) -> Result<Vec<mailent_domain::PostureSnapshot>, StorageError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, asset_id, score, grade, score_capped, pre_cap_score, findings_considered,
+                   worst_findings, categories, deductions, change_reason, score_delta, recorded_at
+            FROM posture_snapshots
+            WHERE asset_id = $1
+            ORDER BY recorded_at DESC
+            LIMIT $2
+            "#,
+        )
+        .bind(asset_id)
+        .bind(limit as i64)
+        .fetch_all(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("list posture snapshots error: {e}")))?;
+
+        let mut snapshots = Vec::with_capacity(rows.len());
+        for row in rows {
+            let grade_str: String = row.get("grade");
+            let score: f32 = row.get("score");
+            let grade = match grade_str.as_str() {
+                "strong" => mailent_domain::PostureGrade::Strong,
+                "good" => mailent_domain::PostureGrade::Good,
+                "moderate" => mailent_domain::PostureGrade::Moderate,
+                "weak" => mailent_domain::PostureGrade::Weak,
+                "critical" => mailent_domain::PostureGrade::Critical,
+                _ => mailent_domain::PostureGrade::from_score(score),
+            };
+            let worst_val: serde_json::Value = row.get("worst_findings");
+            let cat_val: serde_json::Value = row.get("categories");
+            let ded_val: serde_json::Value = row.get("deductions");
+            let worst_findings = serde_json::from_value(worst_val).unwrap_or_default();
+            let categories = serde_json::from_value(cat_val).unwrap_or_default();
+            let deductions = serde_json::from_value(ded_val).unwrap_or_default();
+
+            snapshots.push(mailent_domain::PostureSnapshot {
+                id: row.get("id"),
+                asset_id: row.get("asset_id"),
+                score,
+                grade,
+                score_capped: row.get("score_capped"),
+                pre_cap_score: row.get("pre_cap_score"),
+                findings_considered: row.get::<i32, _>("findings_considered") as usize,
+                worst_findings,
+                categories,
+                deductions,
+                change_reason: row.get("change_reason"),
+                score_delta: row.get("score_delta"),
+                recorded_at: row.get("recorded_at"),
+            });
+        }
+        Ok(snapshots)
+    }
+
+    async fn latest_for_asset(
+        &self,
+        asset_id: Uuid,
+    ) -> Result<Option<mailent_domain::PostureSnapshot>, StorageError> {
+        let list = PostureRepository::list_for_asset(self, asset_id, 1).await?;
+        Ok(list.into_iter().next())
+    }
+}
+
+#[async_trait]
+impl IntegrationRepository for PostgresStorage {
+    async fn save(&self, config: &mailent_domain::IntegrationConfig) -> Result<(), StorageError> {
+        let kind_str = match config.kind {
+            mailent_domain::IntegrationKind::Webhook => "webhook",
+            mailent_domain::IntegrationKind::Syslog => "syslog",
+        };
+        let event_types = serde_json::to_value(&config.event_types)
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO integrations
+            (id, name, kind, destination, event_types, enabled, auth_header,
+             last_delivery_at, last_status_code, last_error, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name,
+                kind = EXCLUDED.kind,
+                destination = EXCLUDED.destination,
+                event_types = EXCLUDED.event_types,
+                enabled = EXCLUDED.enabled,
+                auth_header = EXCLUDED.auth_header,
+                last_delivery_at = EXCLUDED.last_delivery_at,
+                last_status_code = EXCLUDED.last_status_code,
+                last_error = EXCLUDED.last_error,
+                updated_at = EXCLUDED.updated_at
+            "#,
+        )
+        .bind(config.id)
+        .bind(&config.name)
+        .bind(kind_str)
+        .bind(&config.destination)
+        .bind(event_types)
+        .bind(config.enabled)
+        .bind(&config.auth_header)
+        .bind(config.last_delivery_at)
+        .bind(config.last_status_code.map(|s| s as i32))
+        .bind(&config.last_error)
+        .bind(config.created_at)
+        .bind(config.updated_at)
+        .execute(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("save integration error: {e}")))?;
+
+        Ok(())
+    }
+
+    async fn list_all(&self) -> Result<Vec<mailent_domain::IntegrationConfig>, StorageError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, name, kind, destination, event_types, enabled, auth_header,
+                   last_delivery_at, last_status_code, last_error, created_at, updated_at
+            FROM integrations
+            ORDER BY created_at DESC
+            "#,
+        )
+        .fetch_all(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("list integrations error: {e}")))?;
+
+        let mut configs = Vec::with_capacity(rows.len());
+        for row in rows {
+            let kind_str: String = row.get("kind");
+            let kind = match kind_str.as_str() {
+                "syslog" => mailent_domain::IntegrationKind::Syslog,
+                _ => mailent_domain::IntegrationKind::Webhook,
+            };
+            let ev_val: serde_json::Value = row.get("event_types");
+            let event_types = serde_json::from_value(ev_val).unwrap_or_default();
+            let code: Option<i32> = row.get("last_status_code");
+
+            configs.push(mailent_domain::IntegrationConfig {
+                id: row.get("id"),
+                name: row.get("name"),
+                kind,
+                destination: row.get("destination"),
+                event_types,
+                enabled: row.get("enabled"),
+                auth_header: row.get("auth_header"),
+                last_delivery_at: row.get("last_delivery_at"),
+                last_status_code: code.map(|c| c as u16),
+                last_error: row.get("last_error"),
+                created_at: row.get("created_at"),
+                updated_at: row.get("updated_at"),
+            });
+        }
+        Ok(configs)
+    }
+
+    async fn find_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<mailent_domain::IntegrationConfig>, StorageError> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, name, kind, destination, event_types, enabled, auth_header,
+                   last_delivery_at, last_status_code, last_error, created_at, updated_at
+            FROM integrations
+            WHERE id = $1
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("find integration error: {e}")))?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let kind_str: String = row.get("kind");
+        let kind = match kind_str.as_str() {
+            "syslog" => mailent_domain::IntegrationKind::Syslog,
+            _ => mailent_domain::IntegrationKind::Webhook,
+        };
+        let ev_val: serde_json::Value = row.get("event_types");
+        let event_types = serde_json::from_value(ev_val).unwrap_or_default();
+        let code: Option<i32> = row.get("last_status_code");
+
+        Ok(Some(mailent_domain::IntegrationConfig {
+            id: row.get("id"),
+            name: row.get("name"),
+            kind,
+            destination: row.get("destination"),
+            event_types,
+            enabled: row.get("enabled"),
+            auth_header: row.get("auth_header"),
+            last_delivery_at: row.get("last_delivery_at"),
+            last_status_code: code.map(|c| c as u16),
+            last_error: row.get("last_error"),
+            created_at: row.get("created_at"),
+            updated_at: row.get("updated_at"),
+        }))
+    }
+
+    async fn delete(&self, id: Uuid) -> Result<bool, StorageError> {
+        let res = sqlx::query("DELETE FROM integrations WHERE id = $1")
+            .bind(id)
+            .execute(&*self.pool)
+            .await
+            .map_err(|e| StorageError::Backend(format!("delete integration error: {e}")))?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    async fn update_status(
+        &self,
+        id: Uuid,
+        status_code: Option<u16>,
+        error: Option<String>,
+        at: time::OffsetDateTime,
+    ) -> Result<(), StorageError> {
+        sqlx::query(
+            r#"
+            UPDATE integrations
+            SET last_delivery_at = $2, last_status_code = $3, last_error = $4, updated_at = $2
+            WHERE id = $1
+            "#,
+        )
+        .bind(id)
+        .bind(at)
+        .bind(status_code.map(|s| s as i32))
+        .bind(error)
+        .execute(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("update integration status error: {e}")))?;
+
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl ArchivedReportRepository for PostgresStorage {
+    async fn archive(
+        &self,
+        report: &mailent_domain::ArchivedReportRecord,
+    ) -> Result<(), StorageError> {
+        let kind_str = match report.subject_kind {
+            mailent_domain::PostureSubjectKind::Asset => "asset",
+            mailent_domain::PostureSubjectKind::Session => "session",
+            mailent_domain::PostureSubjectKind::Investigation => "investigation",
+        };
+
+        sqlx::query(
+            r#"
+            INSERT INTO archived_reports
+            (id, report_id, subject_kind, subject_id, title, fingerprint,
+             generated_at, archived_at, archived_by, notes, raw_json)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            ON CONFLICT (id) DO UPDATE SET
+                title = EXCLUDED.title,
+                notes = EXCLUDED.notes
+            "#,
+        )
+        .bind(report.id)
+        .bind(&report.report_id)
+        .bind(kind_str)
+        .bind(report.subject_id)
+        .bind(&report.title)
+        .bind(&report.fingerprint)
+        .bind(report.generated_at)
+        .bind(report.archived_at)
+        .bind(&report.archived_by)
+        .bind(&report.notes)
+        .bind(&report.raw_report_json)
+        .execute(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("archive report error: {e}")))?;
+
+        Ok(())
+    }
+
+    async fn list_all(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<mailent_domain::ArchivedReportSummary>, StorageError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, report_id, subject_kind, subject_id, title, fingerprint,
+                   generated_at, archived_at, archived_by, notes
+            FROM archived_reports
+            ORDER BY archived_at DESC
+            LIMIT $1
+            "#,
+        )
+        .bind(limit as i64)
+        .fetch_all(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("list archived reports error: {e}")))?;
+
+        let mut summaries = Vec::with_capacity(rows.len());
+        for row in rows {
+            let kind_str: String = row.get("subject_kind");
+            let subject_kind = match kind_str.as_str() {
+                "session" => mailent_domain::PostureSubjectKind::Session,
+                "investigation" => mailent_domain::PostureSubjectKind::Investigation,
+                _ => mailent_domain::PostureSubjectKind::Asset,
+            };
+            summaries.push(mailent_domain::ArchivedReportSummary {
+                id: row.get("id"),
+                report_id: row.get("report_id"),
+                subject_kind,
+                subject_id: row.get("subject_id"),
+                title: row.get("title"),
+                fingerprint: row.get("fingerprint"),
+                generated_at: row.get("generated_at"),
+                archived_at: row.get("archived_at"),
+                archived_by: row.get("archived_by"),
+                notes: row.get("notes"),
+            });
+        }
+        Ok(summaries)
+    }
+
+    async fn list_for_subject(
+        &self,
+        subject_id: Uuid,
+    ) -> Result<Vec<mailent_domain::ArchivedReportSummary>, StorageError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, report_id, subject_kind, subject_id, title, fingerprint,
+                   generated_at, archived_at, archived_by, notes
+            FROM archived_reports
+            WHERE subject_id = $1
+            ORDER BY archived_at DESC
+            "#,
+        )
+        .bind(subject_id)
+        .fetch_all(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("list subject reports error: {e}")))?;
+
+        let mut summaries = Vec::with_capacity(rows.len());
+        for row in rows {
+            let kind_str: String = row.get("subject_kind");
+            let subject_kind = match kind_str.as_str() {
+                "session" => mailent_domain::PostureSubjectKind::Session,
+                "investigation" => mailent_domain::PostureSubjectKind::Investigation,
+                _ => mailent_domain::PostureSubjectKind::Asset,
+            };
+            summaries.push(mailent_domain::ArchivedReportSummary {
+                id: row.get("id"),
+                report_id: row.get("report_id"),
+                subject_kind,
+                subject_id: row.get("subject_id"),
+                title: row.get("title"),
+                fingerprint: row.get("fingerprint"),
+                generated_at: row.get("generated_at"),
+                archived_at: row.get("archived_at"),
+                archived_by: row.get("archived_by"),
+                notes: row.get("notes"),
+            });
+        }
+        Ok(summaries)
+    }
+
+    async fn find_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<mailent_domain::ArchivedReportRecord>, StorageError> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, report_id, subject_kind, subject_id, title, fingerprint,
+                   generated_at, archived_at, archived_by, notes, raw_json
+            FROM archived_reports
+            WHERE id = $1
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("find archived report error: {e}")))?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let kind_str: String = row.get("subject_kind");
+        let subject_kind = match kind_str.as_str() {
+            "session" => mailent_domain::PostureSubjectKind::Session,
+            "investigation" => mailent_domain::PostureSubjectKind::Investigation,
+            _ => mailent_domain::PostureSubjectKind::Asset,
+        };
+
+        Ok(Some(mailent_domain::ArchivedReportRecord {
+            id: row.get("id"),
+            report_id: row.get("report_id"),
+            subject_kind,
+            subject_id: row.get("subject_id"),
+            title: row.get("title"),
+            fingerprint: row.get("fingerprint"),
+            generated_at: row.get("generated_at"),
+            archived_at: row.get("archived_at"),
+            archived_by: row.get("archived_by"),
+            notes: row.get("notes"),
+            raw_report_json: row.get("raw_json"),
+        }))
     }
 }

@@ -67,106 +67,243 @@ export function RemediationWorkflow({
       guidance.evidence.flatMap((e) => (e.session_id ? [e.session_id] : [])),
     ),
   ];
+  const stateClass =
+    record?.state === "verified_fixed"
+      ? "fresh"
+      : record?.state === "still_present"
+        ? "critical"
+        : record?.state === "applied"
+          ? "aging"
+          : "low";
+
   return (
-    <section aria-label={`Remediation workflow ${guidance.rule_id}`}>
-      <p>
-        <strong>
-          Remediation: {record?.state.replaceAll("_", " ") ?? "not started"}
-        </strong>
-      </p>
-      <p>
+    <section
+      aria-label={`Remediation workflow ${guidance.rule_id}`}
+      className="remediation-workflow-card"
+      style={{
+        marginTop: "1rem",
+        padding: "1.25rem",
+        background: "var(--surface-subtle)",
+        borderRadius: "8px",
+        border: "1px solid var(--hairline)",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          marginBottom: "0.5rem",
+        }}
+      >
+        <p style={{ margin: 0 }}>
+          <strong>
+            Remediation: {record?.state.replaceAll("_", " ") ?? "not started"}
+          </strong>
+        </p>
+        {record && (
+          <span className={`badge ${stateClass}`}>
+            {record.state.replaceAll("_", " ").toUpperCase()}
+          </span>
+        )}
+      </div>
+      <p
+        className="secondary-text"
+        style={{ fontSize: "0.8125rem", margin: "0 0 1rem" }}
+      >
         Verification applies to the affected endpoint at the probe time.
         Original findings and historical posture remain visible; investigation
         status stays analyst controlled.
       </p>
       {!record && sessions.length > 1 && (
-        <label>
-          Affected session{" "}
-          <select
-            value={selectedSession}
-            onChange={(e) => setSelectedSession(e.target.value)}
-          >
-            <option value="">Select a captured session</option>
-            {sessions.map((id) => (
-              <option key={id}>{id}</option>
-            ))}
-          </select>
-        </label>
+        <div className="form-group" style={{ marginBottom: "1rem" }}>
+          <label className="form-label">
+            Affected session
+            <select
+              value={selectedSession}
+              onChange={(e) => setSelectedSession(e.target.value)}
+              style={{ marginTop: "0.35rem" }}
+            >
+              <option value="">Select a captured session</option>
+              {sessions.map((id) => (
+                <option key={id} value={id}>
+                  {id}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
       )}
       {!record ? (
         <button
           type="button"
+          className="btn-primary"
           disabled={
             mutation.isPending || (sessions.length > 1 && !selectedSession)
           }
           onClick={() => mutation.mutate("start")}
         >
-          Start remediation
+          {mutation.isPending ? "Starting…" : "Start remediation"}
         </button>
       ) : (
         <>
           {record.state !== "verifying" && (
-            <>
-              <label>
-                Change note{" "}
+            <div
+              style={{
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "flex-end",
+                gap: "0.75rem",
+                marginBottom: "1rem",
+                padding: "1rem",
+                background: "var(--surface-card-solid)",
+                borderRadius: "8px",
+                border: "1px solid var(--hairline)",
+              }}
+            >
+              <div style={{ flex: 1, minWidth: "240px" }}>
+                <label
+                  className="form-label"
+                  style={{ marginBottom: "0.35rem" }}
+                >
+                  Change note
+                </label>
                 <input
                   value={note}
                   maxLength={4096}
                   onChange={(e) => setNote(e.target.value)}
                   placeholder="Describe the applied configuration change"
+                  style={{ width: "100%" }}
                 />
-              </label>
-              <button
-                type="button"
-                disabled={mutation.isPending}
-                onClick={() => mutation.mutate("apply")}
-              >
-                Mark change applied
-              </button>
-              {record.applied_at && (
+              </div>
+              <div style={{ display: "flex", gap: "0.5rem" }}>
                 <button
                   type="button"
+                  className="btn"
                   disabled={mutation.isPending}
-                  onClick={() => mutation.mutate("verify")}
+                  onClick={() => mutation.mutate("apply")}
                 >
-                  Verify fix
+                  Mark change applied
                 </button>
-              )}
-            </>
+                {record.applied_at && (
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={mutation.isPending}
+                    onClick={() => mutation.mutate("verify")}
+                  >
+                    Verify fix
+                  </button>
+                )}
+              </div>
+            </div>
           )}
-          <details>
-            <summary>Original policy and passive evidence</summary>
-            <p>{record.finding.description}</p>
-            <p>
-              Session {record.before.session_id} · {record.before.flow.dst_ip}:
-              {record.before.flow.dst_port} · TLS{" "}
-              {record.before.tls_version ?? "Unknown"}
-            </p>
-            <p>
-              Certificate{" "}
-              {record.before.certificate?.reference.sha256_fingerprint ??
-                "Unavailable"}
-            </p>
+          <details
+            style={{
+              padding: "0.75rem 1rem",
+              background: "var(--surface-card-solid)",
+              borderRadius: "6px",
+              border: "1px solid var(--hairline)",
+              marginBottom: "0.75rem",
+            }}
+          >
+            <summary
+              style={{
+                cursor: "pointer",
+                fontWeight: 600,
+                fontSize: "0.8125rem",
+              }}
+            >
+              Original policy and passive evidence
+            </summary>
+            <div style={{ marginTop: "0.75rem", fontSize: "0.8125rem" }}>
+              <p style={{ margin: "0.25rem 0" }}>
+                {record.finding.description}
+              </p>
+              <p
+                className="mono secondary-text"
+                style={{ margin: "0.25rem 0" }}
+              >
+                Session {record.before.session_id} · {record.before.flow.dst_ip}
+                :{record.before.flow.dst_port} · TLS{" "}
+                {record.before.tls_version ?? "Unknown"}
+              </p>
+              <p
+                className="mono secondary-text"
+                style={{ margin: "0.25rem 0" }}
+              >
+                Certificate{" "}
+                {record.before.certificate?.reference.sha256_fingerprint ??
+                  "Unavailable"}
+              </p>
+            </div>
           </details>
           {record.attempts.map((attempt) => (
-            <div key={attempt.request_id}>
-              <p role="status">
+            <div
+              key={attempt.request_id}
+              style={{
+                padding: "0.875rem",
+                borderRadius: "6px",
+                border: "1px solid var(--hairline)",
+                background: "var(--surface-card-solid)",
+                marginBottom: "0.75rem",
+              }}
+            >
+              <p
+                role="status"
+                style={{
+                  fontWeight: 600,
+                  fontSize: "0.875rem",
+                  margin: "0 0 0.25rem",
+                }}
+              >
                 {attempt.outcome?.replaceAll("_", " ") ?? "verifying"}:{" "}
                 {attempt.explanation}
               </p>
-              <p>Verified at {attempt.completed_at ?? "Pending"}</p>
+              <p
+                className="mono secondary-text"
+                style={{ fontSize: "0.75rem", margin: "0 0 0.5rem" }}
+              >
+                Verified at {attempt.completed_at ?? "Pending"}
+              </p>
               {attempt.after && (
-                <details>
-                  <summary>Active verification evidence</summary>
-                  <ProbeEvidence run={attempt.after} />
+                <details style={{ marginTop: "0.5rem" }}>
+                  <summary
+                    style={{
+                      cursor: "pointer",
+                      fontSize: "0.75rem",
+                      fontWeight: 600,
+                    }}
+                  >
+                    Active verification evidence
+                  </summary>
+                  <div style={{ marginTop: "0.5rem" }}>
+                    <ProbeEvidence run={attempt.after} />
+                  </div>
                 </details>
               )}
             </div>
           ))}
         </>
       )}
-      {mutation.isError && <p role="alert">{mutation.error.message}</p>}
-      {query.isError && <p role="alert">{query.error.message}</p>}
+      {mutation.isError && (
+        <p
+          role="alert"
+          className="alert-banner danger"
+          style={{ marginTop: "0.75rem" }}
+        >
+          {mutation.error.message}
+        </p>
+      )}
+      {query.isError && (
+        <p
+          role="alert"
+          className="alert-banner danger"
+          style={{ marginTop: "0.75rem" }}
+        >
+          {query.error.message}
+        </p>
+      )}
     </section>
   );
 }

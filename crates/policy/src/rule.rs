@@ -85,4 +85,16 @@ impl PolicyPack {
         Self::from_yaml(include_str!("../../../policies/modern/policy.yaml"))
             .expect("the bundled modern policy must validate")
     }
+
+    pub fn high_security() -> Self {
+        Self::from_yaml(include_str!("../../../policies/high-security/policy.yaml"))
+            .expect("the bundled high-security policy must validate")
+    }
+
+    pub fn legacy_compatible() -> Self {
+        Self::from_yaml(include_str!(
+            "../../../policies/legacy-compatible/policy.yaml"
+        ))
+        .expect("the bundled legacy-compatible policy must validate")
+    }
 }

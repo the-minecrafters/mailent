@@ -14,6 +14,12 @@ importers:
 
   apps/web:
     dependencies:
+      '@fontsource-variable/inter':
+        specifier: ^5.3.0
+        version: 5.3.0
+      '@fontsource-variable/merriweather-sans':
+        specifier: ^5.3.0
+        version: 5.3.0
       '@tanstack/react-query':
         specifier: ^5.90.0
         version: 5.103.2(react@19.3.0)
@@ -244,6 +250,12 @@ packages:
     peerDependenciesMeta:
       '@noble/hashes':
         optional: true
+
+  '@fontsource-variable/inter@5.3.0':
+    resolution: {integrity: sha512-OupL48va4JNofb97w6NYeF9S7W/kHNKM0Er8Dem5nqi4jeOLrVJDoE8tZEpnMJmtkvNbB1EIPPwHcdkF6b1oUA==}
+
+  '@fontsource-variable/merriweather-sans@5.3.0':
+    resolution: {integrity: sha512-kM7cyNiIs48Vtln0iNkqFKiuskOo9mLOBrik7p37+pP1DSxP9Js488/UNZVkrEUHGW60T8Mah+USyzPIc6QrDg==}
 
   '@jridgewell/sourcemap-codec@1.6.0':
     resolution: {integrity: sha512-T7jf+5zgsZHwNJ4lvQ7/aezbyk0nNX+zJVWpmHA7VYsEx7a7qr5Rg5IbtJFqkgze5Y2sruq1RUY8Q837Od7iFw==}
@@ -1087,6 +1099,10 @@ snapshots:
   '@csstools/css-tokenizer@4.0.1': {}
 
   '@exodus/bytes@1.15.2': {}
+
+  '@fontsource-variable/inter@5.3.0': {}
+
+  '@fontsource-variable/merriweather-sans@5.3.0': {}
 
   '@jridgewell/sourcemap-codec@1.6.0': {}
 

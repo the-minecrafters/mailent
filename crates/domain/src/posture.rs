@@ -205,3 +205,79 @@ pub struct RemediationGuidance {
 pub fn posture_uuid(namespace: Uuid, key: &str) -> Uuid {
     Uuid::new_v5(&namespace, key.as_bytes())
 }
+
+/// Persisted point-in-time posture snapshot for an asset.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PostureSnapshot {
+    pub id: Uuid,
+    pub asset_id: Uuid,
+    pub score: f32,
+    pub grade: PostureGrade,
+    pub score_capped: bool,
+    pub pre_cap_score: f32,
+    pub categories: Vec<PostureCategoryScore>,
+    pub deductions: Vec<PostureDeduction>,
+    pub worst_findings: Vec<String>,
+    pub findings_considered: usize,
+    pub change_reason: Option<String>,
+    pub score_delta: Option<f32>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub recorded_at: OffsetDateTime,
+}
+
+impl PostureSnapshot {
+    pub fn from_posture(
+        asset_id: Uuid,
+        posture: &SecurityPosture,
+        change_reason: Option<String>,
+        score_delta: Option<f32>,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            asset_id,
+            score: posture.score,
+            grade: posture.grade,
+            score_capped: posture.score_capped,
+            pre_cap_score: posture.pre_cap_score,
+            categories: posture.categories.clone(),
+            deductions: posture.deductions.clone(),
+            worst_findings: posture.worst_findings.clone(),
+            findings_considered: posture.findings_considered,
+            change_reason,
+            score_delta,
+            recorded_at: posture.computed_at,
+        }
+    }
+
+    /// Returns true if this snapshot differs meaningfully from another snapshot
+    /// (score changed, grade changed, or deductions/findings changed).
+    pub fn has_meaningful_difference(&self, other: &Self) -> bool {
+        (self.score - other.score).abs() > 0.01
+            || self.grade != other.grade
+            || self.score_capped != other.score_capped
+            || self.findings_considered != other.findings_considered
+            || self.worst_findings != other.worst_findings
+    }
+}
+
+/// History of posture transitions for an asset, showing what changed, when, and why.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AssetPostureHistory {
+    pub asset_id: Uuid,
+    pub current: SecurityPosture,
+    pub previous: Option<PostureSnapshot>,
+    pub history: Vec<PostureSnapshot>,
+    pub change_summary: Option<PostureChangeSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PostureChangeSummary {
+    pub score_delta: f32,
+    pub previous_score: f32,
+    pub current_score: f32,
+    pub what_changed: Vec<String>,
+    pub why_score_changed: String,
+    pub evidence_caused: Vec<crate::finding::EvidenceRef>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub changed_at: OffsetDateTime,
+}

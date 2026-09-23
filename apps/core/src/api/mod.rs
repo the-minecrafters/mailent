@@ -3,6 +3,7 @@ pub mod baselines;
 pub mod certificates;
 pub mod findings;
 pub mod health;
+pub mod integrations;
 pub mod intelligence;
 pub mod investigations;
 pub mod metrics;
@@ -13,6 +14,7 @@ pub mod remediation;
 pub mod reports;
 pub mod sensors;
 pub mod sessions;
+pub mod simulation;
 pub mod training;
 
 use axum::{
@@ -83,12 +85,32 @@ pub fn create_router(state: AppState) -> Router {
             get(posture::get_asset_posture_handler),
         )
         .route(
+            "/api/v1/assets/{id}/posture/history",
+            get(posture::get_asset_posture_history_handler),
+        )
+        .route(
+            "/api/v1/assets/{id}/verification",
+            get(assets::get_asset_verification_handler),
+        )
+        .route(
             "/api/v1/assets/{id}/report",
             get(reports::get_asset_report_handler),
         )
         .route(
             "/api/v1/investigations/{id}/report",
             get(reports::get_investigation_report_handler),
+        )
+        .route(
+            "/api/v1/reports/archive",
+            post(reports::archive_report_handler),
+        )
+        .route(
+            "/api/v1/reports/archived",
+            get(reports::list_archived_reports_handler),
+        )
+        .route(
+            "/api/v1/reports/archived/{id}",
+            get(reports::get_archived_report_handler),
         )
         .route(
             "/api/v1/assets/{id}/baseline",
@@ -175,6 +197,28 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/v1/training/{id}/label",
             post(training::attach_analyst_label_handler),
+        )
+        // Practical crypto digital twin & policy simulation
+        .route("/api/v1/policies", get(simulation::list_policies_handler))
+        .route(
+            "/api/v1/policies/simulate",
+            post(simulation::simulate_policy_handler),
+        )
+        // Workflow integrations (Webhooks & Syslog CEF)
+        .route(
+            "/api/v1/integrations",
+            get(integrations::list_integrations_handler)
+                .post(integrations::create_integration_handler),
+        )
+        .route(
+            "/api/v1/integrations/{id}",
+            get(integrations::get_integration_handler)
+                .put(integrations::update_integration_handler)
+                .delete(integrations::delete_integration_handler),
+        )
+        .route(
+            "/api/v1/integrations/{id}/test",
+            post(integrations::test_integration_handler),
         )
         .layer(TraceLayer::new_for_http())
         .with_state(state)

@@ -29,10 +29,10 @@ tracing-subscriber = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 time = { workspace = true }
+reqwest = { workspace = true }
 
 [dev-dependencies]
 sqlx = { workspace = true }
-reqwest = { workspace = true }
 async-trait = { workspace = true }
 tower = { workspace = true, features = ["util"] }
 http-body-util = "0.1"

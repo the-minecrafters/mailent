@@ -499,9 +499,192 @@ pub fn render_html(report: &ForensicReport) -> Result<String, ReportError> {
         body.push_str("</ul>\n</section>\n");
     }
 
+    let html_style = r#"
+:root {
+  --ink-primary: #1d1d1f;
+  --ink-secondary: #6e6e73;
+  --bg: #f5f5f7;
+  --card: #ffffff;
+  --hairline: #e5e5ea;
+  --accent: #0066cc;
+}
+* { box-sizing: border-box; }
+body {
+  font-family: 'Merriweather Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background-color: var(--bg);
+  color: var(--ink-primary);
+  margin: 0;
+  padding: 2rem 1rem;
+  line-height: 1.5;
+  font-size: 15px;
+}
+.report-container {
+  max-width: 56rem;
+  margin: 0 auto;
+}
+.report-header-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 0.75rem 1.25rem;
+  margin-bottom: 1.5rem;
+}
+.report-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.brand-badge {
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  font-size: 0.8125rem;
+  color: #ffffff;
+  background: var(--ink-primary);
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+}
+.report-type {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--ink-secondary);
+}
+.print-button {
+  background: var(--accent);
+  color: #ffffff;
+  border: none;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  padding: 0.45rem 1rem;
+  border-radius: 9999px;
+  cursor: pointer;
+}
+.print-button:hover { background: #0071e3; }
+section {
+  background: var(--card);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 1.5rem;
+  margin-bottom: 1.25rem;
+}
+section.meta {
+  border-left: 4px solid var(--accent);
+}
+h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+  color: var(--ink-primary);
+}
+h2 {
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin: 0 0 0.875rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--hairline);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0 0 0.4rem;
+}
+p { margin: 0 0 0.6rem; }
+.meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.5rem 1rem;
+  margin-top: 0.75rem;
+  font-size: 0.8125rem;
+}
+.meta-item { display: flex; flex-direction: column; }
+.meta-item span.label { color: var(--ink-secondary); font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
+.meta-item span.val { color: var(--ink-primary); word-break: break-all; }
+.prov {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--ink-secondary);
+  background: #f0f0f4;
+  border: 1px solid var(--hairline);
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+dl {
+  display: grid;
+  grid-template-columns: 170px 1fr;
+  gap: 0.35rem 1rem;
+  margin: 0.5rem 0;
+  font-size: 0.875rem;
+}
+dt {
+  font-weight: 600;
+  color: var(--ink-secondary);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  margin: 0;
+}
+dd {
+  margin: 0;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  word-break: break-all;
+}
+article {
+  border: 1px solid var(--hairline);
+  background: #fafafc;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 0.875rem;
+}
+article:last-child { margin-bottom: 0; }
+pre {
+  background: #f5f5f7;
+  border: 1px solid var(--hairline);
+  padding: 0.75rem;
+  border-radius: 6px;
+  font-size: 0.8125rem;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  font-family: ui-monospace, 'SF Mono', monospace;
+  margin: 0.5rem 0;
+}
+code {
+  font-family: ui-monospace, 'SF Mono', monospace;
+  font-size: 0.8125rem;
+  background: #f5f5f7;
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  border: 1px solid var(--hairline);
+}
+ul, ol { margin: 0.5rem 0; padding-left: 1.25rem; font-size: 0.875rem; }
+li { margin-bottom: 0.25rem; }
+.caveats {
+  font-size: 0.8125rem;
+  color: #854d0e;
+  background: #fefce8;
+  border: 1px solid #fef08a;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  margin-top: 0.5rem;
+}
+@media print {
+  .no-print { display: none !important; }
+  body { background: #ffffff; color: #000000; padding: 0; font-size: 9pt; }
+  .report-container { max-width: 100%; }
+  section, article { page-break-inside: avoid; border-color: #d0d0d0; box-shadow: none; margin-bottom: 0.75rem; padding: 0.875rem; }
+  @page { margin: 12mm; size: A4 portrait; }
+}
+"#;
+
     Ok(format!(
-        "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>{}</title>\n<style>\nbody {{ font-family: sans-serif; margin: 2rem; max-width: 60rem; }}\nsection {{ margin-bottom: 1.5rem; }}\n.prov {{ font-size: 0.75rem; color: #555; }}\ndt {{ font-weight: bold; }}\ndd {{ margin: 0 0 0.4rem 0; }}\ncode, pre {{ font-family: monospace; }}\n</style>\n</head>\n<body>\n{body}</body>\n</html>\n",
-        escape_html(&report.metadata.title)
+        "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n<title>{}</title>\n<style>\n{}\n</style>\n</head>\n<body>\n<div class=\"report-container\">\n<div class=\"report-header-bar no-print\">\n<div class=\"report-brand\">\n<span class=\"brand-badge\">MAILENT</span>\n<span class=\"report-type\">FORENSIC EVIDENCE REPORT</span>\n</div>\n<button onclick=\"window.print()\" class=\"print-button\">Save as PDF / Print</button>\n</div>\n{}</div>\n<script>\nif (window.location.hash === '#print' || new URLSearchParams(window.location.search).get('print') === 'true') {{\n  window.addEventListener('DOMContentLoaded', () => {{\n    setTimeout(() => window.print(), 350);\n  }});\n}}\n</script>\n</body>\n</html>\n",
+        escape_html(&report.metadata.title),
+        html_style.trim(),
+        body
     ))
 }
 
@@ -520,7 +703,7 @@ pub fn render_pdf(report: &ForensicReport) -> Result<Vec<u8>, ReportError> {
             if (c as u32) < 128 && c != '\u{0}' {
                 c
             } else {
-                '?'
+                ' '
             }
         })
         .collect();
@@ -572,10 +755,30 @@ pub fn render_pdf(report: &ForensicReport) -> Result<Vec<u8>, ReportError> {
 /// Extract plain text lines from the rendered HTML (shared by PDF writer) so
 /// PDF and HTML content can be compared for equivalence in tests.
 pub fn extract_plain_text(html: &str) -> String {
+    // Strip <style>...</style> and <script>...</script> blocks first so CSS/JS don't leak into text
+    let mut stripped_blocks = String::new();
+    let mut rest = html;
+    while let Some(start_idx) = rest.find("<style").or_else(|| rest.find("<script")) {
+        stripped_blocks.push_str(&rest[..start_idx]);
+        let after_tag = &rest[start_idx..];
+        let (end_needle, offset) = if after_tag.starts_with("<style") {
+            ("</style>", 8)
+        } else {
+            ("</script>", 9)
+        };
+        if let Some(close_idx) = after_tag.find(end_needle) {
+            rest = &after_tag[close_idx + offset..];
+        } else {
+            rest = "";
+            break;
+        }
+    }
+    stripped_blocks.push_str(rest);
+
     let without_tags = {
         let mut out = String::new();
         let mut in_tag = false;
-        for ch in html.chars() {
+        for ch in stripped_blocks.chars() {
             match ch {
                 '<' => in_tag = true,
                 '>' => in_tag = false,

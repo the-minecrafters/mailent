@@ -195,3 +195,81 @@ pub async fn refresh_domain_intelligence(state: &AppState, domain: &str) {
 
     let _ = state.intelligence.save_refresh_status(&status).await;
 }
+
+/// Spawns a background worker that periodically evaluates verification freshness
+/// and schedules re-verification probes for stale or drift-affected authorized targets.
+pub fn start_verification_scheduler(state: AppState) {
+    tokio::spawn(async move {
+        info!("Starting scheduled active reverification worker");
+        tokio::time::sleep(StdDuration::from_secs(10)).await;
+
+        loop {
+            if let Err(e) = run_verification_cycle(&state).await {
+                error!("Error in verification schedule cycle: {e}");
+            }
+            tokio::time::sleep(StdDuration::from_secs(60)).await;
+        }
+    });
+}
+
+pub async fn run_verification_cycle(
+    state: &AppState,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let assets = state.assets.list_all().await?;
+    let now = OffsetDateTime::now_utc();
+
+    for asset in assets {
+        let authorized_target =
+            crate::probes::authorized_asset_target(&asset, &state.probe_config.to_scope());
+        if authorized_target.is_none() {
+            continue;
+        }
+
+        let probes = state.probes.list_for_asset(asset.id, 20).await?;
+        let drift_events = state.assets.list_drift_events(Some(asset.id), 20).await?;
+
+        let verification = mailent_domain::probe::AssetVerificationState::evaluate(
+            asset.id,
+            authorized_target.clone(),
+            &probes,
+            &drift_events,
+            now,
+        );
+
+        if verification.freshness == mailent_domain::VerificationFreshness::Stale {
+            // Consecutive failure backoff: if failing repeatedly (>= 3 consecutive failures),
+            // do not spam failing target; require at least 6 hours since last attempt
+            if verification.consecutive_failures >= 3
+                && let Some(last_probe) = probes.first()
+                && (now - last_probe.started_at).whole_seconds() < 6 * 3600
+            {
+                continue;
+            }
+
+            let trigger = if verification.drift_detected_since_verification {
+                mailent_domain::ProbeTrigger::DriftTriggered
+            } else {
+                mailent_domain::ProbeTrigger::Scheduled
+            };
+
+            let req = mailent_domain::ProbeRequest {
+                protocol: Some(mailent_domain::EmailProtocol::Smtp),
+                port: Some(25),
+                trigger: Some(trigger.clone()),
+                investigation_id: None,
+            };
+
+            // schedule_probe handles allowlist scope, bounded concurrency semaphore, cooldown, and inflight deduplication
+            match crate::probes::schedule_probe(state, asset.id, req).await {
+                Ok(probe_id) => {
+                    info!(asset_id = %asset.id, %probe_id, ?trigger, "Scheduled reverification probe initiated");
+                }
+                Err((status, msg)) => {
+                    debug!(asset_id = %asset.id, %status, %msg, "Reverification probe skipped");
+                }
+            }
+        }
+    }
+
+    Ok(())
+}

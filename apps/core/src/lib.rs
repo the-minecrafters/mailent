@@ -13,3 +13,7 @@ pub mod probes;
 pub mod evidence;
 
 pub mod remediation;
+
+pub mod integrations;
+
+pub mod simulation;

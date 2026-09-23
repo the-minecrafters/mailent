@@ -9,7 +9,9 @@ pub use error::StorageError;
 pub use in_memory::InMemoryStorage;
 pub use postgres::PostgresStorage;
 pub use repository::{
-    AssetRepository, BaselineRepository, CertificateRepository, DecisionRepository, EvidenceStore,
-    FindingRepository, IntelligenceRepository, InvestigationRepository, ObservationRepository,
-    ProbeRepository, SensorRepository, SessionRepository, TrainingRecordRepository,
+    ArchivedReportRepository, AssetRepository, BaselineRepository, CertificateRepository,
+    DecisionRepository, EvidenceStore, FindingRepository, IntegrationRepository,
+    IntelligenceRepository, InvestigationRepository, ObservationRepository, PostureRepository,
+    ProbeRepository, RemediationRepository, SensorRepository, SessionRepository,
+    TrainingRecordRepository,
 };

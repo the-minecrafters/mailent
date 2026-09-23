@@ -30,6 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     mailent_core::scheduler::start_intelligence_refresh_scheduler(state.clone());
+    mailent_core::scheduler::start_verification_scheduler(state.clone());
 
     mailent_core::probes::recover_stale_probes(&state).await?;
     let recovery_state = state.clone();

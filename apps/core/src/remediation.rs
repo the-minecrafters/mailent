@@ -250,6 +250,20 @@ pub async fn complete_probe(state: &AppState, probe: &ProbeRun) -> Result<(), St
             }
         }
         let attempt = &record.attempts[index];
+        if attempt.outcome == Some(RemediationState::VerifiedFixed) {
+            crate::integrations::notify_event(
+                state,
+                crate::integrations::EventNotification::new(
+                    IntegrationEventType::RemediationVerified,
+                    format!("Remediation Verified: {}", record.finding.title),
+                    format!("Remediation verified fixed for asset {}", record.asset_id),
+                )
+                .with_asset(record.asset_id, None)
+                .with_finding(record.finding.id)
+                .with_probe(probe.id)
+                .with_details(serde_json::to_value(&record).unwrap_or_default()),
+            );
+        }
         if let (Some(inv_id), Some(outcome), Some(at)) = (
             record.investigation_id,
             attempt.outcome,

@@ -33,20 +33,34 @@ pub async fn get_asset_handler(
         .map_err(storage_error)?
         .ok_or_else(|| (StatusCode::NOT_FOUND, format!("asset {id} not found")))?;
 
-    // Persisted active perspective is projected separately from passive asset aggregates.
-    let active = state
+    let authorized_target =
+        crate::probes::authorized_asset_target(&asset, &state.probe_config.to_scope());
+    let authorized = authorized_target.is_some();
+    let drift_events = state
+        .assets
+        .list_drift_events(Some(id), 20)
+        .await
+        .map_err(storage_error)?;
+    let probes = state
         .probes
         .list_for_asset(id, 20)
         .await
-        .map_err(storage_error)?
-        .into_iter()
-        .find(|p| p.finished_at.is_some());
-    let authorized =
-        crate::probes::authorized_asset_target(&asset, &state.probe_config.to_scope()).is_some();
+        .map_err(storage_error)?;
+    let active = probes.iter().find(|p| p.finished_at.is_some()).cloned();
+    let verification_state = mailent_domain::probe::AssetVerificationState::evaluate(
+        id,
+        authorized_target,
+        &probes,
+        &drift_events,
+        time::OffsetDateTime::now_utc(),
+    );
+
     let mut response = serde_json::to_value(asset)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     response["probe_authorized"] = serde_json::json!(authorized);
     response["active_verification"] = serde_json::to_value(active)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    response["verification_state"] = serde_json::to_value(verification_state)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(response))
 }
@@ -158,6 +172,43 @@ pub async fn get_asset_intelligence_handler(
         })?;
 
     crate::api::intelligence::get_domain_intelligence_handler(State(state), Path(domain)).await
+}
+
+pub async fn get_asset_verification_handler(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let asset = state
+        .assets
+        .find_by_id(id)
+        .await
+        .map_err(storage_error)?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("asset {id} not found")))?;
+
+    let probes = state
+        .probes
+        .list_for_asset(id, 50)
+        .await
+        .map_err(storage_error)?;
+
+    let drift_events = state
+        .assets
+        .list_drift_events(Some(id), 50)
+        .await
+        .map_err(storage_error)?;
+
+    let authorized_target =
+        crate::probes::authorized_asset_target(&asset, &state.probe_config.to_scope());
+
+    let verification = mailent_domain::probe::AssetVerificationState::evaluate(
+        id,
+        authorized_target,
+        &probes,
+        &drift_events,
+        time::OffsetDateTime::now_utc(),
+    );
+
+    Ok(Json(verification))
 }
 
 fn storage_error(error: StorageError) -> (StatusCode, String) {

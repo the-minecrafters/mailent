@@ -215,6 +215,45 @@ async fn execute(state: &AppState, mut run: ProbeRun) -> Result<(), StorageError
     // Merge by probe id so retries are idempotent and analyst status is untouched.
     state.investigations.attach_probe(&run).await?;
     crate::remediation::complete_probe(state, &run).await?;
+
+    if outcome == ProbeOutcome::Success {
+        crate::integrations::notify_event(
+            state,
+            crate::integrations::EventNotification::new(
+                IntegrationEventType::VerificationCompleted,
+                format!("Verification Completed: {}", run.target),
+                format!(
+                    "Active verification probe succeeded for target {}",
+                    run.target
+                ),
+            )
+            .with_asset(run.asset_id, Some(run.target.clone()))
+            .with_probe(run.id)
+            .with_details(serde_json::to_value(&run).unwrap_or_default()),
+        );
+    } else {
+        crate::integrations::notify_event(
+            state,
+            crate::integrations::EventNotification::new(
+                IntegrationEventType::VerificationFailed,
+                format!("Verification Failed: {}", run.target),
+                format!(
+                    "Active verification probe failed for {}: {:?}",
+                    run.target, outcome
+                ),
+            )
+            .with_asset(run.asset_id, Some(run.target.clone()))
+            .with_probe(run.id)
+            .with_details(serde_json::to_value(&run).unwrap_or_default()),
+        );
+    }
+
+    let _ = crate::api::posture::evaluate_and_record_asset_posture_snapshot(
+        state,
+        run.asset_id,
+        Some("probe_completed"),
+    )
+    .await;
     Ok(())
 }
 

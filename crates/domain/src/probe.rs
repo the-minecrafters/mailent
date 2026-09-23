@@ -23,6 +23,10 @@ pub enum ProbeTrigger {
     StartTlsRegression,
     /// Scheduled periodic reverification (once per cooldown period).
     Scheduled,
+    /// Reverification triggered by detected configuration drift.
+    DriftTriggered,
+    /// Remediation verification probe.
+    RemediationVerification,
 }
 
 impl std::fmt::Display for ProbeTrigger {
@@ -379,4 +383,168 @@ pub struct ProbeAnomalyVerification {
     pub active_value: String,
     /// Corroborated, perspective_mismatch, or unavailable; one probe cannot verify a rate.
     pub conclusion: String,
+}
+
+/// Verification freshness state for an asset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerificationFreshness {
+    NeverVerified,
+    Fresh,
+    Aging,
+    Stale,
+}
+
+impl std::fmt::Display for VerificationFreshness {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NeverVerified => write!(f, "Never verified"),
+            Self::Fresh => write!(f, "Fresh"),
+            Self::Aging => write!(f, "Aging"),
+            Self::Stale => write!(f, "Stale"),
+        }
+    }
+}
+
+/// Verification state of an asset summarizing active probe coverage and timeliness.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AssetVerificationState {
+    pub asset_id: Uuid,
+    pub freshness: VerificationFreshness,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub last_verified_at: Option<OffsetDateTime>,
+    pub last_probe_outcome: Option<ProbeOutcome>,
+    pub last_probe_id: Option<Uuid>,
+    pub consecutive_failures: u32,
+    pub failure_reasons: Vec<String>,
+    pub freshness_reasons: Vec<String>,
+    pub drift_detected_since_verification: bool,
+    pub authorized_target: Option<String>,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub next_scheduled_check: Option<OffsetDateTime>,
+}
+
+impl AssetVerificationState {
+    pub fn evaluate(
+        asset_id: Uuid,
+        authorized_target: Option<String>,
+        probe_history: &[ProbeRun],
+        drift_events: &[crate::drift::DriftEvent],
+        now: OffsetDateTime,
+    ) -> Self {
+        // Find most recent probe run
+        let mut sorted_probes = probe_history.to_vec();
+        sorted_probes.sort_by_key(|p| std::cmp::Reverse(p.started_at));
+
+        let last_probe = sorted_probes.first();
+        let last_success = sorted_probes
+            .iter()
+            .find(|p| p.outcome == ProbeOutcome::Success);
+
+        let last_verified_at = last_success.and_then(|p| p.finished_at.or(Some(p.started_at)));
+        let last_probe_outcome = last_probe.map(|p| p.outcome);
+        let last_probe_id = last_probe.map(|p| p.id);
+
+        // Count consecutive failures from the latest probe runs
+        let mut consecutive_failures = 0u32;
+        let mut failure_reasons = Vec::new();
+        for p in &sorted_probes {
+            if p.outcome == ProbeOutcome::Success {
+                break;
+            }
+            consecutive_failures += 1;
+            if let Some(err) = p.result.as_ref().and_then(|r| r.error.as_ref()) {
+                if !failure_reasons.contains(err) {
+                    failure_reasons.push(err.clone());
+                }
+            } else {
+                let msg = format!("{:?}", p.outcome);
+                if !failure_reasons.contains(&msg) {
+                    failure_reasons.push(msg);
+                }
+            }
+        }
+
+        // Check for meaningful drift since last verification
+        let drift_detected_since_verification = if let Some(last_time) = last_verified_at {
+            drift_events.iter().any(|d| {
+                d.observed_at > last_time
+                    && matches!(
+                        d.kind,
+                        crate::drift::DriftKind::CertificateChanged
+                            | crate::drift::DriftKind::NewCertificateIssuer
+                            | crate::drift::DriftKind::NewTlsVersion
+                            | crate::drift::DriftKind::ForwardSecrecyLost
+                            | crate::drift::DriftKind::NewEndpoint
+                    )
+            })
+        } else {
+            !drift_events.is_empty()
+        };
+
+        let mut freshness_reasons = Vec::new();
+        let freshness = match (last_verified_at, last_probe) {
+            (None, _) => {
+                freshness_reasons.push("Asset has never been actively verified".to_string());
+                VerificationFreshness::NeverVerified
+            }
+            (Some(_verified_at), Some(probe)) if probe.outcome != ProbeOutcome::Success => {
+                freshness_reasons.push(format!(
+                    "Latest verification attempt failed with {:?} ({} consecutive failures)",
+                    probe.outcome, consecutive_failures
+                ));
+                VerificationFreshness::Stale
+            }
+            (Some(verified_at), _) => {
+                let age_secs = (now - verified_at).whole_seconds();
+                if drift_detected_since_verification {
+                    freshness_reasons.push(
+                        "Configuration drift detected since last verification; reverification brought forward"
+                            .to_string(),
+                    );
+                    VerificationFreshness::Stale
+                } else if age_secs < 24 * 3600 {
+                    freshness_reasons.push(format!(
+                        "Verified {} hours ago; within 24h freshness window",
+                        age_secs / 3600
+                    ));
+                    VerificationFreshness::Fresh
+                } else if age_secs < 7 * 24 * 3600 {
+                    let days = age_secs / (24 * 3600);
+                    freshness_reasons.push(format!(
+                        "Verified {days} days ago; aging toward weekly reverification window"
+                    ));
+                    VerificationFreshness::Aging
+                } else {
+                    let days = age_secs / (24 * 3600);
+                    freshness_reasons.push(format!(
+                        "Last verified {days} days ago; exceeds 7-day staleness threshold"
+                    ));
+                    VerificationFreshness::Stale
+                }
+            }
+        };
+
+        let next_scheduled_check = if freshness == VerificationFreshness::Stale {
+            Some(now)
+        } else if let Some(v) = last_verified_at {
+            Some(v + time::Duration::days(7))
+        } else {
+            Some(now)
+        };
+
+        Self {
+            asset_id,
+            freshness,
+            last_verified_at,
+            last_probe_outcome,
+            last_probe_id,
+            consecutive_failures,
+            failure_reasons,
+            freshness_reasons,
+            drift_detected_since_verification,
+            authorized_target,
+            next_scheduled_check,
+        }
+    }
 }

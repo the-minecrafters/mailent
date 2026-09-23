@@ -10,10 +10,10 @@ use mailent_storage::{
     in_memory::InMemoryStorage,
     postgres::PostgresStorage,
     repository::{
-        AssetRepository, BaselineRepository, CertificateRepository, DecisionRepository,
-        FindingRepository, IntelligenceRepository, InvestigationRepository, ObservationRepository,
-        ProbeRepository, RemediationRepository, SensorRepository, SessionRepository,
-        TrainingRecordRepository,
+        ArchivedReportRepository, AssetRepository, BaselineRepository, CertificateRepository,
+        DecisionRepository, FindingRepository, IntegrationRepository, IntelligenceRepository,
+        InvestigationRepository, ObservationRepository, PostureRepository, ProbeRepository,
+        RemediationRepository, SensorRepository, SessionRepository, TrainingRecordRepository,
     },
 };
 use std::sync::Arc;
@@ -38,6 +38,9 @@ pub struct AppState {
     pub probes: Arc<dyn ProbeRepository>,
     pub training: Arc<dyn TrainingRecordRepository>,
     pub remediations: Arc<dyn RemediationRepository>,
+    pub postures: Arc<dyn PostureRepository>,
+    pub integrations: Arc<dyn IntegrationRepository>,
+    pub archived_reports: Arc<dyn ArchivedReportRepository>,
     pub intelligence_resolver: Arc<dyn DomainIntelligenceResolver>,
     pub baseline_analyzer: Arc<dyn BaselineAnalyzer>,
     pub decision_provider: Arc<dyn DecisionProvider>,
@@ -64,6 +67,9 @@ impl AppState {
             probes: mem.clone(),
             training: mem.clone(),
             remediations: mem.clone(),
+            postures: mem.clone(),
+            integrations: mem.clone(),
+            archived_reports: mem.clone(),
             intelligence_resolver: Arc::new(MockDomainIntelligenceResolver::new()),
             baseline_analyzer: Arc::new(DefaultBaselineAnalyzer::new()),
             decision_provider: Arc::new(DisabledProvider),
@@ -86,6 +92,9 @@ impl AppState {
             probes,
             training,
             remediations,
+            postures,
+            integrations,
+            archived_reports,
         ): (
             Arc<dyn AssetRepository>,
             Arc<dyn CertificateRepository>,
@@ -98,10 +107,16 @@ impl AppState {
             Arc<dyn ProbeRepository>,
             Arc<dyn TrainingRecordRepository>,
             Arc<dyn RemediationRepository>,
+            Arc<dyn PostureRepository>,
+            Arc<dyn IntegrationRepository>,
+            Arc<dyn ArchivedReportRepository>,
         ) = if let Some(ref db_url) = config.database_url {
             tracing::info!("Connecting to PostgreSQL control plane storage");
             let pg = Arc::new(PostgresStorage::connect(db_url).await?);
             (
+                pg.clone(),
+                pg.clone(),
+                pg.clone(),
                 pg.clone(),
                 pg.clone(),
                 pg.clone(),
@@ -119,6 +134,9 @@ impl AppState {
                 "No MAILENT_DATABASE_URL provided; using in-memory control plane storage"
             );
             (
+                mem.clone(),
+                mem.clone(),
+                mem.clone(),
                 mem.clone(),
                 mem.clone(),
                 mem.clone(),
@@ -205,6 +223,9 @@ impl AppState {
             probes,
             training,
             remediations,
+            postures,
+            integrations,
+            archived_reports,
             intelligence_resolver,
             baseline_analyzer: Arc::new(DefaultBaselineAnalyzer::new()),
             decision_provider,

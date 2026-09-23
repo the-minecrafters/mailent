@@ -318,6 +318,17 @@ pub async fn process_observation(
     for finding in &findings {
         state.findings.save(finding.clone()).await?;
         state.findings.link_asset(finding.id, asset_id).await?;
+        crate::integrations::notify_event(
+            state,
+            crate::integrations::EventNotification::new(
+                mailent_domain::IntegrationEventType::FindingConfirmed,
+                format!("Finding Confirmed: {}", finding.title),
+                &finding.description,
+            )
+            .with_asset(asset_id, asset.primary_name.clone())
+            .with_finding(finding.id)
+            .with_details(serde_json::to_value(finding).unwrap_or_default()),
+        );
     }
 
     // 8. Baseline & Anomaly Detection
@@ -562,6 +573,17 @@ pub async fn process_observation(
 
     if let Some(ref inv) = investigation {
         state.investigations.save(inv).await?;
+        crate::integrations::notify_event(
+            state,
+            crate::integrations::EventNotification::new(
+                mailent_domain::IntegrationEventType::InvestigationCreated,
+                format!("Investigation Created: {}", inv.title),
+                &inv.summary,
+            )
+            .with_asset(asset_id, asset.primary_name.clone())
+            .with_investigation(inv.id)
+            .with_details(serde_json::to_value(inv).unwrap_or_default()),
+        );
         // Best-effort: capture a versioned training record at decision time.
         let capture_ctx = crate::training::CaptureContext {
             inv,
@@ -615,6 +637,13 @@ pub async fn process_observation(
             }
         }
     }
+
+    let _ = crate::api::posture::evaluate_and_record_asset_posture_snapshot(
+        state,
+        asset_id,
+        Some("observation_processed"),
+    )
+    .await;
 
     Ok(ProcessedObservationResult {
         session_id: session.session_id,

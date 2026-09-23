@@ -577,6 +577,13 @@ export async function downloadAssetReport(
   id: string,
   format: ReportFormat,
 ): Promise<void> {
+  if (format === "pdf" && typeof window !== "undefined") {
+    const printWin = window.open(
+      `/api/v1/assets/${id}/report?format=html#print`,
+      "_blank",
+    );
+    if (printWin) return;
+  }
   const response = await fetch(`/api/v1/assets/${id}/report?format=${format}`, {
     signal: AbortSignal.timeout(15000),
   });
@@ -623,4 +630,327 @@ export async function fetchInvestigation(id: string) {
   return investigationSchema.parse(
     await request(`/api/v1/investigations/${id}`),
   );
+}
+
+// Verification Freshness
+export const verificationFreshnessSchema = z.enum([
+  "never_verified",
+  "fresh",
+  "aging",
+  "stale",
+]);
+export type VerificationFreshness = z.infer<typeof verificationFreshnessSchema>;
+
+export const assetVerificationStateSchema = z.object({
+  asset_id: z.string(),
+  freshness: verificationFreshnessSchema,
+  last_verified_at: z.string().nullable().optional(),
+  last_probe_outcome: z.string().nullable().optional(),
+  last_probe_id: z.string().nullable().optional(),
+  consecutive_failures: z.number().default(0),
+  failure_reasons: z.array(z.string()).default([]),
+  freshness_reasons: z.array(z.string()).default([]),
+  drift_detected_since_verification: z.boolean().default(false),
+  authorized_target: z.string().nullable().optional(),
+  next_scheduled_check: z.string().nullable().optional(),
+});
+export type AssetVerificationState = z.infer<
+  typeof assetVerificationStateSchema
+>;
+
+export async function fetchAssetVerification(
+  id: string,
+): Promise<AssetVerificationState> {
+  return assetVerificationStateSchema.parse(
+    await request(`/api/v1/assets/${id}/verification`),
+  );
+}
+
+// Posture Snapshots & History
+export const postureSnapshotSchema = z.object({
+  id: z.string(),
+  asset_id: z.string(),
+  captured_at: z.string(),
+  score: z.number(),
+  previous_score: z.number().nullable().optional(),
+  grade: z.string(),
+  findings_count: z.number(),
+  critical_count: z.number(),
+  high_count: z.number(),
+  medium_count: z.number(),
+  low_count: z.number(),
+  change_reason: z.string().nullable().optional(),
+  trigger_evidence_id: z.string().nullable().optional(),
+  finding_hashes: z.array(z.string()).default([]),
+});
+export type PostureSnapshot = z.infer<typeof postureSnapshotSchema>;
+
+export const postureChangeSummarySchema = z.object({
+  has_changed: z.boolean(),
+  score_delta: z.number(),
+  previous_score: z.number().nullable().optional(),
+  current_score: z.number(),
+  previous_grade: z.string().nullable().optional(),
+  current_grade: z.string(),
+  last_snapshot_at: z.string().nullable().optional(),
+  reason: z.string().nullable().optional(),
+});
+export type PostureChangeSummary = z.infer<typeof postureChangeSummarySchema>;
+
+export const assetPostureHistorySchema = z.object({
+  asset_id: z.string(),
+  current_posture: securityPostureSchema,
+  current_score: z.number(),
+  snapshots: z.array(postureSnapshotSchema),
+  total_snapshots: z.number(),
+  change_summary: postureChangeSummarySchema,
+});
+export type AssetPostureHistory = z.infer<typeof assetPostureHistorySchema>;
+
+export async function fetchAssetPostureHistory(
+  id: string,
+): Promise<AssetPostureHistory> {
+  return assetPostureHistorySchema.parse(
+    await request(`/api/v1/assets/${id}/posture/history`),
+  );
+}
+
+// Policy Simulation
+export const policyPackSummarySchema = z.object({
+  name: z.string(),
+  version: z.string(),
+  title: z.string(),
+  description: z.string(),
+  rule_count: z.number(),
+  min_tls_version: z.string().nullable().optional(),
+  require_pfs: z.boolean(),
+  max_cert_validity_days: z.number().nullable().optional(),
+  require_mta_sts: z.boolean(),
+  require_dane: z.boolean(),
+});
+export type PolicyPackSummary = z.infer<typeof policyPackSummarySchema>;
+
+export const simulationBreakageSchema = z.object({
+  rule_id: z.string(),
+  rule_title: z.string(),
+  severity: z.string(),
+  category: z.string(),
+  reason: z.string(),
+  observed_value: z.string(),
+  required_value: z.string(),
+  session_id: z.string().nullable().optional(),
+});
+export type SimulationBreakage = z.infer<typeof simulationBreakageSchema>;
+
+export const assetSimulationResultSchema = z.object({
+  asset_id: z.string(),
+  asset_name: z.string().nullable().optional(),
+  compatibility: z.enum(["compatible", "would_fail", "insufficient_evidence"]),
+  breakage_count: z.number(),
+  breakages: z.array(simulationBreakageSchema),
+  evaluated_sessions_count: z.number(),
+  evaluation_notes: z.array(z.string()),
+});
+export type AssetSimulationResult = z.infer<typeof assetSimulationResultSchema>;
+
+export const breakageSummarySchema = z.object({
+  rule_id: z.string(),
+  rule_title: z.string(),
+  affected_assets_count: z.number(),
+  sample_reason: z.string(),
+});
+export type BreakageSummary = z.infer<typeof breakageSummarySchema>;
+
+export const policySimulationResultSchema = z.object({
+  policy_name: z.string(),
+  evaluated_at: z.string(),
+  total_assets_evaluated: z.number(),
+  compatible_assets_count: z.number(),
+  incompatible_assets_count: z.number(),
+  unknown_assets_count: z.number(),
+  asset_results: z.array(assetSimulationResultSchema),
+  breakages_by_rule: z.array(breakageSummarySchema),
+});
+export type PolicySimulationResult = z.infer<
+  typeof policySimulationResultSchema
+>;
+
+export async function fetchPolicies(): Promise<PolicyPackSummary[]> {
+  return z
+    .array(policyPackSummarySchema)
+    .parse(await request("/api/v1/policies"));
+}
+
+export async function simulatePolicy(
+  policyName: string,
+): Promise<PolicySimulationResult> {
+  return policySimulationResultSchema.parse(
+    await request("/api/v1/policies/simulate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ policy_name: policyName }),
+    }),
+  );
+}
+
+// Workflow Integrations
+export const integrationConfigSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  kind: z.enum(["webhook", "syslog"]),
+  endpoint_url: z.string(),
+  enabled: z.boolean(),
+  secret_header: z.string().nullable().optional(),
+  secret_token: z.string().nullable().optional(),
+  event_types: z.array(z.string()),
+  syslog_facility: z.number().nullable().optional(),
+  syslog_severity: z.number().nullable().optional(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  last_delivered_at: z.string().nullable().optional(),
+  last_delivery_status: z.string().nullable().optional(),
+  last_delivery_error: z.string().nullable().optional(),
+});
+export type IntegrationConfig = z.infer<typeof integrationConfigSchema>;
+
+export interface UpsertIntegrationInput {
+  name: string;
+  kind: "webhook" | "syslog";
+  endpoint_url: string;
+  enabled: boolean;
+  secret_header?: string | null;
+  secret_token?: string | null;
+  event_types: string[];
+  syslog_facility?: number | null;
+  syslog_severity?: number | null;
+}
+
+export async function fetchIntegrations(): Promise<IntegrationConfig[]> {
+  return z
+    .array(integrationConfigSchema)
+    .parse(await request("/api/v1/integrations"));
+}
+
+export async function createIntegration(
+  input: UpsertIntegrationInput,
+): Promise<IntegrationConfig> {
+  return integrationConfigSchema.parse(
+    await request("/api/v1/integrations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export async function updateIntegration(
+  id: string,
+  input: UpsertIntegrationInput,
+): Promise<IntegrationConfig> {
+  return integrationConfigSchema.parse(
+    await request(`/api/v1/integrations/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export async function deleteIntegration(id: string): Promise<void> {
+  await request(`/api/v1/integrations/${id}`, { method: "DELETE" });
+}
+
+export async function testIntegration(
+  id: string,
+): Promise<{ success: boolean; message: string; error?: string }> {
+  return request(`/api/v1/integrations/${id}/test`, {
+    method: "POST",
+  }) as Promise<{ success: boolean; message: string; error?: string }>;
+}
+
+// Archived Reports
+export const archivedReportSummarySchema = z.object({
+  id: z.string(),
+  report_id: z.string(),
+  subject_kind: z.string(),
+  subject_id: z.string(),
+  title: z.string(),
+  fingerprint: z.string(),
+  generated_at: z.string(),
+  archived_at: z.string(),
+  archived_by: z.string(),
+  notes: z.string().nullable().optional(),
+});
+export type ArchivedReportSummary = z.infer<typeof archivedReportSummarySchema>;
+
+export const archivedReportRecordSchema = z.object({
+  id: z.string(),
+  report_id: z.string(),
+  subject_kind: z.string(),
+  subject_id: z.string(),
+  title: z.string(),
+  fingerprint: z.string(),
+  generated_at: z.string(),
+  archived_at: z.string(),
+  archived_by: z.string(),
+  notes: z.string().nullable().optional(),
+  raw_report_json: z.string(),
+});
+export type ArchivedReportRecord = z.infer<typeof archivedReportRecordSchema>;
+
+export async function fetchArchivedReports(): Promise<ArchivedReportSummary[]> {
+  return z
+    .array(archivedReportSummarySchema)
+    .parse(await request("/api/v1/reports/archived"));
+}
+
+export async function archiveReport(input: {
+  subject_kind: "asset" | "session" | "investigation";
+  subject_id: string;
+  notes?: string;
+  archived_by?: string;
+}): Promise<ArchivedReportRecord> {
+  return archivedReportRecordSchema.parse(
+    await request("/api/v1/reports/archive", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  );
+}
+
+export async function downloadArchivedReport(
+  id: string,
+  format: ReportFormat,
+): Promise<void> {
+  if (format === "pdf" && typeof window !== "undefined") {
+    const printWin = window.open(
+      `/api/v1/reports/archived/${id}?format=html#print`,
+      "_blank",
+    );
+    if (printWin) return;
+  }
+  const response = await fetch(
+    `/api/v1/reports/archived/${id}?format=${format}`,
+    {
+      signal: AbortSignal.timeout(15000),
+    },
+  );
+  if (!response.ok)
+    throw new Error(
+      `Download failed (${response.status}): ${(await response.text()).slice(0, 300)}`,
+    );
+  const disposition = response.headers.get("content-disposition") ?? "";
+  const match = disposition.match(/filename="?([^";]+)"?/);
+  const filename =
+    match?.[1] ?? `mailent-archived-report-${id.slice(0, 8)}.${format}`;
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }

@@ -14,10 +14,10 @@ use uuid::Uuid;
 use crate::{
     error::StorageError,
     repository::{
-        AssetRepository, BaselineRepository, CertificateRepository, DecisionRepository,
-        EvidenceStore, FindingRepository, IntelligenceRepository, InvestigationRepository,
-        ObservationRepository, ProbeRepository, SensorRepository, SessionRepository,
-        TrainingRecordRepository,
+        ArchivedReportRepository, AssetRepository, BaselineRepository, CertificateRepository,
+        DecisionRepository, EvidenceStore, FindingRepository, IntegrationRepository,
+        IntelligenceRepository, InvestigationRepository, ObservationRepository, PostureRepository,
+        ProbeRepository, SensorRepository, SessionRepository, TrainingRecordRepository,
     },
 };
 
@@ -49,6 +49,9 @@ pub struct InMemoryStorage {
     decision_records: Arc<RwLock<Vec<DecisionRecord>>>,
     probe_runs: Arc<RwLock<Vec<ProbeRun>>>,
     training_records: Arc<RwLock<Vec<TrainingRecord>>>,
+    posture_snapshots: Arc<RwLock<Vec<mailent_domain::PostureSnapshot>>>,
+    integrations: Arc<RwLock<Vec<mailent_domain::IntegrationConfig>>>,
+    archived_reports: Arc<RwLock<Vec<mailent_domain::ArchivedReportRecord>>>,
 }
 
 impl InMemoryStorage {
@@ -931,6 +934,173 @@ impl crate::repository::RemediationRepository for InMemoryStorage {
             return Ok(true);
         }
         Ok(false)
+    }
+}
+
+#[async_trait]
+impl PostureRepository for InMemoryStorage {
+    async fn save_snapshot(
+        &self,
+        snapshot: &mailent_domain::PostureSnapshot,
+    ) -> Result<(), StorageError> {
+        let mut list = self.posture_snapshots.write().await;
+        list.retain(|s| s.id != snapshot.id);
+        list.push(snapshot.clone());
+        Ok(())
+    }
+
+    async fn list_for_asset(
+        &self,
+        asset_id: Uuid,
+        limit: usize,
+    ) -> Result<Vec<mailent_domain::PostureSnapshot>, StorageError> {
+        let list = self.posture_snapshots.read().await;
+        let mut asset_snapshots: Vec<_> = list
+            .iter()
+            .filter(|s| s.asset_id == asset_id)
+            .cloned()
+            .collect();
+        asset_snapshots.sort_by_key(|s| std::cmp::Reverse(s.recorded_at));
+        if asset_snapshots.len() > limit {
+            asset_snapshots.truncate(limit);
+        }
+        Ok(asset_snapshots)
+    }
+
+    async fn latest_for_asset(
+        &self,
+        asset_id: Uuid,
+    ) -> Result<Option<mailent_domain::PostureSnapshot>, StorageError> {
+        let list = self.posture_snapshots.read().await;
+        let mut asset_snapshots: Vec<_> = list
+            .iter()
+            .filter(|s| s.asset_id == asset_id)
+            .cloned()
+            .collect();
+        asset_snapshots.sort_by_key(|s| std::cmp::Reverse(s.recorded_at));
+        Ok(asset_snapshots.into_iter().next())
+    }
+}
+
+#[async_trait]
+impl IntegrationRepository for InMemoryStorage {
+    async fn save(&self, config: &mailent_domain::IntegrationConfig) -> Result<(), StorageError> {
+        let mut list = self.integrations.write().await;
+        list.retain(|c| c.id != config.id);
+        list.push(config.clone());
+        Ok(())
+    }
+
+    async fn list_all(&self) -> Result<Vec<mailent_domain::IntegrationConfig>, StorageError> {
+        let list = self.integrations.read().await;
+        let mut configs = list.clone();
+        configs.sort_by_key(|c| std::cmp::Reverse(c.created_at));
+        Ok(configs)
+    }
+
+    async fn find_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<mailent_domain::IntegrationConfig>, StorageError> {
+        let list = self.integrations.read().await;
+        Ok(list.iter().find(|c| c.id == id).cloned())
+    }
+
+    async fn delete(&self, id: Uuid) -> Result<bool, StorageError> {
+        let mut list = self.integrations.write().await;
+        let initial_len = list.len();
+        list.retain(|c| c.id != id);
+        Ok(list.len() < initial_len)
+    }
+
+    async fn update_status(
+        &self,
+        id: Uuid,
+        status_code: Option<u16>,
+        error: Option<String>,
+        at: time::OffsetDateTime,
+    ) -> Result<(), StorageError> {
+        let mut list = self.integrations.write().await;
+        if let Some(config) = list.iter_mut().find(|c| c.id == id) {
+            config.last_delivery_at = Some(at);
+            config.last_status_code = status_code;
+            config.last_error = error;
+            config.updated_at = at;
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl ArchivedReportRepository for InMemoryStorage {
+    async fn archive(
+        &self,
+        report: &mailent_domain::ArchivedReportRecord,
+    ) -> Result<(), StorageError> {
+        let mut list = self.archived_reports.write().await;
+        list.retain(|r| r.id != report.id);
+        list.push(report.clone());
+        Ok(())
+    }
+
+    async fn list_all(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<mailent_domain::ArchivedReportSummary>, StorageError> {
+        let list = self.archived_reports.read().await;
+        let mut summaries: Vec<_> = list
+            .iter()
+            .map(|r| mailent_domain::ArchivedReportSummary {
+                id: r.id,
+                report_id: r.report_id.clone(),
+                subject_kind: r.subject_kind,
+                subject_id: r.subject_id,
+                title: r.title.clone(),
+                fingerprint: r.fingerprint.clone(),
+                generated_at: r.generated_at,
+                archived_at: r.archived_at,
+                archived_by: r.archived_by.clone(),
+                notes: r.notes.clone(),
+            })
+            .collect();
+        summaries.sort_by_key(|s| std::cmp::Reverse(s.archived_at));
+        if summaries.len() > limit {
+            summaries.truncate(limit);
+        }
+        Ok(summaries)
+    }
+
+    async fn list_for_subject(
+        &self,
+        subject_id: Uuid,
+    ) -> Result<Vec<mailent_domain::ArchivedReportSummary>, StorageError> {
+        let list = self.archived_reports.read().await;
+        let mut summaries: Vec<_> = list
+            .iter()
+            .filter(|r| r.subject_id == subject_id)
+            .map(|r| mailent_domain::ArchivedReportSummary {
+                id: r.id,
+                report_id: r.report_id.clone(),
+                subject_kind: r.subject_kind,
+                subject_id: r.subject_id,
+                title: r.title.clone(),
+                fingerprint: r.fingerprint.clone(),
+                generated_at: r.generated_at,
+                archived_at: r.archived_at,
+                archived_by: r.archived_by.clone(),
+                notes: r.notes.clone(),
+            })
+            .collect();
+        summaries.sort_by_key(|s| std::cmp::Reverse(s.archived_at));
+        Ok(summaries)
+    }
+
+    async fn find_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<mailent_domain::ArchivedReportRecord>, StorageError> {
+        let list = self.archived_reports.read().await;
+        Ok(list.iter().find(|r| r.id == id).cloned())
     }
 }
 

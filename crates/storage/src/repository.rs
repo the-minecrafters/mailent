@@ -299,3 +299,58 @@ pub trait RemediationRepository: Send + Sync {
         expected_revision: i64,
     ) -> Result<bool, StorageError>;
 }
+
+#[async_trait]
+pub trait PostureRepository: Send + Sync {
+    async fn save_snapshot(
+        &self,
+        snapshot: &mailent_domain::PostureSnapshot,
+    ) -> Result<(), StorageError>;
+    async fn list_for_asset(
+        &self,
+        asset_id: Uuid,
+        limit: usize,
+    ) -> Result<Vec<mailent_domain::PostureSnapshot>, StorageError>;
+    async fn latest_for_asset(
+        &self,
+        asset_id: Uuid,
+    ) -> Result<Option<mailent_domain::PostureSnapshot>, StorageError>;
+}
+
+#[async_trait]
+pub trait IntegrationRepository: Send + Sync {
+    async fn save(&self, config: &mailent_domain::IntegrationConfig) -> Result<(), StorageError>;
+    async fn list_all(&self) -> Result<Vec<mailent_domain::IntegrationConfig>, StorageError>;
+    async fn find_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<mailent_domain::IntegrationConfig>, StorageError>;
+    async fn delete(&self, id: Uuid) -> Result<bool, StorageError>;
+    async fn update_status(
+        &self,
+        id: Uuid,
+        status_code: Option<u16>,
+        error: Option<String>,
+        at: time::OffsetDateTime,
+    ) -> Result<(), StorageError>;
+}
+
+#[async_trait]
+pub trait ArchivedReportRepository: Send + Sync {
+    async fn archive(
+        &self,
+        report: &mailent_domain::ArchivedReportRecord,
+    ) -> Result<(), StorageError>;
+    async fn list_all(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<mailent_domain::ArchivedReportSummary>, StorageError>;
+    async fn list_for_subject(
+        &self,
+        subject_id: Uuid,
+    ) -> Result<Vec<mailent_domain::ArchivedReportSummary>, StorageError>;
+    async fn find_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<mailent_domain::ArchivedReportRecord>, StorageError>;
+}
