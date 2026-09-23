@@ -31,6 +31,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/health", get(health::health_handler))
         .route("/ready", get(health::ready_handler))
         .route(
+            "/api/v1/decisions/check",
+            post(health::check_decision_provider),
+        )
+        .route(
             "/api/v1/assessments",
             get(assessments::list_assessments_handler),
         )

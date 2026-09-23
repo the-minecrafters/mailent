@@ -26,6 +26,7 @@ import {
   type AssetPostureResponse,
   type AssetVerificationState,
   archiveReport,
+  checkDecisionProvider,
   type CertificateRecord,
   createIntegration,
   type DriftEvent,
@@ -1492,7 +1493,7 @@ function AssetDetailView({
       {/* Freshness & Verification Status Bar */}
       <div className="card" style={{ marginBottom: "1.5rem" }}>
         <div className="card-header">
-          <h3 className="card-title">Active Verification Freshness</h3>
+          <h3 className="card-title">Verification</h3>
           <VerificationFreshnessBadge freshness={verification?.freshness} />
         </div>
 
@@ -1669,7 +1670,7 @@ function AssetDetailView({
 
       {/* Observed Certificates Surface */}
       <div className="card" style={{ marginTop: "1.5rem" }}>
-        <h3>Observed Leaf Certificates ({certs.length})</h3>
+        <h3>Certificate history ({certs.length})</h3>
         {certs.length === 0 ? (
           <p className="secondary-text">
             No certificates recorded for this asset.
@@ -1710,7 +1711,7 @@ function AssetDetailView({
 
       {/* Configuration Drift Surface */}
       <div className="card" style={{ marginTop: "1.5rem" }}>
-        <h3>Configuration Drift ({driftEvents.length})</h3>
+        <h3>Configuration changes ({driftEvents.length})</h3>
         {driftEvents.length === 0 ? (
           <p className="secondary-text">
             No drift events recorded for this asset.
@@ -1802,7 +1803,7 @@ function AssetDetailView({
             borderTop: "1px solid var(--hairline)",
           }}
         >
-          <h4 style={{ margin: "0 0 0.5rem" }}>Freeze Case Report Snapshot</h4>
+          <h4 style={{ margin: "0 0 0.5rem" }}>Save report snapshot</h4>
           <p className="secondary-text" style={{ fontSize: "0.8125rem" }}>
             Archives the exact report with a SHA-256 fingerprint for evidentiary
             integrity. Subsequent policy changes will never alter archived
@@ -3144,6 +3145,7 @@ function ReportsTab() {
 // ---------------------------------------------------------
 function IntegrationsTab() {
   const queryClient = useQueryClient();
+  const jevCheck = useMutation({ mutationFn: checkDecisionProvider });
   const [deleteTarget, setDeleteTarget] = useState<IntegrationConfig | null>(
     null,
   );
@@ -3307,6 +3309,16 @@ function IntegrationsTab() {
           {showAddForm ? "Cancel" : "+ Add Destination"}
         </button>
       </div>
+
+      <section className="card" style={{ marginBottom: "1.5rem" }} aria-labelledby="jev-title">
+        <h2 id="jev-title">Jev</h2>
+        <p className="secondary-text">Reviews transport findings to help prioritize investigations. Email content is not sent.</p>
+        <Button disabled={jevCheck.isPending} onClick={() => jevCheck.mutate()}>
+          {jevCheck.isPending ? "Checking Jev…" : "Check Jev connection"}
+        </Button>
+        {jevCheck.data && <p role="status">{jevCheck.data.message}</p>}
+        {jevCheck.error && <p role="alert">{jevCheck.error.message}</p>}
+      </section>
 
       {testResult && (
         <div

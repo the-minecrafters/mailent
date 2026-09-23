@@ -131,3 +131,47 @@ async fn spa_is_public_while_the_api_stays_private() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn provider_check_distinguishes_live_responses_from_fallback() {
+    use http_body_util::BodyExt;
+    use mailent_decision::{DecisionError, DecisionProvider, JevProvider};
+    use mailent_domain::{DecisionContext, DecisionResult};
+    use std::sync::Arc;
+    struct Provider(bool);
+    #[async_trait::async_trait]
+    impl DecisionProvider for Provider {
+        async fn assess(&self, context: DecisionContext) -> Result<DecisionResult, DecisionError> {
+            assert!(context.findings.is_empty());
+            assert_eq!(
+                context.metadata,
+                serde_json::json!({"purpose": "connection_check"})
+            );
+            let mut result = JevProvider::deterministic_fallback(&context);
+            if self.0 {
+                result.provider_info = "jev:openjev-latest".into();
+            }
+            Ok(result)
+        }
+    }
+    for connected in [false, true] {
+        let mut state = AppState::new();
+        state.decision_provider_name = "jev".into();
+        state.decision_provider = Arc::new(Provider(connected));
+        let app = create_router(state);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/decisions/check")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let result: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(result["connected"], connected);
+    }
+}

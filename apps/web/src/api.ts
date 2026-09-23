@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { authenticatedFetch } from "./auth";
 
+export async function checkDecisionProvider(): Promise<{ connected: boolean; message: string }> {
+  const response = await authenticatedFetch("/api/v1/decisions/check", { method: "POST" });
+  if (!response.ok) throw new Error("Could not check Jev. Please try again.");
+  return z.object({ connected: z.boolean(), message: z.string() }).parse(await response.json());
+}
+
 export const findingSchema = z.object({
   id: z.string(),
   rule_id: z.string(),
