@@ -278,6 +278,8 @@ fn guidance_rows(report: &ForensicReport, kind: GuidanceKind) -> Vec<(String, St
         .collect()
 }
 
+const MAILENT_LOGO_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="36" height="36" role="img" aria-label="Mailent"><defs><clipPath id="mailent-body"><rect x="20" y="52" width="216" height="152" rx="40"/></clipPath></defs><rect x="20" y="52" width="216" height="152" rx="40" fill="#6366F1"/><path clip-path="url(#mailent-body)" fill="#A5B4FC" d="M-10 0 H266 V88 Q128 212 -10 88 Z"/><circle cx="94" cy="104" r="9" fill="#312E81"/><circle cx="162" cy="104" r="9" fill="#312E81"/><circle cx="200" cy="190" r="34" fill="#34D399" stroke="#6366F1" stroke-width="8"/><path d="M184 190 l11 11 l21 -23" fill="none" stroke="#fff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/></svg>"##;
+
 /// HTML export: standalone, self-contained document.
 pub fn render_html(report: &ForensicReport) -> Result<String, ReportError> {
     let mut body = String::new();
@@ -285,7 +287,8 @@ pub fn render_html(report: &ForensicReport) -> Result<String, ReportError> {
     // Metadata header
     body.push_str("<section class=\"meta\">\n");
     body.push_str(&format!(
-        "<h1>{}</h1>\n<p>Report ID: {} · Content fingerprint: <code>{}</code></p>\n",
+        "<div style=\"display:flex;align-items:center;gap:12px;margin-bottom:8px;\">{}<h1 style=\"margin:0;\">{}</h1></div>\n<p>Report ID: {} · Content fingerprint: <code>{}</code></p>\n",
+        MAILENT_LOGO_SVG,
         escape_html(&report.metadata.title),
         escape_html(&report.metadata.report_id),
         report.content_fingerprint()
@@ -755,16 +758,22 @@ pub fn render_pdf(report: &ForensicReport) -> Result<Vec<u8>, ReportError> {
 /// Extract plain text lines from the rendered HTML (shared by PDF writer) so
 /// PDF and HTML content can be compared for equivalence in tests.
 pub fn extract_plain_text(html: &str) -> String {
-    // Strip <style>...</style> and <script>...</script> blocks first so CSS/JS don't leak into text
+    // Strip <style>...</style>, <script>...</script>, and <svg>...</svg> blocks first so CSS/JS/SVG don't leak into text
     let mut stripped_blocks = String::new();
     let mut rest = html;
-    while let Some(start_idx) = rest.find("<style").or_else(|| rest.find("<script")) {
+    while let Some(start_idx) = rest
+        .find("<style")
+        .or_else(|| rest.find("<script"))
+        .or_else(|| rest.find("<svg"))
+    {
         stripped_blocks.push_str(&rest[..start_idx]);
         let after_tag = &rest[start_idx..];
         let (end_needle, offset) = if after_tag.starts_with("<style") {
             ("</style>", 8)
-        } else {
+        } else if after_tag.starts_with("<script") {
             ("</script>", 9)
+        } else {
+            ("</svg>", 6)
         };
         if let Some(close_idx) = after_tag.find(end_needle) {
             rest = &after_tag[close_idx + offset..];

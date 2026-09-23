@@ -13,6 +13,7 @@ import { useEffect } from "react";
 import { Link } from "react-router-dom";
 import "@fontsource-variable/source-serif-4";
 import "./landing.css";
+import { MailentLogo } from "./components/MailentLogo";
 
 export function LandingPage() {
   useEffect(() => {
@@ -25,7 +26,7 @@ export function LandingPage() {
       </a>
       <header className="paper-nav">
         <Link to="/" className="paper-logo" aria-label="Mailent home">
-          <Mail size={27} strokeWidth={1.7} />
+          <MailentLogo size={32} />
           mailent<span>®</span>
         </Link>
         <nav aria-label="Website">
@@ -224,7 +225,7 @@ export function LandingPage() {
       </main>
       <footer className="paper-footer">
         <Link to="/" className="paper-logo">
-          <Mail size={24} />
+          <MailentLogo size={28} />
           mailent
         </Link>
         <span>Email transport security, with a record you can inspect.</span>

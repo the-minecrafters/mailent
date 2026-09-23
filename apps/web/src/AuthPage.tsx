@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { type FormEvent, useState } from "react";
 import { Link } from "react-router-dom";
 import { Icon } from "./components/Icon";
+import { MailentLogo } from "./components/MailentLogo";
 import { Button } from "./components/ui";
 
 export function AuthPage({
@@ -70,9 +71,7 @@ export function AuthPage({
     <main className="sign-in-page">
       <section className="sign-in-card">
         <div className="sign-in-brand">
-          <span className="brand-mark">
-            <Icon name="mail" size={24} />
-          </span>
+          <MailentLogo size={36} />
           <Link to="/">mailent</Link>
         </div>
 

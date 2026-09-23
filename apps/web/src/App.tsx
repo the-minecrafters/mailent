@@ -88,6 +88,7 @@ import {
   SearchField,
 } from "./components/ui";
 import { LandingPage } from "./LandingPage";
+import { MailentLogo } from "./components/MailentLogo";
 import { NewAssessmentModal } from "./NewAssessmentModal";
 import { ProbePanel } from "./ProbePanel";
 import { RemediationWorkflow } from "./RemediationWorkflow";
@@ -446,9 +447,7 @@ function Workspace() {
         className="sidebar-brand"
         aria-label="Mailent overview"
       >
-        <span className="brand-mark">
-          <Icon name="mail" size={22} />
-        </span>
+        <MailentLogo size={36} />
         <span className="brand-title">
           mailent<span className="brand-subtitle">Email security</span>
         </span>

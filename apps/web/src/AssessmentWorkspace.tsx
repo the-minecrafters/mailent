@@ -15,6 +15,7 @@ import {
   fetchSessions,
 } from "./api";
 import { Icon } from "./components/Icon";
+import { MailentLogo } from "./components/MailentLogo";
 import { ErrorState, LoadingState } from "./components/ui";
 import { ProbeEvidence } from "./ProbePanel";
 import { RemediationWorkflow } from "./RemediationWorkflow";
@@ -1671,9 +1672,15 @@ export function AssessmentWorkspace({
                   </h1>
                   <div
                     className="secondary-text"
-                    style={{ fontSize: "0.875rem" }}
+                    style={{
+                      fontSize: "0.875rem",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.5rem",
+                    }}
                   >
-                    Prepared by Mailent · Email security analysis
+                    <MailentLogo size={20} />
+                    <span>Prepared by Mailent · Email security analysis</span>
                   </div>
                 </div>
                 <div style={{ textAlign: "right" }}>
