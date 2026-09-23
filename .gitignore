@@ -41,3 +41,6 @@ deploy/compose/data/
 # Browser verification output
 **/test-results/
 **/playwright-report/
+
+# Local cache
+.freebuff/
