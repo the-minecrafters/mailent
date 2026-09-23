@@ -1,6 +1,7 @@
 use axum::http::StatusCode;
 use mailent_core::{api::create_router, config::CoreConfig, state::AppState};
 use serde_json::Value;
+use tower::ServiceExt;
 
 async fn post_json(app: axum::Router, uri: &str, body: &str) -> (StatusCode, Value) {
     use tower::ServiceExt;
@@ -157,4 +158,50 @@ async fn test_core_persistence_restart_and_drift() {
             .iter()
             .any(|e| e["kind"] == "NewTlsVersion" || e["kind"] == "NewCipherSuite")
     );
+
+    // 4. Training records are captured at decision time and survive a restart.
+    let (status, training) = get_json(
+        restarted_app.clone(),
+        &format!("/api/v1/training?asset_id={asset_id}&limit=10"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "training list endpoint");
+    let records = training.as_array().unwrap();
+    assert!(
+        !records.is_empty(),
+        "expected at least one captured training record"
+    );
+    for rec in records {
+        assert_eq!(rec["asset_id"], asset_id);
+        assert_eq!(rec["feature_schema_version"], 1);
+        assert!(
+            rec["features"].is_object(),
+            "features snapshot is structured"
+        );
+    }
+
+    // Analyst label can be attached to a persisted record.
+    let record_id = records[0]["id"].as_str().unwrap();
+    let (status, labeled) = post_json(
+        restarted_app.clone(),
+        &format!("/api/v1/training/{record_id}/label"),
+        r#"{"outcome":"analyst_reviewed","label_source":"analyst","note":"restart persistence check"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "analyst label endpoint: {labeled}");
+    assert_eq!(labeled["analyst_label"]["outcome"], "analyst_reviewed");
+
+    // JSONL export path is reachable.
+    let status_response = restarted_app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri("/api/v1/training/export")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(status_response.status(), StatusCode::OK);
 }

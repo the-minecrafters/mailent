@@ -244,3 +244,29 @@ pub trait ProbeRepository: Send + Sync {
     ) -> Result<Option<mailent_domain::ProbeRun>, StorageError>;
     async fn update(&self, run: &mailent_domain::ProbeRun) -> Result<(), StorageError>;
 }
+
+#[async_trait]
+pub trait TrainingRecordRepository: Send + Sync {
+    async fn save(&self, record: &mailent_domain::TrainingRecord) -> Result<(), StorageError>;
+    async fn list_recent(
+        &self,
+        investigation_id: Option<Uuid>,
+        asset_id: Option<Uuid>,
+        limit: usize,
+    ) -> Result<Vec<mailent_domain::TrainingRecord>, StorageError>;
+    async fn list_unlabeled(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<mailent_domain::TrainingRecord>, StorageError>;
+    async fn find_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<mailent_domain::TrainingRecord>, StorageError>;
+    /// Attach (or replace) the analyst/final outcome label.  `labeled_at` is set
+    /// now; the original feature snapshot is never modified.
+    async fn attach_analyst_label(
+        &self,
+        id: Uuid,
+        label: &mailent_domain::AnalystLabel,
+    ) -> Result<(), StorageError>;
+}

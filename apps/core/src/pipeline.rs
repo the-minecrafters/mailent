@@ -338,94 +338,105 @@ pub async fn process_observation(
             .or_else(|| asset.hostnames.first().cloned())
     };
 
-    let (dane_status, mta_sts_failed, mta_sts_enforced) = if let Some(ref dom) = primary_domain {
-        let base_domain = if let Some((_, parent)) = dom.split_once('.') {
-            if parent.contains('.') {
-                parent.to_string()
+    let (dane_status, mta_sts_failed, mta_sts_enforced, mta_sts_mode, tlsa_record_count) =
+        if let Some(ref dom) = primary_domain {
+            let base_domain = if let Some((_, parent)) = dom.split_once('.') {
+                if parent.contains('.') {
+                    parent.to_string()
+                } else {
+                    dom.clone()
+                }
             } else {
                 dom.clone()
-            }
-        } else {
-            dom.clone()
-        };
+            };
 
-        let mta_sts = match state
-            .intelligence
-            .get_mta_sts_policy(dom)
-            .await
-            .unwrap_or(None)
-        {
-            Some(p) => Some(p),
-            None => state
+            let mta_sts = match state
                 .intelligence
-                .get_mta_sts_policy(&base_domain)
+                .get_mta_sts_policy(dom)
                 .await
-                .unwrap_or(None),
-        };
-
-        let (mta_failed, mta_enforced) = if let Some(ref sts) = mta_sts {
-            let enforced = sts.mode == mailent_domain::MtaStsMode::Enforce;
-            let val_res = mailent_integrations::evaluate_session_against_mta_sts(
-                sts,
-                &session,
-                session.certificate.as_ref(),
-                Some(dom),
-            );
-            let failed = matches!(
-                val_res,
-                mailent_integrations::MtaStsValidationResult::MxPatternMismatch { .. }
-                    | mailent_integrations::MtaStsValidationResult::StartTlsNotNegotiated
-                    | mailent_integrations::MtaStsValidationResult::CertificateExpired
-                    | mailent_integrations::MtaStsValidationResult::CertificateInvalid(_)
-            );
-            (failed, enforced)
-        } else {
-            (false, false)
-        };
-
-        let tlsa_records = {
-            let recs = state
-                .intelligence
-                .get_tlsa_records(dom)
-                .await
-                .unwrap_or_default();
-            if recs.is_empty() {
-                state
+                .unwrap_or(None)
+            {
+                Some(p) => Some(p),
+                None => state
                     .intelligence
-                    .get_tlsa_records(&base_domain)
+                    .get_mta_sts_policy(&base_domain)
                     .await
-                    .unwrap_or_default()
-            } else {
-                recs
-            }
-        };
+                    .unwrap_or(None),
+            };
 
-        let dane_st = if let Some(ref cert) = session.certificate {
-            if !tlsa_records.is_empty() {
-                let any_match = tlsa_records.iter().any(|tlsa| {
-                    mailent_integrations::validate_dane(
-                        tlsa,
-                        &cert.reference.sha256_fingerprint,
-                        None,
-                        None,
-                    ) == mailent_domain::DaneStatus::DaneMatch
-                });
-                if any_match {
-                    Some(mailent_domain::DaneStatus::DaneMatch)
+            let mta_sts_mode = mta_sts.as_ref().map(|p| p.mode);
+
+            let (mta_failed, mta_enforced) = if let Some(ref sts) = mta_sts {
+                let enforced = sts.mode == mailent_domain::MtaStsMode::Enforce;
+                let val_res = mailent_integrations::evaluate_session_against_mta_sts(
+                    sts,
+                    &session,
+                    session.certificate.as_ref(),
+                    Some(dom),
+                );
+                let failed = matches!(
+                    val_res,
+                    mailent_integrations::MtaStsValidationResult::MxPatternMismatch { .. }
+                        | mailent_integrations::MtaStsValidationResult::StartTlsNotNegotiated
+                        | mailent_integrations::MtaStsValidationResult::CertificateExpired
+                        | mailent_integrations::MtaStsValidationResult::CertificateInvalid(_)
+                );
+                (failed, enforced)
+            } else {
+                (false, false)
+            };
+
+            let tlsa_records = {
+                let recs = state
+                    .intelligence
+                    .get_tlsa_records(dom)
+                    .await
+                    .unwrap_or_default();
+                if recs.is_empty() {
+                    state
+                        .intelligence
+                        .get_tlsa_records(&base_domain)
+                        .await
+                        .unwrap_or_default()
                 } else {
-                    Some(mailent_domain::DaneStatus::DaneMismatch)
+                    recs
+                }
+            };
+
+            let tlsa_record_count = tlsa_records.len();
+
+            let dane_st = if let Some(ref cert) = session.certificate {
+                if !tlsa_records.is_empty() {
+                    let any_match = tlsa_records.iter().any(|tlsa| {
+                        mailent_integrations::validate_dane(
+                            tlsa,
+                            &cert.reference.sha256_fingerprint,
+                            None,
+                            None,
+                        ) == mailent_domain::DaneStatus::DaneMatch
+                    });
+                    if any_match {
+                        Some(mailent_domain::DaneStatus::DaneMatch)
+                    } else {
+                        Some(mailent_domain::DaneStatus::DaneMismatch)
+                    }
+                } else {
+                    None
                 }
             } else {
                 None
-            }
-        } else {
-            None
-        };
+            };
 
-        (dane_st, mta_failed, mta_enforced)
-    } else {
-        (None, false, false)
-    };
+            (
+                dane_st,
+                mta_failed,
+                mta_enforced,
+                mta_sts_mode,
+                tlsa_record_count,
+            )
+        } else {
+            (None, false, false, None, 0)
+        };
 
     let intel_anomalies = mailent_baseline::detect_intelligence_anomalies(
         asset_id,
@@ -550,6 +561,28 @@ pub async fn process_observation(
 
     if let Some(ref inv) = investigation {
         state.investigations.save(inv).await?;
+        // Best-effort: capture a versioned training record at decision time.
+        let capture_ctx = crate::training::CaptureContext {
+            inv,
+            asset: &asset,
+            session: &session,
+            findings: &findings,
+            drift_events: &drift_events,
+            anomalies: &anomalies,
+            baseline: existing_baseline.as_ref(),
+            dane_status,
+            mta_sts_mode,
+            mta_sts_failed,
+            mta_sts_enforced,
+            tlsa_record_count,
+            active_verification: active_verification.as_ref(),
+            jev_decision: inv.jev_decision.as_ref(),
+            delivery_domain: primary_domain.as_deref(),
+            captured_at: now,
+        };
+        if let Err(e) = crate::training::capture_training(state, &capture_ctx).await {
+            tracing::warn!(%asset_id, "training capture skipped: {e}");
+        }
         let trigger = if drift_events
             .iter()
             .any(|d| d.kind == mailent_domain::DriftKind::CertificateChanged)

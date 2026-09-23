@@ -6,7 +6,7 @@ use mailent_domain::{
     FindingCategory, FindingSeverity, IntelligenceRefreshStatus, Investigation,
     InvestigationStatus, MtaStsMode, MtaStsPolicy, MxRecord, PerspectiveMismatch, PriorityLevel,
     ProbeOutcome, ProbeResult, ProbeRun, ProbeTrigger, RiskLevel, SensorHeartbeat, SensorRecord,
-    SensorStatus, TlsRptAggregateReport, TlsRptPolicy, TlsVersion, TlsaRecord,
+    SensorStatus, TlsRptAggregateReport, TlsRptPolicy, TlsVersion, TlsaRecord, TrainingRecord,
 };
 use sqlx::{PgPool, Row, postgres::PgPoolOptions};
 use std::sync::Arc;
@@ -18,7 +18,7 @@ use crate::{
     repository::{
         AssetRepository, BaselineRepository, CertificateRepository, DecisionRepository,
         FindingRepository, IntelligenceRepository, InvestigationRepository, ProbeRepository,
-        SensorRepository,
+        SensorRepository, TrainingRecordRepository,
     },
 };
 
@@ -1947,6 +1947,142 @@ impl ProbeRepository for PostgresStorage {
 
     async fn update(&self, run: &ProbeRun) -> Result<(), StorageError> {
         ProbeRepository::save(self, run).await
+    }
+}
+
+#[async_trait]
+impl TrainingRecordRepository for PostgresStorage {
+    async fn save(&self, record: &TrainingRecord) -> Result<(), StorageError> {
+        let features_json = serde_json::to_value(&record.features)
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        let automated_json = record
+            .automated_label
+            .as_ref()
+            .map(|l| serde_json::to_value(l).unwrap_or_default());
+        let analyst_json = record
+            .analyst_label
+            .as_ref()
+            .map(|l| serde_json::to_value(l).unwrap_or_default());
+
+        sqlx::query(
+            r#"INSERT INTO training_records
+               (id, investigation_id, asset_id, feature_schema_version, captured_at, features, automated_label, analyst_label, labeled_at)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+               ON CONFLICT (id) DO UPDATE SET
+                   feature_schema_version = EXCLUDED.feature_schema_version,
+                   captured_at = EXCLUDED.captured_at,
+                   features = EXCLUDED.features,
+                   automated_label = EXCLUDED.automated_label,
+                   analyst_label = EXCLUDED.analyst_label,
+                   labeled_at = EXCLUDED.labeled_at"#,
+        )
+        .bind(record.id)
+        .bind(record.investigation_id)
+        .bind(record.asset_id)
+        .bind(record.feature_schema_version as i32)
+        .bind(record.captured_at)
+        .bind(features_json)
+        .bind(automated_json)
+        .bind(analyst_json)
+        .bind(record.labeled_at)
+        .execute(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn list_recent(
+        &self,
+        investigation_id: Option<Uuid>,
+        asset_id: Option<Uuid>,
+        limit: usize,
+    ) -> Result<Vec<TrainingRecord>, StorageError> {
+        let rows = sqlx::query(
+            r#"SELECT id, investigation_id, asset_id, feature_schema_version, captured_at, features, automated_label, analyst_label, labeled_at
+               FROM training_records
+               WHERE ($1::UUID IS NULL OR investigation_id = $1)
+                 AND ($2::UUID IS NULL OR asset_id = $2)
+               ORDER BY captured_at DESC LIMIT $3"#,
+        )
+        .bind(investigation_id)
+        .bind(asset_id)
+        .bind(limit as i64)
+        .fetch_all(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(e.to_string()))?;
+
+        Ok(rows.into_iter().map(training_record_from_row).collect())
+    }
+
+    async fn list_unlabeled(&self, limit: usize) -> Result<Vec<TrainingRecord>, StorageError> {
+        let rows = sqlx::query(
+            r#"SELECT id, investigation_id, asset_id, feature_schema_version, captured_at, features, automated_label, analyst_label, labeled_at
+               FROM training_records WHERE analyst_label IS NULL
+               ORDER BY captured_at DESC LIMIT $1"#,
+        )
+        .bind(limit as i64)
+        .fetch_all(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(e.to_string()))?;
+
+        Ok(rows.into_iter().map(training_record_from_row).collect())
+    }
+
+    async fn find_by_id(&self, id: Uuid) -> Result<Option<TrainingRecord>, StorageError> {
+        let row = sqlx::query(
+            r#"SELECT id, investigation_id, asset_id, feature_schema_version, captured_at, features, automated_label, analyst_label, labeled_at
+               FROM training_records WHERE id = $1"#,
+        )
+        .bind(id)
+        .fetch_optional(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(e.to_string()))?;
+
+        Ok(row.map(training_record_from_row))
+    }
+
+    async fn attach_analyst_label(
+        &self,
+        id: Uuid,
+        label: &mailent_domain::AnalystLabel,
+    ) -> Result<(), StorageError> {
+        let label_json =
+            serde_json::to_value(label).map_err(|e| StorageError::Backend(e.to_string()))?;
+        let updated = sqlx::query(
+            r#"UPDATE training_records
+               SET analyst_label = $2, labeled_at = now()
+               WHERE id = $1"#,
+        )
+        .bind(id)
+        .bind(label_json)
+        .execute(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(e.to_string()))?;
+        if updated.rows_affected() == 0 {
+            return Err(StorageError::NotFound(format!(
+                "training record {id} not found"
+            )));
+        }
+        Ok(())
+    }
+}
+
+fn training_record_from_row(r: sqlx::postgres::PgRow) -> TrainingRecord {
+    use sqlx::Row;
+    TrainingRecord {
+        id: r.get("id"),
+        investigation_id: r.get("investigation_id"),
+        asset_id: r.get("asset_id"),
+        feature_schema_version: r.get::<i32, _>("feature_schema_version") as u32,
+        captured_at: r.get("captured_at"),
+        features: serde_json::from_value(r.get("features")).unwrap_or_default(),
+        automated_label: r
+            .get::<Option<serde_json::Value>, _>("automated_label")
+            .and_then(|v| serde_json::from_value(v).ok()),
+        analyst_label: r
+            .get::<Option<serde_json::Value>, _>("analyst_label")
+            .and_then(|v| serde_json::from_value(v).ok()),
+        labeled_at: r.get("labeled_at"),
     }
 }
 

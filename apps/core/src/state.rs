@@ -12,7 +12,7 @@ use mailent_storage::{
     repository::{
         AssetRepository, BaselineRepository, CertificateRepository, DecisionRepository,
         FindingRepository, IntelligenceRepository, InvestigationRepository, ObservationRepository,
-        ProbeRepository, SensorRepository, SessionRepository,
+        ProbeRepository, SensorRepository, SessionRepository, TrainingRecordRepository,
     },
 };
 use std::sync::Arc;
@@ -35,6 +35,7 @@ pub struct AppState {
     pub investigations: Arc<dyn InvestigationRepository>,
     pub decisions: Arc<dyn DecisionRepository>,
     pub probes: Arc<dyn ProbeRepository>,
+    pub training: Arc<dyn TrainingRecordRepository>,
     pub intelligence_resolver: Arc<dyn DomainIntelligenceResolver>,
     pub baseline_analyzer: Arc<dyn BaselineAnalyzer>,
     pub decision_provider: Arc<dyn DecisionProvider>,
@@ -58,7 +59,8 @@ impl AppState {
             baselines: mem.clone(),
             investigations: mem.clone(),
             decisions: mem.clone(),
-            probes: mem,
+            probes: mem.clone(),
+            training: mem.clone(),
             intelligence_resolver: Arc::new(MockDomainIntelligenceResolver::new()),
             baseline_analyzer: Arc::new(DefaultBaselineAnalyzer::new()),
             decision_provider: Arc::new(DisabledProvider),
@@ -79,6 +81,7 @@ impl AppState {
             investigations,
             decisions,
             probes,
+            training,
         ): (
             Arc<dyn AssetRepository>,
             Arc<dyn CertificateRepository>,
@@ -89,10 +92,12 @@ impl AppState {
             Arc<dyn InvestigationRepository>,
             Arc<dyn DecisionRepository>,
             Arc<dyn ProbeRepository>,
+            Arc<dyn TrainingRecordRepository>,
         ) = if let Some(ref db_url) = config.database_url {
             tracing::info!("Connecting to PostgreSQL control plane storage");
             let pg = Arc::new(PostgresStorage::connect(db_url).await?);
             (
+                pg.clone(),
                 pg.clone(),
                 pg.clone(),
                 pg.clone(),
@@ -108,6 +113,7 @@ impl AppState {
                 "No MAILENT_DATABASE_URL provided; using in-memory control plane storage"
             );
             (
+                mem.clone(),
                 mem.clone(),
                 mem.clone(),
                 mem.clone(),
@@ -190,6 +196,7 @@ impl AppState {
             investigations,
             decisions,
             probes,
+            training,
             intelligence_resolver,
             baseline_analyzer: Arc::new(DefaultBaselineAnalyzer::new()),
             decision_provider,

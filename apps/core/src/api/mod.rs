@@ -10,6 +10,7 @@ pub mod observations;
 pub mod probes;
 pub mod sensors;
 pub mod sessions;
+pub mod training;
 
 use axum::{
     Router,
@@ -122,6 +123,22 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/v1/metrics/coverage",
             get(metrics::get_coverage_metrics_handler),
+        )
+        .route(
+            "/api/v1/training",
+            get(training::list_training_records_handler),
+        )
+        .route(
+            "/api/v1/training/export",
+            get(training::export_training_records_handler),
+        )
+        .route(
+            "/api/v1/training/{id}",
+            get(training::get_training_record_handler),
+        )
+        .route(
+            "/api/v1/training/{id}/label",
+            post(training::attach_analyst_label_handler),
         )
         .layer(TraceLayer::new_for_http())
         .with_state(state)

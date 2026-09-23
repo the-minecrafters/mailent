@@ -4,7 +4,7 @@ use mailent_domain::{
     CtIntelligenceEvent, DecisionRecord, DriftEvent, EmailSession, Finding,
     IntelligenceRefreshStatus, Investigation, InvestigationStatus, MtaStsPolicy, MxRecord,
     NormalizedObservation, ProbeRun, SensorHeartbeat, SensorRecord, SensorStatus,
-    TlsRptAggregateReport, TlsRptPolicy, TlsaRecord,
+    TlsRptAggregateReport, TlsRptPolicy, TlsaRecord, TrainingRecord,
 };
 use std::{collections::HashMap, sync::Arc};
 use time::OffsetDateTime;
@@ -17,6 +17,7 @@ use crate::{
         AssetRepository, BaselineRepository, CertificateRepository, DecisionRepository,
         EvidenceStore, FindingRepository, IntelligenceRepository, InvestigationRepository,
         ObservationRepository, ProbeRepository, SensorRepository, SessionRepository,
+        TrainingRecordRepository,
     },
 };
 
@@ -45,6 +46,7 @@ pub struct InMemoryStorage {
     investigations: Arc<RwLock<Vec<Investigation>>>,
     decision_records: Arc<RwLock<Vec<DecisionRecord>>>,
     probe_runs: Arc<RwLock<Vec<ProbeRun>>>,
+    training_records: Arc<RwLock<Vec<TrainingRecord>>>,
 }
 
 impl InMemoryStorage {
@@ -715,6 +717,71 @@ impl ProbeRepository for InMemoryStorage {
         let mut guard = self.probe_runs.write().await;
         if let Some(existing) = guard.iter_mut().find(|r| r.id == run.id) {
             *existing = run.clone();
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl TrainingRecordRepository for InMemoryStorage {
+    async fn save(&self, record: &TrainingRecord) -> Result<(), StorageError> {
+        let mut guard = self.training_records.write().await;
+        if let Some(existing) = guard.iter_mut().find(|r| r.id == record.id) {
+            *existing = record.clone();
+        } else {
+            guard.push(record.clone());
+        }
+        Ok(())
+    }
+
+    async fn list_recent(
+        &self,
+        investigation_id: Option<Uuid>,
+        asset_id: Option<Uuid>,
+        limit: usize,
+    ) -> Result<Vec<TrainingRecord>, StorageError> {
+        let guard = self.training_records.read().await;
+        let mut items: Vec<TrainingRecord> = guard
+            .iter()
+            .filter(|r| investigation_id.is_none_or(|id| r.investigation_id == id))
+            .filter(|r| asset_id.is_none_or(|id| r.asset_id == id))
+            .cloned()
+            .collect();
+        items.sort_by_key(|r| std::cmp::Reverse(r.captured_at));
+        items.truncate(limit);
+        Ok(items)
+    }
+
+    async fn list_unlabeled(&self, limit: usize) -> Result<Vec<TrainingRecord>, StorageError> {
+        let guard = self.training_records.read().await;
+        let mut items: Vec<TrainingRecord> = guard
+            .iter()
+            .filter(|r| r.analyst_label.is_none())
+            .cloned()
+            .collect();
+        items.sort_by_key(|r| std::cmp::Reverse(r.captured_at));
+        items.truncate(limit);
+        Ok(items)
+    }
+
+    async fn find_by_id(&self, id: Uuid) -> Result<Option<TrainingRecord>, StorageError> {
+        let guard = self.training_records.read().await;
+        Ok(guard.iter().find(|r| r.id == id).cloned())
+    }
+
+    async fn attach_analyst_label(
+        &self,
+        id: Uuid,
+        label: &mailent_domain::AnalystLabel,
+    ) -> Result<(), StorageError> {
+        let mut guard = self.training_records.write().await;
+        if let Some(record) = guard.iter_mut().find(|r| r.id == id) {
+            record.analyst_label = Some(label.clone());
+            record.labeled_at = Some(OffsetDateTime::now_utc());
+        } else {
+            return Err(StorageError::NotFound(format!(
+                "training record {id} not found"
+            )));
         }
         Ok(())
     }

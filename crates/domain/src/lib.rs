@@ -16,6 +16,7 @@ pub mod protocol;
 pub mod sensor;
 pub mod session;
 pub mod tls;
+pub mod training;
 
 pub use asset::{Asset, AssetEndpoint, AssetIdentity};
 pub use baseline::{AnomalySignal, AssetBaseline};
@@ -43,3 +44,9 @@ pub use protocol::{EmailProtocol, StartTlsState};
 pub use sensor::{SensorHeartbeat, SensorRecord, SensorStatus};
 pub use session::EmailSession;
 pub use tls::{CipherSuite, ForwardSecrecyState, KeyExchange, TlsVersion};
+pub use training::{
+    AnalystLabel, AnalystOutcome, AnomalyFeature, AssetFeatures, AutomatedLabel, BaselineFeatures,
+    CertificateFeature, DeliveryContextFeatures, DriftFeature, JevFeature, PolicyFindingFeature,
+    ProbeFeature, TRAINING_FEATURE_SCHEMA_VERSION, TlsFeatures, TrainingFeatures, TrainingRecord,
+    name_hash,
+};

@@ -11,5 +11,5 @@ pub use postgres::PostgresStorage;
 pub use repository::{
     AssetRepository, BaselineRepository, CertificateRepository, DecisionRepository, EvidenceStore,
     FindingRepository, IntelligenceRepository, InvestigationRepository, ObservationRepository,
-    ProbeRepository, SensorRepository, SessionRepository,
+    ProbeRepository, SensorRepository, SessionRepository, TrainingRecordRepository,
 };
