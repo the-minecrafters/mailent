@@ -59,16 +59,18 @@ export function ScanInfrastructureModal({
     >
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className="modal-content" style={{ maxWidth: 540 }}>
+        <Dialog.Content className="modal-content">
           <div className="modal-header">
-            <Dialog.Title className="modal-title">
-              <Icon name="search" size={20} />
-              <span>Scan Mail Infrastructure</span>
-            </Dialog.Title>
-            <Dialog.Description className="modal-description">
-              Actively discover mail servers, verify MX/DANE/MTA-STS policies,
-              and probe TLS &amp; STARTTLS posture.
-            </Dialog.Description>
+            <div className="modal-header-content">
+              <Dialog.Title className="modal-title">
+                <Icon name="search" size={20} />
+                <span>Scan Mail Infrastructure</span>
+              </Dialog.Title>
+              <Dialog.Description className="modal-description">
+                Actively discover mail servers, verify MX/DANE/MTA-STS policies,
+                and probe TLS &amp; STARTTLS posture.
+              </Dialog.Description>
+            </div>
             <Dialog.Close asChild disabled={scanning}>
               <button
                 className="icon-button modal-close"

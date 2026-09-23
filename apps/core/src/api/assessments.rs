@@ -189,6 +189,17 @@ pub async fn analyze_capture_handler(
 
     if !output.status.success() {
         let err = String::from_utf8_lossy(&output.stderr);
+        let lower = err.to_lowercase();
+        if lower.contains("truncated dump")
+            || lower.contains("failed to read a packet")
+            || lower.contains("corrupt")
+            || lower.contains("bad packet")
+        {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "The capture file is corrupted or truncated and could not be parsed.".to_string(),
+            ));
+        }
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Sensor analysis failed: {err}"),

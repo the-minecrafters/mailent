@@ -75,16 +75,18 @@ export function ScheduleMonitorModal({
     >
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className="modal-content" style={{ maxWidth: 540 }}>
+        <Dialog.Content className="modal-content">
           <div className="modal-header">
-            <Dialog.Title className="modal-title">
-              <Icon name="schedule" size={20} />
-              <span>Schedule Infrastructure Monitoring</span>
-            </Dialog.Title>
-            <Dialog.Description className="modal-description">
-              Continuously monitor {domain} for configuration drift and security
-              regressions.
-            </Dialog.Description>
+            <div className="modal-header-content">
+              <Dialog.Title className="modal-title">
+                <Icon name="schedule" size={20} />
+                <span>Schedule Infrastructure Monitoring</span>
+              </Dialog.Title>
+              <Dialog.Description className="modal-description">
+                Continuously monitor {domain} for configuration drift and security
+                regressions.
+              </Dialog.Description>
+            </div>
             <Dialog.Close asChild disabled={loading}>
               <button
                 className="icon-button modal-close"

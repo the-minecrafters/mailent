@@ -22,7 +22,7 @@ pub async fn check_decision_provider(State(state): State<AppState>) -> impl Into
     } else if state.decision_provider_name == "disabled" {
         "Jev is not configured. Rule-based security checks are available."
     } else {
-        "Jev is unavailable. Rule-based security checks remain available."
+        "Jev (api.codiv.ai) is temporarily overloaded or unavailable. Rule-based security checks remain active with deterministic fallback."
     };
     Json(json!({"connected": connected, "message": message}))
 }

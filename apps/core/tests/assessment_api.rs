@@ -334,6 +334,6 @@ async fn test_assessments_api_edge_cases_and_adversarial_inputs() {
             )
             .await
             .unwrap();
-        assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
     }
 }
