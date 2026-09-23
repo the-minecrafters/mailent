@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: mailent
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeployTrigger: off
+    envVars:
+      - key: MAILENT_DATABASE_URL
+        sync: false
+      - key: MAILENT_SUPABASE_URL
+        value: https://vuskxbttfmmyxpqudjwv.supabase.co
+      - key: MAILENT_SUPABASE_PUBLISHABLE_KEY
+        sync: false
+      - key: MAILENT_ALLOWED_EMAILS
+        value: seadeepie@gmail.com
+      - key: MAILENT_JEV_ENABLED
+        value: true
+      - key: MAILENT_JEV_BASE_URL
+        value: https://api.codiv.ai
+      - key: MAILENT_JEV_MODEL
+        value: openjev-latest
+      - key: MAILENT_JEV_API_KEY
+        sync: false

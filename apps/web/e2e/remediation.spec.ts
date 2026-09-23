@@ -35,7 +35,7 @@ test("real captured certificate problem is remediated through guidance with pres
   );
   expect(originalInvestigation).toBeTruthy();
   await page.goto("/");
-  await page.getByRole("tab", { name: /assets/i }).click();
+  await page.getByRole("link", { name: "Mail servers", exact: true }).click();
   await page
     .locator("tr", { hasText: "127.0.0.1" })
     .getByRole("button", { name: /view/i })
@@ -145,7 +145,7 @@ test("real captured certificate problem is remediated through guidance with pres
     fullPage: true,
   });
   await page.reload();
-  await page.getByRole("tab", { name: /assets/i }).click();
+  await page.getByRole("link", { name: "Mail servers", exact: true }).click();
   await page
     .locator("tr", { hasText: "127.0.0.1" })
     .getByRole("button", { name: /view/i })

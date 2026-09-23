@@ -527,7 +527,14 @@ pub async fn process_observation(
         };
 
         let (res, src) = match state.decision_provider.assess(ctx.clone()).await {
-            Ok(r) => (r, "jev".to_string()),
+            Ok(r) => {
+                let source = if r.provider_info.starts_with("jev:") {
+                    "jev"
+                } else {
+                    "deterministic_fallback"
+                };
+                (r, source.to_string())
+            }
             Err(e) => {
                 tracing::warn!("Decision assessment fallback used: {e}");
                 (

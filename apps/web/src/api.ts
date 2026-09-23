@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { authenticatedFetch } from "./auth";
 
 export const findingSchema = z.object({
   id: z.string(),
@@ -153,16 +154,103 @@ const readinessSchema = z.object({
   decision_provider: z.string(),
 });
 
-async function request(path: string, init?: RequestInit): Promise<unknown> {
-  const response = await fetch(path, {
+async function request(
+  path: string,
+  init?: RequestInit,
+  timeoutMs = 10000,
+): Promise<unknown> {
+  const response = await authenticatedFetch(path, {
     ...init,
-    signal: AbortSignal.timeout(10000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!response.ok)
     throw new Error(
-      `Core request failed (${response.status}): ${(await response.text()).slice(0, 500)}`,
+      `Request failed (${response.status}): ${(await response.text()).slice(0, 500)}`,
     );
+  if (response.status === 204) return null;
   return response.json();
+}
+
+export const protocolEvidenceSchema = z.object({
+  protocol: z.string(),
+  role: z.string(),
+  proof: z.string(),
+  verified_by: z.string(),
+});
+export type ProtocolEvidence = z.infer<typeof protocolEvidenceSchema>;
+
+export const assessmentSummarySchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  capture_name: z.string(),
+  capture_hash: z.string(),
+  capture_size_bytes: z.number(),
+  created_at: z.string(),
+  protocols_identified: z.array(z.string()),
+  session_count: z.number(),
+  finding_count: z.number(),
+  posture_score: z.number(),
+  posture_grade: z.string(),
+  ai_risk_classification: z.string(),
+});
+export type AssessmentSummary = z.infer<typeof assessmentSummarySchema>;
+
+export const assessmentRecordSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  capture_name: z.string(),
+  capture_hash: z.string(),
+  capture_size_bytes: z.number(),
+  created_at: z.string(),
+  time_range_start: z.string().nullable().optional(),
+  time_range_end: z.string().nullable().optional(),
+  protocols_identified: z.array(z.string()),
+  protocol_evidence: z.array(protocolEvidenceSchema),
+  session_ids: z.array(z.string()),
+  asset_ids: z.array(z.string()),
+  finding_ids: z.array(z.string()),
+  posture_score: z.number(),
+  posture_grade: z.string(),
+  evidence_gaps: z.array(z.string()),
+  ai_risk_classification: z.string(),
+  ai_risk_rationale: z.string(),
+  ai_confidence: z.number(),
+  metadata: z.record(z.string(), z.any()).default({}),
+});
+export type AssessmentRecord = z.infer<typeof assessmentRecordSchema>;
+
+export interface AnalyzeCaptureRequest {
+  title?: string;
+  pcap_base64?: string;
+  file_name?: string;
+}
+
+export async function fetchAssessments(): Promise<AssessmentSummary[]> {
+  return z
+    .array(assessmentSummarySchema)
+    .parse(await request("/api/v1/assessments"));
+}
+
+export async function fetchAssessment(id: string): Promise<AssessmentRecord> {
+  return assessmentRecordSchema.parse(
+    await request(`/api/v1/assessments/${id}`),
+  );
+}
+
+export async function analyzeCapture(
+  req: AnalyzeCaptureRequest,
+): Promise<AssessmentRecord> {
+  return assessmentRecordSchema.parse(
+    await request(
+      "/api/v1/assessments/analyze",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req),
+      },
+      60000,
+    ),
+  );
 }
 
 export async function readReadiness() {
@@ -397,6 +485,28 @@ export async function fetchAssetProbes(id: string) {
     .array(probeRunSchema)
     .parse(await request(`/api/v1/assets/${id}/probes`));
 }
+
+export const anomalySignalSchema = z.object({
+  id: z.string(),
+  asset_id: z.string(),
+  signal: z.string(),
+  title: z.string(),
+  current_value: z.string(),
+  baseline_value: z.string(),
+  deviation: z.number(),
+  confidence: z.number(),
+  evidence: z.string(),
+  observed_at: z.string(),
+});
+export type AnomalySignal = z.infer<typeof anomalySignalSchema>;
+
+export async function fetchAssetAnomalies(
+  id: string,
+): Promise<AnomalySignal[]> {
+  return z
+    .array(anomalySignalSchema)
+    .parse(await request(`/api/v1/assets/${id}/anomalies`));
+}
 export async function triggerAssetProbe(
   id: string,
   port: number,
@@ -577,16 +687,12 @@ export async function downloadAssetReport(
   id: string,
   format: ReportFormat,
 ): Promise<void> {
-  if (format === "pdf" && typeof window !== "undefined") {
-    const printWin = window.open(
-      `/api/v1/assets/${id}/report?format=html#print`,
-      "_blank",
-    );
-    if (printWin) return;
-  }
-  const response = await fetch(`/api/v1/assets/${id}/report?format=${format}`, {
-    signal: AbortSignal.timeout(15000),
-  });
+  const response = await authenticatedFetch(
+    `/api/v1/assets/${id}/report?format=${format}`,
+    {
+      signal: AbortSignal.timeout(15000),
+    },
+  );
   if (!response.ok)
     throw new Error(
       `Report generation failed (${response.status}): ${(await response.text()).slice(0, 300)}`,
@@ -730,47 +836,122 @@ export const policyPackSummarySchema = z.object({
 });
 export type PolicyPackSummary = z.infer<typeof policyPackSummarySchema>;
 
-export const simulationBreakageSchema = z.object({
-  rule_id: z.string(),
-  rule_title: z.string(),
-  severity: z.string(),
-  category: z.string(),
-  reason: z.string(),
-  observed_value: z.string(),
-  required_value: z.string(),
-  session_id: z.string().nullable().optional(),
-});
+export const simulationBreakageSchema = z
+  .object({
+    rule_id: z.string(),
+    severity: z.string(),
+    title: z.string().default(""),
+    description: z.string().default(""),
+    remediation: z.string().default(""),
+    deprecated_behavior: z.string().default(""),
+    affected_sessions_count: z.number().default(0),
+    sample_flow: z.string().default(""),
+    rule_title: z.string().optional(),
+    reason: z.string().optional(),
+    category: z.string().optional(),
+    observed_value: z.string().optional(),
+    required_value: z.string().optional(),
+    session_id: z.string().nullable().optional(),
+  })
+  .transform((data) => ({
+    ...data,
+    rule_title: data.rule_title ?? data.title ?? data.rule_id,
+    reason: data.reason ?? data.description ?? data.deprecated_behavior,
+  }));
 export type SimulationBreakage = z.infer<typeof simulationBreakageSchema>;
 
-export const assetSimulationResultSchema = z.object({
-  asset_id: z.string(),
-  asset_name: z.string().nullable().optional(),
-  compatibility: z.enum(["compatible", "would_fail", "insufficient_evidence"]),
-  breakage_count: z.number(),
-  breakages: z.array(simulationBreakageSchema),
-  evaluated_sessions_count: z.number(),
-  evaluation_notes: z.array(z.string()),
-});
+export const assetSimulationResultSchema = z
+  .object({
+    asset_id: z.string(),
+    primary_name: z.string().default(""),
+    asset_name: z.string().optional(),
+    addresses: z.array(z.string()).default([]),
+    compatibility: z.enum([
+      "compatible",
+      "would_fail",
+      "insufficient_evidence",
+    ]),
+    evaluated_sessions_count: z.number(),
+    breakages: z.array(simulationBreakageSchema).default([]),
+    explanation: z.string().default(""),
+    breakage_count: z.number().optional(),
+    evaluation_notes: z.array(z.string()).default([]),
+  })
+  .transform((data) => ({
+    ...data,
+    asset_name: data.asset_name ?? data.primary_name,
+    breakage_count: data.breakage_count ?? data.breakages.length,
+  }));
 export type AssetSimulationResult = z.infer<typeof assetSimulationResultSchema>;
 
-export const breakageSummarySchema = z.object({
-  rule_id: z.string(),
-  rule_title: z.string(),
-  affected_assets_count: z.number(),
-  sample_reason: z.string(),
-});
+export const breakageSummarySchema = z
+  .object({
+    rule_id: z.string(),
+    deprecated_behavior: z.string().default(""),
+    affected_assets_count: z.number(),
+    affected_sessions_count: z.number().default(0),
+    description: z.string().default(""),
+    rule_title: z.string().optional(),
+    sample_reason: z.string().optional(),
+  })
+  .transform((data) => ({
+    ...data,
+    rule_title: data.rule_title ?? data.deprecated_behavior ?? data.rule_id,
+    sample_reason: data.sample_reason ?? data.description,
+  }));
 export type BreakageSummary = z.infer<typeof breakageSummarySchema>;
 
-export const policySimulationResultSchema = z.object({
-  policy_name: z.string(),
-  evaluated_at: z.string(),
-  total_assets_evaluated: z.number(),
-  compatible_assets_count: z.number(),
-  incompatible_assets_count: z.number(),
-  unknown_assets_count: z.number(),
-  asset_results: z.array(assetSimulationResultSchema),
-  breakages_by_rule: z.array(breakageSummarySchema),
-});
+export const policySimulationResultSchema = z
+  .object({
+    id: z.string().optional(),
+    policy_name: z.string(),
+    policy_version: z.string().default("1.0.0"),
+    policy_description: z.string().default(""),
+    total_assets: z.number().optional(),
+    total_assets_evaluated: z.number().optional(),
+    compatible_assets_count: z.number(),
+    would_fail_assets_count: z.number().optional(),
+    incompatible_assets_count: z.number().optional(),
+    insufficient_evidence_assets_count: z.number().optional(),
+    unknown_assets_count: z.number().optional(),
+    total_sessions_evaluated: z.number().default(0),
+    breakage_summaries: z.array(breakageSummarySchema).default([]),
+    breakages_by_rule: z.array(breakageSummarySchema).optional(),
+    asset_results: z.array(assetSimulationResultSchema).default([]),
+    simulated_at: z.string().optional(),
+    evaluated_at: z.string().optional(),
+  })
+  .transform((data) => {
+    const would_fail =
+      data.would_fail_assets_count ?? data.incompatible_assets_count ?? 0;
+    const insufficient =
+      data.insufficient_evidence_assets_count ?? data.unknown_assets_count ?? 0;
+    const breakages =
+      data.breakage_summaries.length > 0
+        ? data.breakage_summaries
+        : (data.breakages_by_rule ?? []);
+    return {
+      ...data,
+      total_assets:
+        data.total_assets ??
+        data.total_assets_evaluated ??
+        data.compatible_assets_count + would_fail + insufficient,
+      total_assets_evaluated:
+        data.total_assets_evaluated ??
+        data.total_assets ??
+        data.compatible_assets_count + would_fail + insufficient,
+      would_fail_assets_count: would_fail,
+      incompatible_assets_count: would_fail,
+      insufficient_evidence_assets_count: insufficient,
+      unknown_assets_count: insufficient,
+      breakage_summaries: breakages,
+      breakages_by_rule: breakages,
+      simulated_at:
+        data.simulated_at ?? data.evaluated_at ?? new Date().toISOString(),
+      evaluated_at:
+        data.evaluated_at ?? data.simulated_at ?? new Date().toISOString(),
+    };
+  });
 export type PolicySimulationResult = z.infer<
   typeof policySimulationResultSchema
 >;
@@ -798,28 +979,26 @@ export const integrationConfigSchema = z.object({
   id: z.string(),
   name: z.string(),
   kind: z.enum(["webhook", "syslog"]),
-  endpoint_url: z.string(),
+  destination: z.string(),
   enabled: z.boolean(),
-  secret_header: z.string().nullable().optional(),
-  secret_token: z.string().nullable().optional(),
+  auth_header: z.string().nullable().optional(),
   event_types: z.array(z.string()),
   syslog_facility: z.number().nullable().optional(),
   syslog_severity: z.number().nullable().optional(),
   created_at: z.string(),
   updated_at: z.string(),
-  last_delivered_at: z.string().nullable().optional(),
-  last_delivery_status: z.string().nullable().optional(),
-  last_delivery_error: z.string().nullable().optional(),
+  last_delivery_at: z.string().nullable().optional(),
+  last_status_code: z.number().nullable().optional(),
+  last_error: z.string().nullable().optional(),
 });
 export type IntegrationConfig = z.infer<typeof integrationConfigSchema>;
 
 export interface UpsertIntegrationInput {
   name: string;
   kind: "webhook" | "syslog";
-  endpoint_url: string;
+  destination: string;
   enabled: boolean;
-  secret_header?: string | null;
-  secret_token?: string | null;
+  auth_header?: string | null;
   event_types: string[];
   syslog_facility?: number | null;
   syslog_severity?: number | null;
@@ -923,14 +1102,7 @@ export async function downloadArchivedReport(
   id: string,
   format: ReportFormat,
 ): Promise<void> {
-  if (format === "pdf" && typeof window !== "undefined") {
-    const printWin = window.open(
-      `/api/v1/reports/archived/${id}?format=html#print`,
-      "_blank",
-    );
-    if (printWin) return;
-  }
-  const response = await fetch(
+  const response = await authenticatedFetch(
     `/api/v1/reports/archived/${id}?format=${format}`,
     {
       signal: AbortSignal.timeout(15000),
@@ -953,4 +1125,24 @@ export async function downloadArchivedReport(
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
+}
+
+export async function downloadInvestigationReport(
+  id: string,
+  format: ReportFormat,
+) {
+  const response = await authenticatedFetch(
+    `/api/v1/investigations/${id}/report?format=${format}`,
+    { signal: AbortSignal.timeout(15000) },
+  );
+  if (!response.ok)
+    throw new Error(`Report failed (${response.status}). Please try again.`);
+  const url = URL.createObjectURL(await response.blob());
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `mailent-investigation-${id}.${format}`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

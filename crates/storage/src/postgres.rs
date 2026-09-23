@@ -1,12 +1,13 @@
 use async_trait::async_trait;
 use mailent_domain::{
-    AnomalySignal, Asset, AssetBaseline, AssetEndpoint, AssetIdentity, CertificateRecord,
-    CtCertificateRecord, CtIntelligenceEvent, CtIntelligenceEventKind, DecisionRecord,
-    DecisionResult, DnssecState, DriftEvent, DriftKind, EmailProtocol, EvidenceRef, Finding,
-    FindingCategory, FindingSeverity, IntelligenceRefreshStatus, Investigation,
-    InvestigationStatus, MtaStsMode, MtaStsPolicy, MxRecord, PerspectiveMismatch, PriorityLevel,
-    ProbeOutcome, ProbeResult, ProbeRun, ProbeTrigger, RiskLevel, SensorHeartbeat, SensorRecord,
-    SensorStatus, TlsRptAggregateReport, TlsRptPolicy, TlsVersion, TlsaRecord, TrainingRecord,
+    AnomalySignal, AssessmentRecord, AssessmentSummary, Asset, AssetBaseline, AssetEndpoint,
+    AssetIdentity, CertificateRecord, CtCertificateRecord, CtIntelligenceEvent,
+    CtIntelligenceEventKind, DecisionRecord, DecisionResult, DnssecState, DriftEvent, DriftKind,
+    EmailProtocol, EvidenceRef, Finding, FindingCategory, FindingSeverity,
+    IntelligenceRefreshStatus, Investigation, InvestigationStatus, MtaStsMode, MtaStsPolicy,
+    MxRecord, PerspectiveMismatch, PriorityLevel, ProbeOutcome, ProbeResult, ProbeRun,
+    ProbeTrigger, RiskLevel, SensorHeartbeat, SensorRecord, SensorStatus, TlsRptAggregateReport,
+    TlsRptPolicy, TlsVersion, TlsaRecord, TrainingRecord,
 };
 use sqlx::{PgPool, Row, postgres::PgPoolOptions};
 use std::sync::Arc;
@@ -16,10 +17,10 @@ use uuid::Uuid;
 use crate::{
     error::StorageError,
     repository::{
-        ArchivedReportRepository, AssetRepository, BaselineRepository, CertificateRepository,
-        DecisionRepository, FindingRepository, IntegrationRepository, IntelligenceRepository,
-        InvestigationRepository, PostureRepository, ProbeRepository, SensorRepository,
-        TrainingRecordRepository,
+        ArchivedReportRepository, AssessmentRepository, AssetRepository, BaselineRepository,
+        CertificateRepository, DecisionRepository, FindingRepository, IntegrationRepository,
+        IntelligenceRepository, InvestigationRepository, PostureRepository, ProbeRepository,
+        SensorRepository, TrainingRecordRepository,
     },
 };
 
@@ -30,17 +31,32 @@ pub struct PostgresStorage {
 
 impl PostgresStorage {
     pub async fn connect(database_url: &str) -> Result<Self, StorageError> {
+        let mut options: sqlx::postgres::PgConnectOptions = database_url
+            .parse()
+            .map_err(|e| StorageError::Backend(format!("Invalid database URL: {e}")))?;
+        if let Ok(schema) = std::env::var("MAILENT_DATABASE_SCHEMA") {
+            if !schema
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+                || schema.is_empty()
+            {
+                return Err(StorageError::Backend("Invalid database schema".into()));
+            }
+            options = options.options([("search_path", schema)]);
+        }
         let pool = PgPoolOptions::new()
-            .max_connections(10)
+            .max_connections(5)
             .acquire_timeout(std::time::Duration::from_secs(5))
-            .connect(database_url)
+            .connect_with(options)
             .await
             .map_err(|e| StorageError::Backend(format!("PostgreSQL connection failed: {e}")))?;
 
         let storage = Self {
             pool: Arc::new(pool),
         };
-        storage.migrate().await?;
+        if std::env::var("MAILENT_RUN_MIGRATIONS").as_deref() != Ok("false") {
+            storage.migrate().await?;
+        }
         Ok(storage)
     }
 
@@ -2749,5 +2765,171 @@ impl ArchivedReportRepository for PostgresStorage {
             notes: row.get("notes"),
             raw_report_json: row.get("raw_json"),
         }))
+    }
+}
+
+#[async_trait]
+impl AssessmentRepository for PostgresStorage {
+    async fn save(&self, assessment: &AssessmentRecord) -> Result<(), StorageError> {
+        let protocols_json = serde_json::to_value(&assessment.protocols_identified)
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        let protocol_evidence_json = serde_json::to_value(&assessment.protocol_evidence)
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        let session_ids_json = serde_json::to_value(&assessment.session_ids)
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        let asset_ids_json = serde_json::to_value(&assessment.asset_ids)
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        let finding_ids_json = serde_json::to_value(&assessment.finding_ids)
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+        let evidence_gaps_json = serde_json::to_value(&assessment.evidence_gaps)
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO assessments (
+                id, title, capture_name, capture_hash, capture_size_bytes,
+                created_at, time_range_start, time_range_end,
+                protocols_identified, protocol_evidence, session_ids, asset_ids, finding_ids,
+                posture_score, posture_grade, evidence_gaps,
+                ai_risk_classification, ai_risk_rationale, ai_confidence, metadata
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
+            )
+            ON CONFLICT (id) DO UPDATE SET
+                title = EXCLUDED.title,
+                protocols_identified = EXCLUDED.protocols_identified,
+                protocol_evidence = EXCLUDED.protocol_evidence,
+                session_ids = EXCLUDED.session_ids,
+                asset_ids = EXCLUDED.asset_ids,
+                finding_ids = EXCLUDED.finding_ids,
+                posture_score = EXCLUDED.posture_score,
+                posture_grade = EXCLUDED.posture_grade,
+                evidence_gaps = EXCLUDED.evidence_gaps,
+                ai_risk_classification = EXCLUDED.ai_risk_classification,
+                ai_risk_rationale = EXCLUDED.ai_risk_rationale,
+                ai_confidence = EXCLUDED.ai_confidence,
+                metadata = EXCLUDED.metadata
+            "#
+        )
+        .bind(assessment.id)
+        .bind(&assessment.title)
+        .bind(&assessment.capture_name)
+        .bind(&assessment.capture_hash)
+        .bind(assessment.capture_size_bytes as i64)
+        .bind(assessment.created_at)
+        .bind(assessment.time_range_start)
+        .bind(assessment.time_range_end)
+        .bind(protocols_json)
+        .bind(protocol_evidence_json)
+        .bind(session_ids_json)
+        .bind(asset_ids_json)
+        .bind(finding_ids_json)
+        .bind(assessment.posture_score)
+        .bind(&assessment.posture_grade)
+        .bind(evidence_gaps_json)
+        .bind(&assessment.ai_risk_classification)
+        .bind(&assessment.ai_risk_rationale)
+        .bind(assessment.ai_confidence)
+        .bind(&assessment.metadata)
+        .execute(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("save assessment error: {e}")))?;
+
+        Ok(())
+    }
+
+    async fn find_by_id(&self, id: Uuid) -> Result<Option<AssessmentRecord>, StorageError> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, title, capture_name, capture_hash, capture_size_bytes,
+                   created_at, time_range_start, time_range_end,
+                   protocols_identified, protocol_evidence, session_ids, asset_ids, finding_ids,
+                   posture_score, posture_grade, evidence_gaps,
+                   ai_risk_classification, ai_risk_rationale, ai_confidence, metadata
+            FROM assessments
+            WHERE id = $1
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("find assessment error: {e}")))?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let protocols: serde_json::Value = row.get("protocols_identified");
+        let protocol_evidence: serde_json::Value = row.get("protocol_evidence");
+        let session_ids: serde_json::Value = row.get("session_ids");
+        let asset_ids: serde_json::Value = row.get("asset_ids");
+        let finding_ids: serde_json::Value = row.get("finding_ids");
+        let evidence_gaps: serde_json::Value = row.get("evidence_gaps");
+        let size_bytes: i64 = row.get("capture_size_bytes");
+
+        Ok(Some(AssessmentRecord {
+            id: row.get("id"),
+            title: row.get("title"),
+            capture_name: row.get("capture_name"),
+            capture_hash: row.get("capture_hash"),
+            capture_size_bytes: size_bytes as u64,
+            created_at: row.get("created_at"),
+            time_range_start: row.get("time_range_start"),
+            time_range_end: row.get("time_range_end"),
+            protocols_identified: serde_json::from_value(protocols).unwrap_or_default(),
+            protocol_evidence: serde_json::from_value(protocol_evidence).unwrap_or_default(),
+            session_ids: serde_json::from_value(session_ids).unwrap_or_default(),
+            asset_ids: serde_json::from_value(asset_ids).unwrap_or_default(),
+            finding_ids: serde_json::from_value(finding_ids).unwrap_or_default(),
+            posture_score: row.get("posture_score"),
+            posture_grade: row.get("posture_grade"),
+            evidence_gaps: serde_json::from_value(evidence_gaps).unwrap_or_default(),
+            ai_risk_classification: row.get("ai_risk_classification"),
+            ai_risk_rationale: row.get("ai_risk_rationale"),
+            ai_confidence: row.get("ai_confidence"),
+            metadata: row.get("metadata"),
+        }))
+    }
+
+    async fn list_all(&self) -> Result<Vec<AssessmentSummary>, StorageError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, title, capture_name, capture_hash, capture_size_bytes,
+                   created_at, protocols_identified, session_ids, finding_ids,
+                   posture_score, posture_grade, ai_risk_classification
+            FROM assessments
+            ORDER BY created_at DESC
+            "#,
+        )
+        .fetch_all(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("list assessments error: {e}")))?;
+
+        let mut list = Vec::new();
+        for row in rows {
+            let protocols: serde_json::Value = row.get("protocols_identified");
+            let session_ids: serde_json::Value = row.get("session_ids");
+            let finding_ids: serde_json::Value = row.get("finding_ids");
+            let size_bytes: i64 = row.get("capture_size_bytes");
+
+            let s_ids: Vec<Uuid> = serde_json::from_value(session_ids).unwrap_or_default();
+            let f_ids: Vec<Uuid> = serde_json::from_value(finding_ids).unwrap_or_default();
+
+            list.push(AssessmentSummary {
+                id: row.get("id"),
+                title: row.get("title"),
+                capture_name: row.get("capture_name"),
+                capture_hash: row.get("capture_hash"),
+                capture_size_bytes: size_bytes as u64,
+                created_at: row.get("created_at"),
+                protocols_identified: serde_json::from_value(protocols).unwrap_or_default(),
+                session_count: s_ids.len(),
+                finding_count: f_ids.len(),
+                posture_score: row.get("posture_score"),
+                posture_grade: row.get("posture_grade"),
+                ai_risk_classification: row.get("ai_risk_classification"),
+            });
+        }
+        Ok(list)
     }
 }

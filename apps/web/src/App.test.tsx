@@ -51,7 +51,7 @@ describe("observation console", () => {
   it("reports an unavailable core and disables evaluation", async () => {
     setup(vi.fn().mockRejectedValue(new Error("Connection refused")));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Core unavailable",
+      "Cannot connect to Mailent",
     );
     expect(
       screen.getByRole("button", { name: "Evaluate observation" }),
@@ -70,7 +70,7 @@ describe("observation console", () => {
         }),
       );
     const user = setup(fetcher);
-    await screen.findByText("Core ready");
+    await screen.findByText("Connected");
     await user.selectOptions(
       screen.getByLabelText("Synthetic fixture"),
       "modern",
@@ -108,7 +108,7 @@ describe("observation console", () => {
           }),
       );
     const user = setup(fetcher);
-    await screen.findByText("Core ready");
+    await screen.findByText("Connected");
     await user.click(
       screen.getByRole("button", { name: "Evaluate observation" }),
     );
@@ -124,7 +124,7 @@ describe("observation console", () => {
       .mockResolvedValueOnce(response(ready))
       .mockResolvedValueOnce(response({ findings: "bad contract" }));
     const user = setup(fetcher);
-    await screen.findByText("Core ready");
+    await screen.findByText("Connected");
     await user.clear(screen.getByLabelText("Normalized observation JSON"));
     await user.click(
       screen.getByRole("button", { name: "Evaluate observation" }),
@@ -302,9 +302,11 @@ describe("observation console", () => {
     });
 
     const user = setup(fetcher, "sessions");
-    await screen.findByText("Core ready");
+    await screen.findByText("Connected");
 
-    expect(await screen.findByText("Analyzed Mail Sessions")).toBeVisible();
+    expect(
+      await screen.findByRole("heading", { name: "Sessions" }),
+    ).toBeVisible();
     expect(screen.getByText("127.0.0.1:41580")).toBeVisible();
     expect(screen.getByText("127.0.0.1:25")).toBeVisible();
     expect(screen.getByText("TLSv1.2")).toBeVisible();
@@ -313,9 +315,7 @@ describe("observation console", () => {
     const inspectBtn = screen.getByRole("button", { name: "Inspect" });
     await user.click(inspectBtn);
 
-    expect(
-      await screen.findByText("SESSION EVIDENCE & FORENSICS"),
-    ).toBeVisible();
+    expect(await screen.findByText("SESSION DETAILS")).toBeVisible();
     expect(screen.getByText("Session Timeline")).toBeVisible();
     expect(screen.getByText("TCP connected")).toBeVisible();
     expect(screen.getByText("mailent.log:1")).toBeVisible();
@@ -361,10 +361,10 @@ describe("observation console", () => {
     });
 
     setup(fetcher, "findings");
-    await screen.findByText("Core ready");
+    await screen.findByText("Connected");
 
     expect(
-      await screen.findByText("Deterministic Security Findings"),
+      await screen.findByRole("heading", { name: "Findings" }),
     ).toBeVisible();
     expect(screen.getByText("TLS_LEGACY_VERSION")).toBeVisible();
     expect(screen.getByText("Deprecated TLS Version Negotiated")).toBeVisible();
@@ -558,18 +558,18 @@ describe("observation console", () => {
     });
 
     const user = setup(fetcher, "assets");
-    await screen.findByText("Core ready");
+    await screen.findByText("Connected");
 
-    expect(await screen.findByText("Discovered Mail Assets")).toBeVisible();
+    expect(
+      await screen.findByRole("heading", { name: "Mail servers" }),
+    ).toBeVisible();
     expect(screen.getByText("mail.mailent.test")).toBeVisible();
     expect(screen.getByText("127.0.0.1")).toBeVisible();
 
-    const inspectBtn = screen.getByRole("button", { name: "View Asset" });
+    const inspectBtn = screen.getByRole("button", { name: "View server" });
     await user.click(inspectBtn);
 
-    expect(
-      await screen.findByText("PERSISTENT ASSET IDENTITY & POSTURE"),
-    ).toBeVisible();
+    expect(await screen.findByText("SERVER DETAILS")).toBeVisible();
     expect(await screen.findByText("New TLS Version Observed")).toBeVisible();
     expect(
       screen.getByText("TLSv1.3 negotiated for the first time."),
@@ -603,10 +603,6 @@ describe("observation console", () => {
     expect(screen.getByRole("button", { name: "Export JSON" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Export HTML" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Export PDF" })).toBeEnabled();
-    expect(screen.getByText("View HTML report")).toHaveAttribute(
-      "href",
-      `/api/v1/assets/${mockAsset.id}/report?format=html`,
-    );
   });
 
   it("renders sensors list and telemetry status", async () => {
@@ -630,10 +626,10 @@ describe("observation console", () => {
     });
 
     setup(fetcher, "sensors");
-    await screen.findByText("Core ready");
+    await screen.findByText("Connected");
 
     expect(
-      await screen.findByText("Sensor Fleet & Ingestion Telemetry"),
+      await screen.findByRole("heading", { name: "Collectors" }),
     ).toBeVisible();
     expect(screen.getByText("sensor-gateway-01")).toBeVisible();
     expect(screen.getByText("sensor-node.prod.internal")).toBeVisible();

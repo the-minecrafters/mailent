@@ -73,6 +73,7 @@ pub async fn run_live_listener(
     info!(pid = ?zeek_child.id(), "Zeek live capture process running");
 
     let client = reqwest::Client::builder()
+        .default_headers(crate::auth_headers())
         .timeout(Duration::from_secs(5))
         .build()
         .unwrap_or_default();

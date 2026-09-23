@@ -32,6 +32,7 @@ pub struct BoundedSpooler {
 impl BoundedSpooler {
     pub fn new(core_endpoint: String, spool_dir: PathBuf, capacity: usize) -> Self {
         let client = reqwest::Client::builder()
+            .default_headers(crate::auth_headers())
             .timeout(Duration::from_secs(10))
             .build()
             .unwrap_or_default();

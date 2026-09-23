@@ -354,3 +354,14 @@ pub trait ArchivedReportRepository: Send + Sync {
         id: Uuid,
     ) -> Result<Option<mailent_domain::ArchivedReportRecord>, StorageError>;
 }
+
+#[async_trait]
+pub trait AssessmentRepository: Send + Sync {
+    async fn save(&self, assessment: &mailent_domain::AssessmentRecord)
+    -> Result<(), StorageError>;
+    async fn find_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<mailent_domain::AssessmentRecord>, StorageError>;
+    async fn list_all(&self) -> Result<Vec<mailent_domain::AssessmentSummary>, StorageError>;
+}

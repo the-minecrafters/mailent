@@ -45,7 +45,7 @@ impl CoreConfig {
         if let Ok(host) = std::env::var("MAILENT_CORE_HOST") {
             config.host = host;
         }
-        if let Ok(port) = std::env::var("MAILENT_CORE_PORT") {
+        if let Ok(port) = std::env::var("MAILENT_CORE_PORT").or_else(|_| std::env::var("PORT")) {
             config.port = port.parse().expect("MAILENT_CORE_PORT must be a valid u16");
         }
         if let Ok(level) = std::env::var("MAILENT_CORE_LOG_LEVEL") {
@@ -56,7 +56,9 @@ impl CoreConfig {
         }
 
         config.policy_path = std::env::var("MAILENT_CORE_POLICY_PATH").ok();
-        config.database_url = std::env::var("MAILENT_DATABASE_URL").ok();
+        config.database_url = std::env::var("MAILENT_DATABASE_URL")
+            .ok()
+            .filter(|s| !s.trim().is_empty());
         config.clickhouse_url = std::env::var("MAILENT_CLICKHOUSE_URL").ok();
         if let Ok(ch_db) = std::env::var("MAILENT_CLICKHOUSE_DATABASE") {
             config.clickhouse_database = ch_db;

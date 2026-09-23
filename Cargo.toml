@@ -41,7 +41,7 @@ async-trait = "0.1"
 # HTTP Server & Middleware
 axum = "0.8"
 tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "trace"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }

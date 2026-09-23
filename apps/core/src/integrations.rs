@@ -168,19 +168,66 @@ pub async fn dispatch_to_destination(
             }
         }
         IntegrationKind::Syslog => {
-            // ArcSight Common Event Format (CEF) / RFC 5424 formatted string
-            let cef = payload.to_cef();
-            info!(
-                integration = %integration.name,
-                destination = %integration.destination,
-                cef = %cef,
-                "Syslog CEF event emitted"
-            );
-            let _ = state
+            let result = send_syslog(&integration.destination, &payload.to_cef()).await;
+            let error = result.as_ref().err().cloned();
+            state
                 .integrations
-                .update_status(integration.id, Some(200), None, now)
-                .await;
-            Ok(200)
+                .update_status(integration.id, result.as_ref().ok().copied(), error, now)
+                .await
+                .map_err(|e| e.to_string())?;
+            result
         }
     }
+}
+
+async fn send_syslog(destination: &str, cef: &str) -> Result<u16, String> {
+    use tokio::io::AsyncWriteExt;
+    let url = reqwest::Url::parse(destination)
+        .map_err(|_| "Use udp://host:port or tcp://host:port".to_string())?;
+    let host = url.host_str().ok_or("Syslog destination requires a host")?;
+    let port = url.port().unwrap_or(514);
+    let timestamp = OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|e| e.to_string())?;
+    let message = format!(
+        "<134>1 {timestamp} - mailent - - - {}",
+        cef.replace(['\n', '\r'], " ")
+    );
+    tokio::time::timeout(Duration::from_secs(10), async {
+        match url.scheme() {
+            "udp" => {
+                let addr = tokio::net::lookup_host((host, port))
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .next()
+                    .ok_or("Syslog host has no address")?;
+                let socket = tokio::net::UdpSocket::bind(if addr.is_ipv6() {
+                    "[::]:0"
+                } else {
+                    "0.0.0.0:0"
+                })
+                .await
+                .map_err(|e| e.to_string())?;
+                socket
+                    .send_to(message.as_bytes(), addr)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            }
+            "tcp" => {
+                let mut socket = tokio::net::TcpStream::connect((host, port))
+                    .await
+                    .map_err(|e| e.to_string())?;
+                // RFC 6587 octet counting avoids ambiguity when an event contains delimiters.
+                socket
+                    .write_all(format!("{} {message}", message.len()).as_bytes())
+                    .await
+                    .map_err(|e| e.to_string())?;
+                socket.shutdown().await.map_err(|e| e.to_string())?;
+            }
+            _ => return Err("Use udp://host:port or tcp://host:port".into()),
+        }
+        Ok(200)
+    })
+    .await
+    .map_err(|_| "Syslog delivery timed out".to_string())?
 }

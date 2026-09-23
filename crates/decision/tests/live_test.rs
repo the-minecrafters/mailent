@@ -5,9 +5,11 @@ use uuid::Uuid;
 
 #[tokio::test]
 async fn test_live_jev_integration_if_key_available() {
-    let api_key = std::env::var("TYPESAFE_API_KEY")
-        .or_else(|_| std::env::var("JEV_API_KEY"))
-        .unwrap_or_else(|_| "sk-codiv-2K0OEoyBbAum0q1txkabHdF3L9KBDg7kxvcn2u3m".to_string());
+    let Ok(api_key) =
+        std::env::var("MAILENT_JEV_API_KEY").or_else(|_| std::env::var("TYPESAFE_API_KEY"))
+    else {
+        return;
+    };
 
     let config = JevConfig {
         base_url: "https://api.codiv.ai".to_string(),
@@ -52,7 +54,7 @@ async fn test_live_jev_integration_if_key_available() {
             assert!(!decision.reasons.is_empty());
         }
         Err(e) => {
-            eprintln!("Live Jev call failed (might be offline or rate-limited): {e}");
+            panic!("Live Jev call failed: {e}");
         }
     }
 }

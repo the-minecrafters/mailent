@@ -30,6 +30,10 @@ thiserror = { workspace = true }
 uuid = { workspace = true }
 time = { workspace = true }
 reqwest = { workspace = true }
+sha2 = { workspace = true }
+base64 = "0.22"
+tempfile = "3"
+dotenvy = "0.15"
 
 [dev-dependencies]
 sqlx = { workspace = true }

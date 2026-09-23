@@ -1,3 +1,4 @@
+pub mod assessments;
 pub mod assets;
 pub mod baselines;
 pub mod certificates;
@@ -29,6 +30,19 @@ pub fn create_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health::health_handler))
         .route("/ready", get(health::ready_handler))
+        .route(
+            "/api/v1/assessments",
+            get(assessments::list_assessments_handler),
+        )
+        .route(
+            "/api/v1/assessments/analyze",
+            post(assessments::analyze_capture_handler)
+                .layer(axum::extract::DefaultBodyLimit::max(70 * 1024 * 1024)),
+        )
+        .route(
+            "/api/v1/assessments/{id}",
+            get(assessments::get_assessment_handler),
+        )
         .route(
             "/api/v1/observations",
             post(observations::submit_observation_handler),

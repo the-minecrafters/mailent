@@ -29,7 +29,7 @@ test("real SMTP capture is verified from its asset and enriches the linked inves
   );
   expect(investigation).toBeTruthy();
   await page.goto("/");
-  await page.getByRole("tab", { name: /assets/i }).click();
+  await page.getByRole("link", { name: "Mail servers", exact: true }).click();
   const row = page.locator("tr", { hasText: "127.0.0.1" });
   await row.getByRole("button", { name: /view/i }).click();
   await page.getByRole("combobox", { name: "Protocol" }).selectOption("smtp");

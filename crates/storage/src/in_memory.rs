@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use mailent_domain::{
-    AnomalySignal, Asset, AssetBaseline, CertificateRecord, CtCertificateRecord,
-    CtIntelligenceEvent, DecisionRecord, DriftEvent, EmailSession, Finding,
+    AnomalySignal, AssessmentRecord, AssessmentSummary, Asset, AssetBaseline, CertificateRecord,
+    CtCertificateRecord, CtIntelligenceEvent, DecisionRecord, DriftEvent, EmailSession, Finding,
     IntelligenceRefreshStatus, Investigation, InvestigationStatus, MtaStsPolicy, MxRecord,
     NormalizedObservation, ProbeRun, SensorHeartbeat, SensorRecord, SensorStatus,
     TlsRptAggregateReport, TlsRptPolicy, TlsaRecord, TrainingRecord,
@@ -14,10 +14,11 @@ use uuid::Uuid;
 use crate::{
     error::StorageError,
     repository::{
-        ArchivedReportRepository, AssetRepository, BaselineRepository, CertificateRepository,
-        DecisionRepository, EvidenceStore, FindingRepository, IntegrationRepository,
-        IntelligenceRepository, InvestigationRepository, ObservationRepository, PostureRepository,
-        ProbeRepository, SensorRepository, SessionRepository, TrainingRecordRepository,
+        ArchivedReportRepository, AssessmentRepository, AssetRepository, BaselineRepository,
+        CertificateRepository, DecisionRepository, EvidenceStore, FindingRepository,
+        IntegrationRepository, IntelligenceRepository, InvestigationRepository,
+        ObservationRepository, PostureRepository, ProbeRepository, SensorRepository,
+        SessionRepository, TrainingRecordRepository,
     },
 };
 
@@ -52,6 +53,7 @@ pub struct InMemoryStorage {
     posture_snapshots: Arc<RwLock<Vec<mailent_domain::PostureSnapshot>>>,
     integrations: Arc<RwLock<Vec<mailent_domain::IntegrationConfig>>>,
     archived_reports: Arc<RwLock<Vec<mailent_domain::ArchivedReportRecord>>>,
+    assessments: Arc<RwLock<Vec<mailent_domain::AssessmentRecord>>>,
 }
 
 impl InMemoryStorage {
@@ -1101,6 +1103,32 @@ impl ArchivedReportRepository for InMemoryStorage {
     ) -> Result<Option<mailent_domain::ArchivedReportRecord>, StorageError> {
         let list = self.archived_reports.read().await;
         Ok(list.iter().find(|r| r.id == id).cloned())
+    }
+}
+
+#[async_trait]
+impl AssessmentRepository for InMemoryStorage {
+    async fn save(&self, assessment: &AssessmentRecord) -> Result<(), StorageError> {
+        let mut list = self.assessments.write().await;
+        if let Some(pos) = list.iter().position(|a| a.id == assessment.id) {
+            list[pos] = assessment.clone();
+        } else {
+            list.push(assessment.clone());
+        }
+        Ok(())
+    }
+
+    async fn find_by_id(&self, id: Uuid) -> Result<Option<AssessmentRecord>, StorageError> {
+        let list = self.assessments.read().await;
+        Ok(list.iter().find(|a| a.id == id).cloned())
+    }
+
+    async fn list_all(&self) -> Result<Vec<AssessmentSummary>, StorageError> {
+        let list = self.assessments.read().await;
+        let mut summaries: Vec<AssessmentSummary> =
+            list.iter().map(AssessmentSummary::from).collect();
+        summaries.sort_by_key(|a| std::cmp::Reverse(a.created_at));
+        Ok(summaries)
     }
 }
 

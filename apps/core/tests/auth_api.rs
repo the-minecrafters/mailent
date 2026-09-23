@@ -1,0 +1,133 @@
+use axum::{
+    body::Body,
+    http::{Request, StatusCode},
+};
+use mailent_core::{
+    AppState,
+    api::create_router,
+    auth::{AuthConfig, protect},
+};
+use tower::ServiceExt;
+
+#[tokio::test]
+async fn cloud_routes_reject_missing_and_forged_credentials() {
+    let auth = AuthConfig::new(
+        "https://invalid.supabase.co".into(),
+        "sb_publishable_test".into(),
+        vec!["owner@test.invalid".into()],
+    );
+    let app = protect(create_router(AppState::new()), Some(auth));
+    for path in ["/ready", "/api/v1/assets", "/api/v1/reports/archived"] {
+        let response = app
+            .clone()
+            .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
+    }
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/auth/config")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn authorization_uses_verified_email_and_confirmation() {
+    use axum::{Json, Router, routing::get};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let mock = Router::new().route("/auth/v1/user", get(|headers: axum::http::HeaderMap| async move {
+        let token = headers.get("authorization").unwrap().to_str().unwrap();
+        match token {
+            "Bearer valid" => (StatusCode::OK, Json(serde_json::json!({"email":"owner@test.invalid", "email_confirmed_at":"2026-09-23T00:00:00Z", "is_anonymous": false}))),
+            "Bearer unconfirmed" => (StatusCode::OK, Json(serde_json::json!({"email":"owner@test.invalid"}))),
+            "Bearer outsider" => (StatusCode::OK, Json(serde_json::json!({"email":"someone@test.invalid", "email_confirmed_at":"2026-09-23T00:00:00Z", "user_metadata":{"email":"owner@test.invalid"}}))),
+            _ => (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"message":"Invalid JWT"}))),
+        }
+    }));
+    let task = tokio::spawn(async move {
+        axum::serve(listener, mock).await.unwrap();
+    });
+    let app = protect(
+        create_router(AppState::new()),
+        Some(AuthConfig::new(
+            format!("http://{addr}"),
+            "test-key".into(),
+            vec!["owner@test.invalid".into()],
+        )),
+    );
+    for (token, expected) in [
+        ("valid", StatusCode::OK),
+        ("unconfirmed", StatusCode::FORBIDDEN),
+        ("outsider", StatusCode::FORBIDDEN),
+        ("forged", StatusCode::UNAUTHORIZED),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/assets")
+                    .header("Authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected, "{token}");
+    }
+    task.abort();
+}
+
+#[tokio::test]
+async fn spa_is_public_while_the_api_stays_private() {
+    use tower_http::services::{ServeDir, ServeFile};
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("index.html"), "<h1>Mailent</h1>").unwrap();
+    let app = protect(
+        create_router(AppState::new()),
+        Some(AuthConfig::new(
+            "https://invalid.supabase.co".into(),
+            "sb_publishable_test".into(),
+            vec!["owner@test.invalid".into()],
+        )),
+    )
+    .fallback_service(
+        ServeDir::new(directory.path())
+            .fallback(ServeFile::new(directory.path().join("index.html"))),
+    );
+    for path in ["/", "/workspace/overview", "/workspace/captures/anything"] {
+        let response = app
+            .clone()
+            .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+    }
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/assessments")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}

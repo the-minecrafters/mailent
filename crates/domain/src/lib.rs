@@ -1,3 +1,4 @@
+pub mod assessment;
 pub mod asset;
 pub mod baseline;
 pub mod capture;
@@ -23,6 +24,7 @@ pub mod simulation;
 pub mod tls;
 pub mod training;
 
+pub use assessment::{AssessmentRecord, AssessmentSummary, ProtocolEvidence};
 pub use asset::{Asset, AssetEndpoint, AssetIdentity};
 pub use baseline::{AnomalySignal, AssetBaseline};
 pub use capture::{CaptureEvidence, TimelineEvent};

@@ -10,10 +10,11 @@ use mailent_storage::{
     in_memory::InMemoryStorage,
     postgres::PostgresStorage,
     repository::{
-        ArchivedReportRepository, AssetRepository, BaselineRepository, CertificateRepository,
-        DecisionRepository, FindingRepository, IntegrationRepository, IntelligenceRepository,
-        InvestigationRepository, ObservationRepository, PostureRepository, ProbeRepository,
-        RemediationRepository, SensorRepository, SessionRepository, TrainingRecordRepository,
+        ArchivedReportRepository, AssessmentRepository, AssetRepository, BaselineRepository,
+        CertificateRepository, DecisionRepository, FindingRepository, IntegrationRepository,
+        IntelligenceRepository, InvestigationRepository, ObservationRepository, PostureRepository,
+        ProbeRepository, RemediationRepository, SensorRepository, SessionRepository,
+        TrainingRecordRepository,
     },
 };
 use std::sync::Arc;
@@ -25,6 +26,8 @@ pub struct AppState {
     pub probe_config: Arc<mailent_probe::ProbeConfiguration>,
     pub probe_slots: Arc<tokio::sync::Semaphore>,
     pub policy_pack: Arc<PolicyPack>,
+    pub storage_mode: String,
+    pub decision_provider_name: String,
     pub assets: Arc<dyn AssetRepository>,
     pub certificates: Arc<dyn CertificateRepository>,
     pub sensors: Arc<dyn SensorRepository>,
@@ -41,6 +44,7 @@ pub struct AppState {
     pub postures: Arc<dyn PostureRepository>,
     pub integrations: Arc<dyn IntegrationRepository>,
     pub archived_reports: Arc<dyn ArchivedReportRepository>,
+    pub assessments: Arc<dyn AssessmentRepository>,
     pub intelligence_resolver: Arc<dyn DomainIntelligenceResolver>,
     pub baseline_analyzer: Arc<dyn BaselineAnalyzer>,
     pub decision_provider: Arc<dyn DecisionProvider>,
@@ -51,6 +55,8 @@ impl AppState {
         let mem = Arc::new(InMemoryStorage::new());
         let probe_config = mailent_probe::ProbeConfiguration::from_env();
         Self {
+            storage_mode: "in_memory".into(),
+            decision_provider_name: "disabled".into(),
             probe_slots: Arc::new(tokio::sync::Semaphore::new(probe_config.max_concurrency)),
             probe_config: Arc::new(probe_config),
             policy_pack: Arc::new(PolicyPack::modern()),
@@ -70,6 +76,7 @@ impl AppState {
             postures: mem.clone(),
             integrations: mem.clone(),
             archived_reports: mem.clone(),
+            assessments: mem.clone(),
             intelligence_resolver: Arc::new(MockDomainIntelligenceResolver::new()),
             baseline_analyzer: Arc::new(DefaultBaselineAnalyzer::new()),
             decision_provider: Arc::new(DisabledProvider),
@@ -79,6 +86,11 @@ impl AppState {
     #[allow(clippy::type_complexity)]
     pub async fn from_config(config: &CoreConfig) -> Result<Self, StorageError> {
         let mem = Arc::new(InMemoryStorage::new());
+        let pg_storage = if let Some(ref url) = config.database_url {
+            Some(Arc::new(PostgresStorage::connect(url).await?))
+        } else {
+            None
+        };
 
         let (
             assets,
@@ -95,6 +107,7 @@ impl AppState {
             postures,
             integrations,
             archived_reports,
+            assessments,
         ): (
             Arc<dyn AssetRepository>,
             Arc<dyn CertificateRepository>,
@@ -110,9 +123,9 @@ impl AppState {
             Arc<dyn PostureRepository>,
             Arc<dyn IntegrationRepository>,
             Arc<dyn ArchivedReportRepository>,
-        ) = if let Some(ref db_url) = config.database_url {
+            Arc<dyn AssessmentRepository>,
+        ) = if let Some(ref pg) = pg_storage {
             tracing::info!("Connecting to PostgreSQL control plane storage");
-            let pg = Arc::new(PostgresStorage::connect(db_url).await?);
             (
                 pg.clone(),
                 pg.clone(),
@@ -127,13 +140,15 @@ impl AppState {
                 pg.clone(),
                 pg.clone(),
                 pg.clone(),
-                pg,
+                pg.clone(),
+                pg.clone(),
             )
         } else {
             tracing::warn!(
                 "No MAILENT_DATABASE_URL provided; using in-memory control plane storage"
             );
             (
+                mem.clone(),
                 mem.clone(),
                 mem.clone(),
                 mem.clone(),
@@ -158,6 +173,8 @@ impl AppState {
                     ClickHouseStorage::connect(ch_url, &config.clickhouse_database).await?,
                 );
                 (ch.clone(), ch)
+            } else if let Some(pg) = pg_storage {
+                (pg.clone(), pg)
             } else {
                 tracing::warn!(
                     "No MAILENT_CLICKHOUSE_URL provided; using in-memory analytical storage"
@@ -207,6 +224,24 @@ impl AppState {
 
         let probe_config = mailent_probe::ProbeConfiguration::from_env();
         Ok(Self {
+            decision_provider_name: if config.jev_enabled
+                && config.jev_api_key.as_ref().is_some_and(|k| !k.is_empty())
+            {
+                "jev"
+            } else {
+                "disabled"
+            }
+            .into(),
+            storage_mode: if config.database_url.is_some() {
+                if config.clickhouse_url.is_some() {
+                    "postgres_clickhouse"
+                } else {
+                    "postgres"
+                }
+            } else {
+                "in_memory"
+            }
+            .into(),
             probe_slots: Arc::new(tokio::sync::Semaphore::new(probe_config.max_concurrency)),
             probe_config: Arc::new(probe_config),
             policy_pack: Arc::new(PolicyPack::modern()),
@@ -226,6 +261,7 @@ impl AppState {
             postures,
             integrations,
             archived_reports,
+            assessments,
             intelligence_resolver,
             baseline_analyzer: Arc::new(DefaultBaselineAnalyzer::new()),
             decision_provider,

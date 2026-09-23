@@ -130,6 +130,7 @@ async fn run() -> Result<(), SensorError> {
     }
 
     let client = reqwest::Client::builder()
+        .default_headers(mailent_sensor::auth_headers())
         .timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| SensorError::Submit(e.to_string()))?;

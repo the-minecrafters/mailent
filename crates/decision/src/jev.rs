@@ -30,7 +30,7 @@ impl Default for JevConfig {
             base_url,
             api_key,
             model,
-            timeout: Duration::from_secs(5),
+            timeout: Duration::from_secs(10),
             allow_fallback: true,
         }
     }
@@ -45,6 +45,7 @@ pub struct JevProvider {
 impl JevProvider {
     pub fn new(config: JevConfig) -> Self {
         let client = reqwest::Client::builder()
+            .user_agent("Mailent/0.1")
             .timeout(config.timeout)
             .build()
             .unwrap_or_default();
@@ -191,6 +192,24 @@ impl JevProvider {
                 ))
             })?;
 
+        for (field, allowed) in [
+            ("risk", &["low", "medium", "high", "critical"][..]),
+            ("anomalous", &["yes", "no", "true", "false"][..]),
+            ("human_review", &["yes", "no", "true", "false"][..]),
+            ("priority", &["low", "normal", "high", "immediate"][..]),
+        ] {
+            let choice = answers
+                .get(field)
+                .and_then(|v| v.get("choice"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if !allowed.contains(&choice.as_str()) {
+                return Err(DecisionError::ProviderFailure(format!(
+                    "Missing or invalid Jev answer: {field}"
+                )));
+            }
+        }
         let model = response_json
             .get("model")
             .and_then(|m| m.as_str())
@@ -243,7 +262,8 @@ impl JevProvider {
             .and_then(|r| r.get("confidence"))
             .and_then(|c| c.as_f64())
             .map(|f| f as f32)
-            .unwrap_or(0.9);
+            .filter(|f| f.is_finite() && (0.0..=1.0).contains(f))
+            .unwrap_or(0.0);
 
         // Extract reasons
         let mut reasons = Vec::new();
@@ -421,6 +441,19 @@ mod tests {
 
         let err = JevProvider::parse_systemone_response(&json).unwrap_err();
         assert!(matches!(err, DecisionError::ProviderFailure(_)));
+    }
+
+    #[test]
+    fn incomplete_answers_cannot_become_a_low_risk_decision() {
+        assert!(
+            JevProvider::parse_systemone_response(&serde_json::json!({"answers": {}})).is_err()
+        );
+        assert!(
+            JevProvider::parse_systemone_response(
+                &serde_json::json!({"answers": {"risk": {"choice":"low"}}})
+            )
+            .is_err()
+        );
     }
 
     #[test]

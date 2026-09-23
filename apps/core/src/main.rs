@@ -4,7 +4,13 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    dotenvy::dotenv().ok();
     let config = CoreConfig::from_env();
+    let production = config.environment == "production";
+    let auth = mailent_core::auth::AuthConfig::from_env(production)?;
+    if production && config.database_url.is_none() {
+        return Err("MAILENT_DATABASE_URL is required in production".into());
+    }
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -43,7 +49,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
-    let app = create_router(state);
+    let mut app = mailent_core::auth::protect(create_router(state), auth);
+    if let Ok(directory) = std::env::var("MAILENT_WEB_DIR") {
+        use tower_http::services::{ServeDir, ServeFile};
+        app = app.fallback_service(
+            ServeDir::new(&directory)
+                .fallback(ServeFile::new(format!("{directory}/index.html"))),
+        );
+    }
     let listener = TcpListener::bind(&addr).await?;
     tracing::info!("Mailent Core listening on http://{}", addr);
 

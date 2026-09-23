@@ -12,7 +12,12 @@ export default defineConfig({
     {
       command: "cargo run --manifest-path ../../Cargo.toml -p mailent-core",
       url: "http://127.0.0.1:18080/ready",
-      env: { MAILENT_CORE_HOST: "127.0.0.1", MAILENT_CORE_PORT: "18080" },
+      env: {
+        MAILENT_CORE_HOST: "127.0.0.1",
+        MAILENT_CORE_PORT: "18080",
+        MAILENT_JEV_ENABLED: "false",
+        CARGO_INCREMENTAL: "0",
+      },
       timeout: 120000,
       reuseExistingServer: false,
     },

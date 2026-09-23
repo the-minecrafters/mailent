@@ -18,8 +18,23 @@ pub struct ListDriftQuery {
 pub async fn list_assets_handler(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let assets = state.assets.list_all().await.map_err(storage_error)?;
-    Ok(Json(assets))
+    let mut assets = state.assets.list_all().await.map_err(storage_error)?;
+    let mut response = Vec::with_capacity(assets.len());
+    for asset in &mut assets {
+        asset.active_findings_count = state
+            .findings
+            .list_for_asset(asset.id)
+            .await
+            .map_err(storage_error)?
+            .len();
+        let authorized =
+            crate::probes::authorized_asset_target(asset, &state.probe_config.to_scope()).is_some();
+        let mut value = serde_json::to_value(&*asset)
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        value["probe_authorized"] = serde_json::json!(authorized);
+        response.push(value);
+    }
+    Ok(Json(response))
 }
 
 pub async fn get_asset_handler(

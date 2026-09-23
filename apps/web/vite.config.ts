@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: Object.fromEntries(
-      ["/api", "/health", "/ready"].map((path) => [
+      ["/api", "/health", "/ready", "/auth/config"].map((path) => [
         path,
         process.env.MAILENT_CORE_PROXY_TARGET ?? "http://127.0.0.1:8080",
       ]),

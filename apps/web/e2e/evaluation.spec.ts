@@ -6,8 +6,8 @@ test("synthetic observations produce core findings rendered with their evidence"
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto("/");
-  await page.getByRole("tab", { name: /observation evaluator/i }).click();
-  await expect(page.getByText("Core ready")).toBeVisible();
+  await page.goto("/tools/evaluator");
+  await expect(page.getByText("Connected")).toBeVisible();
   await expect(page.getByText("No observation evaluated")).toBeVisible();
   for (const [fixture, rules] of [
     ["legacy", ["TLS_LEGACY_VERSION", "NO_FORWARD_SECRECY"]],
@@ -148,15 +148,15 @@ test("real captured sessions view displays forensic timeline and inspector", asy
   expect(res.ok()).toBe(true);
 
   await page.goto("/");
-  await expect(page.getByText("Core ready")).toBeVisible();
-  await page.getByRole("tab", { name: /sessions/i }).click();
-  await expect(page.getByText("Analyzed Mail Sessions")).toBeVisible();
+  await expect(page.getByText("Connected")).toBeVisible();
+  await page.getByRole("link", { name: "Sessions", exact: true }).click();
+  await expect(page.getByText("Sessions")).toBeVisible();
 
   const targetRow = page.locator("tr", { hasText: "192.0.2.100:54320" });
   await expect(targetRow).toBeVisible();
   await targetRow.getByRole("button", { name: /inspect/i }).click();
 
-  await expect(page.getByText("SESSION EVIDENCE & FORENSICS")).toBeVisible();
+  await expect(page.getByText("SESSION DETAILS")).toBeVisible();
   await expect(page.getByText("Session Timeline")).toBeVisible();
   await expect(page.getByText("TCP connected")).toBeVisible();
   await expect(page.getByText("STARTTLS advertised")).toBeVisible();
@@ -289,19 +289,17 @@ test("persistent assets, drift events, and sensor telemetry UI", async ({
 
   // 4. Navigate and check Sensors tab
   await page.goto("/");
-  await expect(page.getByText("Core ready")).toBeVisible();
+  await expect(page.getByText("Connected")).toBeVisible();
 
-  await page.getByRole("tab", { name: /sensors/i }).click();
-  await expect(
-    page.getByText("Sensor Fleet & Ingestion Telemetry"),
-  ).toBeVisible();
+  await page.getByRole("link", { name: "Collectors", exact: true }).click();
+  await expect(page.getByText("Collectors")).toBeVisible();
   await expect(page.getByText("sensor-e2e-tap-01")).toBeVisible();
   await expect(page.getByText("tap.local")).toBeVisible();
   await expect(page.getByText("Online")).toBeVisible();
 
   // 5. Check Assets tab and verify drift + certs
-  await page.getByRole("tab", { name: /assets/i }).click();
-  await expect(page.getByText("Discovered Mail Assets")).toBeVisible();
+  await page.getByRole("link", { name: "Mail servers", exact: true }).click();
+  await expect(page.getByText("Mail servers")).toBeVisible();
   const assetRow = page.locator("tr", { hasText: "10.0.0.25" });
   await expect(assetRow).toBeVisible();
   // Resolve the asset id from the API for the report assertions below.
@@ -312,16 +310,12 @@ test("persistent assets, drift events, and sensor telemetry UI", async ({
   const assetId = assets.find((a: { addresses: string[] }) =>
     a.addresses.includes("10.0.0.25"),
   ).id as string;
-  await assetRow.getByRole("button", { name: /view asset/i }).click();
+  await assetRow.getByRole("button", { name: /view server/i }).click();
 
-  await expect(
-    page.getByText("PERSISTENT ASSET IDENTITY & POSTURE"),
-  ).toBeVisible();
-  await expect(page.getByText("Configuration Drift History")).toBeVisible();
+  await expect(page.getByText("SERVER DETAILS")).toBeVisible();
+  await expect(page.getByText("Configuration changes")).toBeVisible();
   await expect(page.getByText("New TLS Version Detected")).toBeVisible();
-  await expect(
-    page.getByText("Presented X.509 Certificate History"),
-  ).toBeVisible();
+  await expect(page.getByText("Certificate history")).toBeVisible();
   await expect(page.getByText("CN=Internal Corporate CA")).toBeVisible();
 
   // Deterministic posture scoring surface: versioned model with categories.
