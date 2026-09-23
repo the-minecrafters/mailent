@@ -38,6 +38,7 @@ deploy/compose/data/
 # Browser verification output
 **/test-results/
 **/playwright-report/
+tests/stress_test_live_status.json
 
 # Local cache
 .freebuff/
