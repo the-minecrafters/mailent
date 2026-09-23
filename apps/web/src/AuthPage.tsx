@@ -93,13 +93,21 @@ export function AuthPage({
             </Button>
           </div>
         ) : mode === "password" ? (
-          <form onSubmit={handlePasswordSubmit} className="sign-in-form">
+          <form
+            onSubmit={handlePasswordSubmit}
+            className="sign-in-form"
+            autoComplete="off"
+            data-form-type="other"
+          >
             <div className="form-group">
               <label htmlFor="sign-in-email">Email address</label>
               <input
                 id="sign-in-email"
                 type="email"
-                autoComplete="email"
+                name="email"
+                autoComplete="off"
+                data-1p-ignore="true"
+                data-lpignore="true"
                 placeholder="you@example.com"
                 required
                 value={email}
@@ -113,7 +121,10 @@ export function AuthPage({
               <input
                 id="sign-in-password"
                 type="password"
-                autoComplete="current-password"
+                name="password"
+                autoComplete="new-password"
+                data-1p-ignore="true"
+                data-lpignore="true"
                 placeholder="Enter password"
                 required
                 value={password}
@@ -159,13 +170,21 @@ export function AuthPage({
             </div>
           </form>
         ) : (
-          <form onSubmit={handleOtpSubmit} className="sign-in-form">
+          <form
+            onSubmit={handleOtpSubmit}
+            className="sign-in-form"
+            autoComplete="off"
+            data-form-type="other"
+          >
             <div className="form-group">
               <label htmlFor="sign-in-email">Email address</label>
               <input
                 id="sign-in-email"
                 type="email"
-                autoComplete="email"
+                name="email"
+                autoComplete="off"
+                data-1p-ignore="true"
+                data-lpignore="true"
                 placeholder="you@example.com"
                 required
                 value={email}

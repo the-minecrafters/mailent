@@ -154,11 +154,8 @@ pub async fn analyze_capture_handler(
         .to_string();
 
     // Calculate SHA-256 of PCAP file
-    let file_bytes = tokio::fs::read(&pcap_path)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let mut hasher = Sha256::new();
-    hasher.update(&file_bytes);
+    hasher.update(&bytes);
     let capture_hash = format!("{:x}", hasher.finalize());
 
     // Execute sensor analyze binary
@@ -229,7 +226,9 @@ pub async fn analyze_capture_handler(
     for obs in analysis.observations {
         let proto_name = match obs.protocol {
             EmailProtocol::Smtp => {
-                if obs.starttls_state == Some(StartTlsState::TlsEstablished) {
+                if obs.starttls_state == Some(StartTlsState::TlsEstablished)
+                    || obs.starttls_state == Some(StartTlsState::AdvertisedAndUsed)
+                {
                     "SMTP (STARTTLS)"
                 } else if obs.flow.dst_port == 465 {
                     "SMTPS"
@@ -238,7 +237,9 @@ pub async fn analyze_capture_handler(
                 }
             }
             EmailProtocol::Imap => {
-                if obs.starttls_state == Some(StartTlsState::TlsEstablished) {
+                if obs.starttls_state == Some(StartTlsState::TlsEstablished)
+                    || obs.starttls_state == Some(StartTlsState::AdvertisedAndUsed)
+                {
                     "IMAP (STARTTLS)"
                 } else if obs.flow.dst_port == 993 {
                     "IMAPS"
@@ -247,7 +248,9 @@ pub async fn analyze_capture_handler(
                 }
             }
             EmailProtocol::Pop3 => {
-                if obs.starttls_state == Some(StartTlsState::TlsEstablished) {
+                if obs.starttls_state == Some(StartTlsState::TlsEstablished)
+                    || obs.starttls_state == Some(StartTlsState::AdvertisedAndUsed)
+                {
                     "POP3 (STLS)"
                 } else if obs.flow.dst_port == 995 {
                     "POP3S"
@@ -255,7 +258,17 @@ pub async fn analyze_capture_handler(
                     "POP3"
                 }
             }
-            EmailProtocol::Unknown => "Unknown Email Protocol",
+            EmailProtocol::Unknown => {
+                if obs.flow.dst_port == 465 {
+                    "SMTPS"
+                } else if obs.flow.dst_port == 993 {
+                    "IMAPS"
+                } else if obs.flow.dst_port == 995 {
+                    "POP3S"
+                } else {
+                    "Unknown Email Protocol"
+                }
+            }
         };
 
         if protocols_set.insert(proto_name.to_string()) {

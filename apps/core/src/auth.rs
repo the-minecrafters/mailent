@@ -346,10 +346,17 @@ async fn authorize(
         return Ok(USE_PERSISTENCE.scope(false, next.run(request)).await);
     }
 
+    let org_id = request
+        .headers()
+        .get("x-mailent-org")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| uuid::Uuid::parse_str(s).ok())
+        .unwrap_or(mailent_domain::DEFAULT_ORG_ID);
+
     let ctx = ExecutionContext::user(
         "local-user".to_string(),
         "analyst@mailent.local".to_string(),
-        mailent_domain::DEFAULT_ORG_ID,
+        org_id,
     );
     request.extensions_mut().insert(ctx.clone());
     Ok(USE_PERSISTENCE.scope(true, next.run(request)).await)

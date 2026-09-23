@@ -222,6 +222,12 @@ async fn run_analyze(
     .map_err(|e| format!("PCAP forensic analysis failed: {e}"))?;
 
     // 4. Ingest and correlate observations
+    if analysis.observations.is_empty() {
+        return Err(
+            "No email connections were found in this capture. Choose traffic containing SMTP, IMAP or POP3.".to_string(),
+        );
+    }
+
     let policy_pack = PolicyPack::modern();
     let mut sessions = Vec::new();
     let mut all_findings: Vec<Finding> = Vec::new();
@@ -264,7 +270,17 @@ async fn run_analyze(
                     "POP3"
                 }
             }
-            EmailProtocol::Unknown => "Unknown Email Protocol",
+            EmailProtocol::Unknown => {
+                if obs.flow.dst_port == 465 {
+                    "SMTPS"
+                } else if obs.flow.dst_port == 993 {
+                    "IMAPS"
+                } else if obs.flow.dst_port == 995 {
+                    "POP3S"
+                } else {
+                    "Unknown Email Protocol"
+                }
+            }
         };
 
         if protocols_set.insert(proto_name.to_string()) {

@@ -31,9 +31,6 @@ build/
 # Test & Evidence artifacts
 coverage/
 *.lcov
-fixtures/pcap/*.pcap
-fixtures/pcap/*.pcapng
-!fixtures/pcap/.gitkeep
 
 # Docker / Compose volumes
 deploy/compose/data/

@@ -982,3 +982,99 @@ async fn test_benign_drift_creates_no_investigation_via_agent_job() {
     let invs = state.investigations.list_for_asset(asset_id).await.unwrap();
     assert_eq!(invs.len(), 0, "Benign drift must NOT open an investigation");
 }
+
+#[tokio::test]
+async fn test_concurrent_job_leasing_race_condition() {
+    let (state, app) = setup_test_app().await;
+    let org_id = Uuid::new_v4();
+    state
+        .organizations
+        .save(&Organization {
+            id: org_id,
+            name: "Race Condition Test Org".to_string(),
+            slug: "race-org".to_string(),
+            created_at: OffsetDateTime::now_utc(),
+        })
+        .await
+        .unwrap();
+
+    // Register 5 distinct agent devices
+    let mut tokens = Vec::new();
+    let mut device_ids = Vec::new();
+    for i in 1..=5 {
+        let (token, dev_id) = create_and_approve_device(&app, &format!("Agent-{i}"), org_id).await;
+        tokens.push(token);
+        device_ids.push(dev_id);
+    }
+
+    // Create exactly ONE pending job targetable by any agent in the org
+    let job_id = Uuid::new_v4();
+    let job = AgentJob {
+        id: job_id,
+        organization_id: org_id,
+        target_agent_id: None, // Any agent in org can take it
+        execution_target: mailent_domain::JobExecutionTarget::Agent(device_ids[0]),
+        job_type: mailent_domain::AgentJobType::InfrastructureAssessment {
+            domain: "concurrency.test".to_string(),
+            timeout_seconds: 30,
+        },
+        state: JobState::Pending,
+        created_at: OffsetDateTime::now_utc(),
+        available_at: OffsetDateTime::now_utc(),
+        leased_at: None,
+        lease_expires_at: None,
+        started_at: None,
+        completed_at: None,
+        attempt: 0,
+        max_attempts: 3,
+        result_assessment_id: None,
+        last_error: None,
+        idempotency_key: Some(format!("race-test-{}", job_id)),
+        monitor_id: None,
+    };
+    state.jobs.create_job(&job).await.unwrap();
+
+    // Concurrently poll from all 5 agents
+    let mut handles = Vec::new();
+    for token in &tokens {
+        let app_clone = app.clone();
+        let tok = token.clone();
+        handles.push(tokio::spawn(async move {
+            let res = app_clone
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/api/v1/agent/jobs/poll")
+                        .header("Authorization", format!("Bearer {tok}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(res.status(), StatusCode::OK);
+            let bytes = res.into_body().collect().await.unwrap().to_bytes();
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            !body["job"].is_null()
+        }));
+    }
+
+    let mut leased_count = 0;
+    for handle in handles {
+        let got_job = handle.await.unwrap();
+        if got_job {
+            leased_count += 1;
+        }
+    }
+
+    // Exactly 1 agent must have won the lease; 4 must have received null
+    assert_eq!(
+        leased_count, 1,
+        "Exactly ONE agent must lease the job under concurrent polling"
+    );
+
+    // Verify stored job state is Leased with attempt = 1
+    let stored = state.jobs.find_by_id(job_id).await.unwrap().unwrap();
+    assert_eq!(stored.state, JobState::Leased);
+    assert_eq!(stored.attempt, 1);
+    assert!(stored.leased_at.is_some());
+}

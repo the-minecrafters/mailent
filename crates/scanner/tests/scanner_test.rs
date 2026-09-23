@@ -30,6 +30,35 @@ async fn test_scanner_invalid_domains() {
         scanner.scan_domain("nodot").await,
         Err(ScannerError::InvalidDomain(_))
     ));
+    assert!(matches!(
+        scanner.scan_domain("example.com&test=1").await,
+        Err(ScannerError::InvalidDomain(_))
+    ));
+    assert!(matches!(
+        scanner.scan_domain("example.com?query=true").await,
+        Err(ScannerError::InvalidDomain(_))
+    ));
+    assert!(matches!(
+        scanner.scan_domain("<script>alert(1)</script>.com").await,
+        Err(ScannerError::InvalidDomain(_))
+    ));
+    assert!(matches!(
+        scanner.scan_domain("-badprefix.com").await,
+        Err(ScannerError::InvalidDomain(_))
+    ));
+    assert!(matches!(
+        scanner.scan_domain("badsuffix-.com").await,
+        Err(ScannerError::InvalidDomain(_))
+    ));
+    assert!(matches!(
+        scanner.scan_domain("double..dot.com").await,
+        Err(ScannerError::InvalidDomain(_))
+    ));
+    let long_label = format!("{}.com", "a".repeat(64));
+    assert!(matches!(
+        scanner.scan_domain(&long_label).await,
+        Err(ScannerError::InvalidDomain(_))
+    ));
 }
 
 #[tokio::test]

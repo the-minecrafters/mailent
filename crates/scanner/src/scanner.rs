@@ -608,7 +608,45 @@ fn sanitize_domain(raw: &str) -> Result<String, ScannerError> {
     if clean.is_empty() {
         return Err(ScannerError::InvalidDomain("Domain cannot be empty".into()));
     }
-    if clean.contains(' ') || clean.contains('/') || clean.contains(':') {
+    if clean.len() > 253 {
+        return Err(ScannerError::InvalidDomain(format!(
+            "Domain name exceeds maximum length of 253 characters: '{raw}'"
+        )));
+    }
+    if clean.chars().any(|c| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                '/' | ':'
+                    | '?'
+                    | '&'
+                    | '#'
+                    | '='
+                    | '%'
+                    | ';'
+                    | '<'
+                    | '>'
+                    | '"'
+                    | '\''
+                    | '\\'
+                    | '`'
+                    | '$'
+                    | '('
+                    | ')'
+                    | '{'
+                    | '}'
+                    | '['
+                    | ']'
+                    | '|'
+                    | '^'
+                    | '~'
+                    | '*'
+                    | '!'
+                    | '+'
+                    | ','
+                    | '@'
+            )
+    }) {
         return Err(ScannerError::InvalidDomain(format!(
             "Invalid domain format: '{raw}'"
         )));
@@ -618,6 +656,32 @@ fn sanitize_domain(raw: &str) -> Result<String, ScannerError> {
             "Domain must contain a valid TLD: '{raw}'"
         )));
     }
+    for label in clean.split('.') {
+        if label.is_empty() {
+            return Err(ScannerError::InvalidDomain(format!(
+                "Domain contains empty label: '{raw}'"
+            )));
+        }
+        if label.len() > 63 {
+            return Err(ScannerError::InvalidDomain(format!(
+                "Domain label '{}' exceeds 63 characters in: '{raw}'",
+                label
+            )));
+        }
+        if label.starts_with('-') || label.ends_with('-') {
+            return Err(ScannerError::InvalidDomain(format!(
+                "Domain label '{}' cannot start or end with a hyphen in: '{raw}'",
+                label
+            )));
+        }
+        if !label.chars().all(|c| c.is_alphanumeric() || c == '-') {
+            return Err(ScannerError::InvalidDomain(format!(
+                "Domain label '{}' contains invalid characters in: '{raw}'",
+                label
+            )));
+        }
+    }
+
     Ok(clean)
 }
 

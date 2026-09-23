@@ -88,6 +88,16 @@ fn starttls_finding_requires_explicit_smtp_absence_not_missing_capture_data() {
         evaluate(&session, &PolicyPack::modern())[0].rule_id,
         "STARTTLS_MISSING"
     );
+    for failure_state in [
+        StartTlsState::Rejected,
+        StartTlsState::FailedHandshake,
+        StartTlsState::PlaintextContinuation,
+    ] {
+        session.starttls_state = Some(failure_state);
+        let findings = evaluate(&session, &PolicyPack::modern());
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].rule_id, "STARTTLS_MISSING");
+    }
     session.protocol = EmailProtocol::Imap;
     assert!(evaluate(&session, &PolicyPack::modern()).is_empty());
 }

@@ -19,19 +19,38 @@ pub fn evaluate(session: &EmailSession, policy: &PolicyPack) -> Vec<FindingCandi
                 }
                 Predicate::SmtpStartTlsNotAdvertised => {
                     if session.protocol != mailent_domain::EmailProtocol::Smtp
-                        || session.starttls_state
-                            != Some(mailent_domain::StartTlsState::NotAdvertised)
                         || session.flow.dst_port == 465
                     {
                         return None;
                     }
-                    (
-                        FindingCategory::TlsConfiguration,
-                        format!(
-                            "Completed SMTP capability exchange did not advertise STARTTLS on {}",
-                            session.flow
-                        ),
-                    )
+                    let detail = match session.starttls_state {
+                        Some(mailent_domain::StartTlsState::NotAdvertised) => {
+                            format!(
+                                "Completed SMTP capability exchange did not advertise STARTTLS on {}",
+                                session.flow
+                            )
+                        }
+                        Some(mailent_domain::StartTlsState::Rejected) => {
+                            format!(
+                                "SMTP STARTTLS was advertised but rejected by server on {}",
+                                session.flow
+                            )
+                        }
+                        Some(mailent_domain::StartTlsState::FailedHandshake) => {
+                            format!(
+                                "SMTP STARTTLS upgrade was accepted but TLS handshake failed on {}",
+                                session.flow
+                            )
+                        }
+                        Some(mailent_domain::StartTlsState::PlaintextContinuation) => {
+                            format!(
+                                "SMTP session continued in plaintext without securing transport on {}",
+                                session.flow
+                            )
+                        }
+                        _ => return None,
+                    };
+                    (FindingCategory::TlsConfiguration, detail)
                 }
                 Predicate::CertificateExpired => {
                     let cert = session.certificate.as_ref()?;
