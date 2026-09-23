@@ -1074,6 +1074,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f"
 
 [[package]]
+name = "mailent"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "mailent-correlation",
+ "mailent-domain",
+ "mailent-integrations",
+ "mailent-policy",
+ "mailent-probe",
+ "mailent-reporting",
+ "mailent-scanner",
+ "mailent-sensor",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "time",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "mailent-baseline"
 version = "0.1.0"
 dependencies = [
@@ -1103,6 +1129,7 @@ dependencies = [
  "mailent-policy",
  "mailent-probe",
  "mailent-reporting",
+ "mailent-scanner",
  "mailent-sensor",
  "mailent-storage",
  "reqwest",
@@ -1156,6 +1183,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "sha2",
  "thiserror",
  "time",
  "uuid",
@@ -1242,6 +1270,28 @@ dependencies = [
  "sha2",
  "thiserror",
  "time",
+ "uuid",
+]
+
+[[package]]
+name = "mailent-scanner"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "mailent-correlation",
+ "mailent-decision",
+ "mailent-domain",
+ "mailent-integrations",
+ "mailent-policy",
+ "mailent-probe",
+ "mailent-reporting",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "time",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 

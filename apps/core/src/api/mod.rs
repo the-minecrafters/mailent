@@ -1,18 +1,23 @@
+pub mod agent;
 pub mod assessments;
 pub mod assets;
 pub mod baselines;
 pub mod certificates;
+pub mod devices;
 pub mod findings;
 pub mod health;
 pub mod integrations;
 pub mod intelligence;
 pub mod investigations;
 pub mod metrics;
+pub mod monitors;
 pub mod observations;
+pub mod organizations;
 pub mod posture;
 pub mod probes;
 pub mod remediation;
 pub mod reports;
+pub mod scans;
 pub mod sensors;
 pub mod sessions;
 pub mod simulation;
@@ -20,7 +25,7 @@ pub mod training;
 
 use axum::{
     Router,
-    routing::{get, patch, post},
+    routing::{delete, get, patch, post},
 };
 use tower_http::trace::TraceLayer;
 
@@ -39,9 +44,17 @@ pub fn create_router(state: AppState) -> Router {
             get(assessments::list_assessments_handler),
         )
         .route(
+            "/api/v1/assessments/sync",
+            post(assessments::sync_assessment_handler),
+        )
+        .route(
             "/api/v1/assessments/analyze",
             post(assessments::analyze_capture_handler)
                 .layer(axum::extract::DefaultBodyLimit::max(70 * 1024 * 1024)),
+        )
+        .route(
+            "/api/v1/scans/infrastructure",
+            post(scans::scan_infrastructure_handler),
         )
         .route(
             "/api/v1/assessments/{id}",
@@ -237,6 +250,79 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/api/v1/integrations/{id}/test",
             post(integrations::test_integration_handler),
+        )
+        // Organizations & Multi-tenancy
+        .route(
+            "/api/v1/organizations/current",
+            get(organizations::get_current_organization_handler),
+        )
+        // Device authorization and management
+        .route("/api/v1/devices", get(devices::list_devices_handler))
+        .route(
+            "/api/v1/devices/{id}",
+            delete(devices::revoke_device_handler),
+        )
+        .route(
+            "/api/v1/devices/status",
+            get(devices::device_status_handler),
+        )
+        .route(
+            "/api/v1/devices/logout",
+            post(devices::device_logout_handler),
+        )
+        .route(
+            "/api/v1/devices/authorize/challenge",
+            post(devices::create_challenge_handler),
+        )
+        .route(
+            "/api/v1/devices/authorize/poll",
+            post(devices::poll_challenge_handler),
+        )
+        .route(
+            "/api/v1/devices/authorize/{code}",
+            get(devices::get_challenge_handler),
+        )
+        .route(
+            "/api/v1/devices/authorize/{code}/approve",
+            post(devices::approve_challenge_handler),
+        )
+        // Agent protocol endpoints
+        .route(
+            "/api/v1/agent/heartbeat",
+            post(agent::agent_heartbeat_handler),
+        )
+        .route(
+            "/api/v1/agent/jobs/poll",
+            post(agent::agent_poll_jobs_handler),
+        )
+        .route(
+            "/api/v1/agent/jobs/{id}/complete",
+            post(agent::agent_complete_job_handler),
+        )
+        .route(
+            "/api/v1/agent/jobs/{id}/fail",
+            post(agent::agent_fail_job_handler),
+        )
+        // Infrastructure monitoring & scheduled runs
+        .route(
+            "/api/v1/monitors",
+            get(monitors::list_monitors_handler).post(monitors::create_monitor_handler),
+        )
+        .route(
+            "/api/v1/monitors/{id}",
+            get(monitors::get_monitor_handler).delete(monitors::delete_monitor_handler),
+        )
+        .route(
+            "/api/v1/monitors/{id}/run_now",
+            post(monitors::run_now_monitor_handler),
+        )
+        .route(
+            "/api/v1/monitors/{id}/run-now",
+            post(monitors::run_now_monitor_handler),
+        )
+        .route(
+            "/api/v1/monitors/domain/{domain}/history",
+            get(monitors::get_domain_history_handler),
         )
         .layer(TraceLayer::new_for_http())
         .with_state(state)

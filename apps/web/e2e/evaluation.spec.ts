@@ -25,8 +25,12 @@ test("development evaluator renders the core findings for each observation", asy
     expect(
       data.findings.map((f: { rule_id: string }) => f.rule_id).sort(),
     ).toEqual([...rules].sort());
-    await expect(page.getByText(`${rules.length} Finding(s)`, { exact: true })).toBeVisible();
-    await expect(page.getByText(`Session: ${data.session_id}`, { exact: true })).toBeVisible();
+    await expect(
+      page.getByText(`${rules.length} Finding(s)`, { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText(`Session: ${data.session_id}`, { exact: true }),
+    ).toBeVisible();
     for (const rule of rules)
       await expect(page.getByText(rule, { exact: true })).toBeVisible();
     if (fixture === "legacy") {
@@ -143,7 +147,9 @@ test("real captured sessions view displays forensic timeline and inspector", asy
   await page.goto("/workspace/overview");
   await expect(page.getByText("Connected")).toBeVisible();
   await page.getByRole("link", { name: "Sessions", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Sessions", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Sessions", exact: true }),
+  ).toBeVisible();
 
   const targetRow = page.locator("tr", { hasText: "192.0.2.100:54320" });
   await expect(targetRow).toBeVisible();
@@ -285,14 +291,18 @@ test("persistent assets, drift events, and sensor telemetry UI", async ({
   await expect(page.getByText("Connected")).toBeVisible();
 
   await page.getByRole("link", { name: "Collectors", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Collectors", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Collectors", exact: true }),
+  ).toBeVisible();
   await expect(page.getByText("sensor-e2e-tap-01")).toBeVisible();
   await expect(page.getByText("tap.local")).toBeVisible();
   await expect(page.getByText("Online")).toBeVisible();
 
   // 5. Check Assets tab and verify drift + certs
   await page.getByRole("link", { name: "Mail servers", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Mail servers", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Mail servers", exact: true }),
+  ).toBeVisible();
   const assetRow = page.locator("tr", { hasText: "10.0.0.25" });
   await expect(assetRow).toBeVisible();
   // Resolve the asset id from the API for the report assertions below.
@@ -306,9 +316,13 @@ test("persistent assets, drift events, and sensor telemetry UI", async ({
   await assetRow.getByRole("button", { name: /view server/i }).click();
 
   await expect(page.getByText("SERVER DETAILS")).toBeVisible();
-  await expect(page.getByRole("heading", { name: /Configuration changes/ })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /Configuration changes/ }),
+  ).toBeVisible();
   await expect(page.getByText("New TLS Version Detected")).toBeVisible();
-  await expect(page.getByRole("heading", { name: /Certificate history/ })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /Certificate history/ }),
+  ).toBeVisible();
   await expect(page.getByText("CN=Internal Corporate CA")).toBeVisible();
 
   // Deterministic posture scoring surface: versioned model with categories.

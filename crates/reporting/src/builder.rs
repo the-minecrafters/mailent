@@ -345,6 +345,9 @@ pub struct ReportInput<'a> {
     pub remediation_records: &'a [mailent_domain::RemediationRecord],
     pub policy_name: String,
     pub policy_version: String,
+    pub assessment_source: Option<String>,
+    pub target_domain: Option<String>,
+    pub infrastructure: Option<InfrastructureSection>,
 }
 
 /// Build the canonical report. Deterministic given identical evidence except
@@ -515,6 +518,8 @@ pub fn build_report(
             .map(|p| p.score_version.clone())
             .unwrap_or_else(|| "n/a".to_string()),
         generator: format!("mailent-reporting/{mailent_version}"),
+        assessment_source: input.assessment_source.clone(),
+        target_domain: input.target_domain.clone(),
     };
 
     let risk = input.posture.map(|p| {
@@ -533,6 +538,7 @@ pub fn build_report(
     });
 
     ForensicReport {
+        infrastructure: input.infrastructure.clone(),
         remediation_lifecycle: input.remediation_records.to_vec(),
         metadata,
         posture: input.posture.cloned(),
@@ -767,6 +773,7 @@ mod tests {
             first_seen: OffsetDateTime::UNIX_EPOCH,
             last_seen: OffsetDateTime::UNIX_EPOCH,
             evidence: vec![],
+            organization_id: None,
         };
         let guidance = vec![
             RemediationGuidance {

@@ -9,6 +9,35 @@ use mailent_domain::{CertificateCryptoDetails, RemediationGuidance, SecurityPost
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
+/// Discovered mail service report item.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DiscoveredServiceReport {
+    pub service: String,
+    pub host: String,
+    pub port: u16,
+    pub priority: Option<u16>,
+    pub resolved_ips: Vec<String>,
+    pub starttls_status: String,
+    pub tls_version: Option<String>,
+    pub cipher: Option<String>,
+    pub cert_subject: Option<String>,
+    pub cert_issuer: Option<String>,
+    pub cert_validity: Option<String>,
+    pub dane_status: String,
+}
+
+/// Infrastructure discovery & external policy report section.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InfrastructureSection {
+    pub domain: String,
+    pub mx_records: Vec<String>,
+    pub discovered_endpoints: Vec<DiscoveredServiceReport>,
+    pub mta_sts_mode: Option<String>,
+    pub mta_sts_policy_details: Option<String>,
+    pub tls_rpt_destination: Option<String>,
+    pub dnssec_status: String,
+}
+
 /// What a piece of reported content is derived from. Reports must make the
 /// epistemic status of every statement explicit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -86,6 +115,10 @@ pub struct CaseMetadata {
     pub posture_score_version: String,
     /// Mailent version that produced the report.
     pub generator: String,
+    #[serde(default)]
+    pub assessment_source: Option<String>,
+    #[serde(default)]
+    pub target_domain: Option<String>,
 }
 
 /// One reconstructed session in compact, report-appropriate form.
@@ -225,6 +258,8 @@ pub struct ForensicReport {
     pub remediation_lifecycle: Vec<mailent_domain::RemediationRecord>,
     pub best_practices: Vec<RemediationGuidance>,
     pub ai_assessment: Maybe<AiAssessmentSection>,
+    #[serde(default)]
+    pub infrastructure: Option<InfrastructureSection>,
     /// Explicit statement of evidence that was NOT available, with reasons.
     pub evidence_gaps: Vec<String>,
 }

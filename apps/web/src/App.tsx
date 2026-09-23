@@ -26,8 +26,8 @@ import {
   type AssetPostureResponse,
   type AssetVerificationState,
   archiveReport,
-  checkDecisionProvider,
   type CertificateRecord,
+  checkDecisionProvider,
   createIntegration,
   type DriftEvent,
   deleteIntegration,
@@ -48,6 +48,7 @@ import {
   fetchAssetSessions,
   fetchAssets,
   fetchAssetVerification,
+  fetchCurrentOrganization,
   fetchDriftEvents,
   fetchFindings,
   fetchIntegrations,
@@ -79,6 +80,7 @@ import {
 } from "./api";
 import { AuthGate, useAuth } from "./auth";
 import { Icon } from "./components/Icon";
+import { MailentLogo } from "./components/MailentLogo";
 import {
   Button,
   EmptyState,
@@ -87,11 +89,12 @@ import {
   PageHeader,
   SearchField,
 } from "./components/ui";
+import { DevicesTab } from "./DevicesTab";
 import { LandingPage } from "./LandingPage";
-import { MailentLogo } from "./components/MailentLogo";
 import { NewAssessmentModal } from "./NewAssessmentModal";
 import { ProbePanel } from "./ProbePanel";
 import { RemediationWorkflow } from "./RemediationWorkflow";
+import { ScanInfrastructureModal } from "./ScanInfrastructureModal";
 
 export function PostureGradeBadge({ grade }: { grade: string }) {
   const g = grade.toUpperCase();
@@ -346,6 +349,12 @@ const navigation = [
         label: "Collectors",
         icon: "sensors",
       },
+      {
+        key: "devices",
+        path: "/workspace/devices",
+        label: "Devices",
+        icon: "devices",
+      },
     ],
   },
 ];
@@ -403,10 +412,20 @@ function Workspace() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [scanOpen, setScanOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
   const captureButtonRef = useRef<HTMLButtonElement>(null);
+
+  const orgQuery = useQuery({
+    queryKey: ["organization", "current"],
+    queryFn: fetchCurrentOrganization,
+    enabled: !!user,
+    retry: false,
+  });
+  const orgName = orgQuery.data?.name ?? "Acme Inc";
+
   const segments = location.pathname.split("/").filter(Boolean).slice(1);
   const page = pages.find((p) => p.path === `/workspace/${segments[0]}`);
   const id = segments[1] ? decodeURIComponent(segments[1]) : null;
@@ -422,6 +441,13 @@ function Workspace() {
     retry: false,
   });
   const connected = readinessQuery.isSuccess && readinessQuery.data.ready;
+
+  if (
+    location.pathname === "/settings" ||
+    location.pathname.startsWith("/settings")
+  ) {
+    return <Navigate to={`/workspace/devices${location.search}`} replace />;
+  }
 
   useEffect(() => {
     document.title = `${page?.label ?? "Mailent"} · Mailent`;
@@ -449,7 +475,7 @@ function Workspace() {
       >
         <MailentLogo size={36} />
         <span className="brand-title">
-          mailent<span className="brand-subtitle">Email security</span>
+          mailent<span className="brand-subtitle">{orgName}</span>
         </span>
       </Link>
       <nav className="sidebar-nav" aria-label="Main navigation">
@@ -478,9 +504,7 @@ function Workspace() {
         <div>
           <strong>{user?.email ?? "Guest workspace"}</strong>
           <span>
-            {user
-              ? "Persistent PostgreSQL"
-              : "In-memory (non-persistent)"}
+            {user ? `${orgName} (Persistent)` : "In-memory (non-persistent)"}
           </span>
         </div>
         {user && signOut ? (
@@ -594,7 +618,14 @@ function Workspace() {
                 }}
               >
                 <span>Guest (In-Memory)</span>
-                <span style={{ textDecoration: "underline", color: "var(--ink-primary)" }}>Sign in</span>
+                <span
+                  style={{
+                    textDecoration: "underline",
+                    color: "var(--ink-primary)",
+                  }}
+                >
+                  Sign in
+                </span>
               </button>
             )}
             <span
@@ -621,6 +652,10 @@ function Workspace() {
               onClick={refresh}
             >
               <Icon name="refresh" className={refreshing ? "spin" : ""} />
+            </Button>
+            <Button variant="secondary" onClick={() => setScanOpen(true)}>
+              <Icon name="search" size={17} />
+              <span>Scan infrastructure</span>
             </Button>
             <Button
               ref={captureButtonRef}
@@ -700,6 +735,7 @@ function Workspace() {
             {activeTab === "reports" && <ReportsTab />}
             {activeTab === "integrations" && <IntegrationsTab />}
             {activeTab === "sensors" && <SensorsTab />}
+            {activeTab === "devices" && <DevicesTab />}
             {activeTab === "evaluator" && (
               <EvaluatorTab readiness={readinessQuery.data} />
             )}
@@ -732,6 +768,16 @@ function Workspace() {
             setUploadOpen(false);
             captureButtonRef.current?.focus();
           }}
+          onCreated={(assessment) => {
+            void queryClient.invalidateQueries();
+            open("/workspace/captures", assessment.id);
+          }}
+        />
+      )}
+      {scanOpen && (
+        <ScanInfrastructureModal
+          isOpen
+          onClose={() => setScanOpen(false)}
           onCreated={(assessment) => {
             void queryClient.invalidateQueries();
             open("/workspace/captures", assessment.id);
@@ -3337,9 +3383,16 @@ function IntegrationsTab() {
         </button>
       </div>
 
-      <section className="card" style={{ marginBottom: "1.5rem" }} aria-labelledby="jev-title">
+      <section
+        className="card"
+        style={{ marginBottom: "1.5rem" }}
+        aria-labelledby="jev-title"
+      >
         <h2 id="jev-title">Jev</h2>
-        <p className="secondary-text">Reviews transport findings to help prioritize investigations. Email content is not sent.</p>
+        <p className="secondary-text">
+          Reviews transport findings to help prioritize investigations. Email
+          content is not sent.
+        </p>
         <Button disabled={jevCheck.isPending} onClick={() => jevCheck.mutate()}>
           {jevCheck.isPending ? "Checking Jev…" : "Check Jev connection"}
         </Button>

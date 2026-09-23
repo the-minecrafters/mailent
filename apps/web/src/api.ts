@@ -1,10 +1,17 @@
 import { z } from "zod";
 import { authenticatedFetch } from "./auth";
 
-export async function checkDecisionProvider(): Promise<{ connected: boolean; message: string }> {
-  const response = await authenticatedFetch("/api/v1/decisions/check", { method: "POST" });
+export async function checkDecisionProvider(): Promise<{
+  connected: boolean;
+  message: string;
+}> {
+  const response = await authenticatedFetch("/api/v1/decisions/check", {
+    method: "POST",
+  });
   if (!response.ok) throw new Error("Could not check Jev. Please try again.");
-  return z.object({ connected: z.boolean(), message: z.string() }).parse(await response.json());
+  return z
+    .object({ connected: z.boolean(), message: z.string() })
+    .parse(await response.json());
 }
 
 export const findingSchema = z.object({
@@ -188,6 +195,8 @@ export type ProtocolEvidence = z.infer<typeof protocolEvidenceSchema>;
 export const assessmentSummarySchema = z.object({
   id: z.string(),
   title: z.string(),
+  source_type: z.string().optional(),
+  target: z.string().optional(),
   capture_name: z.string(),
   capture_hash: z.string(),
   capture_size_bytes: z.number(),
@@ -198,12 +207,14 @@ export const assessmentSummarySchema = z.object({
   posture_score: z.number(),
   posture_grade: z.string(),
   ai_risk_classification: z.string(),
+  organization_id: z.string().nullable().optional(),
 });
 export type AssessmentSummary = z.infer<typeof assessmentSummarySchema>;
 
 export const assessmentRecordSchema = z.object({
   id: z.string(),
   title: z.string(),
+  source: z.any().optional(),
   capture_name: z.string(),
   capture_hash: z.string(),
   capture_size_bytes: z.number(),
@@ -222,6 +233,7 @@ export const assessmentRecordSchema = z.object({
   ai_risk_rationale: z.string(),
   ai_confidence: z.number(),
   metadata: z.record(z.string(), z.any()).default({}),
+  organization_id: z.string().nullable().optional(),
 });
 export type AssessmentRecord = z.infer<typeof assessmentRecordSchema>;
 
@@ -828,18 +840,25 @@ export async function fetchAssetPostureHistory(
 }
 
 // Policy Simulation
-export const policyPackSummarySchema = z.object({
-  name: z.string(),
-  version: z.string(),
-  title: z.string(),
-  description: z.string(),
-  rule_count: z.number(),
-  min_tls_version: z.string().nullable().optional(),
-  require_pfs: z.boolean(),
-  max_cert_validity_days: z.number().nullable().optional(),
-  require_mta_sts: z.boolean(),
-  require_dane: z.boolean(),
-});
+export const policyPackSummarySchema = z
+  .object({
+    name: z.string(),
+    version: z.string(),
+    title: z.string().optional().default(""),
+    description: z.string().default(""),
+    rule_count: z.number().optional().default(0),
+    rules_count: z.number().optional().default(0),
+    min_tls_version: z.string().nullable().optional(),
+    require_pfs: z.boolean().optional().default(false),
+    max_cert_validity_days: z.number().nullable().optional(),
+    require_mta_sts: z.boolean().optional().default(false),
+    require_dane: z.boolean().optional().default(false),
+  })
+  .transform((p) => ({
+    ...p,
+    title: p.title || p.name,
+    rule_count: p.rule_count || p.rules_count || 0,
+  }));
 export type PolicyPackSummary = z.infer<typeof policyPackSummarySchema>;
 
 export const simulationBreakageSchema = z
@@ -1149,6 +1168,186 @@ export async function downloadInvestigationReport(
   anchor.download = `mailent-investigation-${id}.${format}`;
   document.body.appendChild(anchor);
   anchor.click();
-  anchor.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export const organizationSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  slug: z.string(),
+  created_at: z.string(),
+});
+export type Organization = z.infer<typeof organizationSchema>;
+
+export const deviceSchema = z.object({
+  id: z.string(),
+  organization_id: z.string(),
+  registered_by_user_id: z.string().nullable().optional(),
+  name: z.string(),
+  hostname: z.string(),
+  platform: z.string(),
+  architecture: z.string(),
+  created_at: z.string(),
+  last_seen_at: z.string(),
+  revoked_at: z.string().nullable().optional(),
+  capabilities: z.array(z.string()).default([]),
+  version: z.string().nullable().optional(),
+  agent_enabled: z.boolean().default(false),
+  agent_status: z.string().nullable().optional(),
+  current_job_id: z.string().nullable().optional(),
+  completed_jobs_count: z.number().default(0),
+});
+export type Device = z.infer<typeof deviceSchema>;
+
+export const deviceChallengeSchema = z.object({
+  code: z.string(),
+  device_name: z.string(),
+  hostname: z.string(),
+  platform: z.string(),
+  architecture: z.string(),
+  expires_at: z.string(),
+});
+export type DeviceChallenge = z.infer<typeof deviceChallengeSchema>;
+
+export async function fetchCurrentOrganization(): Promise<Organization> {
+  return organizationSchema.parse(
+    await request("/api/v1/organizations/current"),
+  );
+}
+
+export async function fetchDevices(): Promise<Device[]> {
+  return z.array(deviceSchema).parse(await request("/api/v1/devices"));
+}
+
+export async function revokeDevice(id: string): Promise<void> {
+  await request(`/api/v1/devices/${id}`, { method: "DELETE" });
+}
+
+export async function getDeviceChallenge(
+  code: string,
+): Promise<DeviceChallenge> {
+  return deviceChallengeSchema.parse(
+    await request(`/api/v1/devices/authorize/${code}`),
+  );
+}
+
+export async function approveDeviceChallenge(
+  code: string,
+): Promise<{ status: string; device: Device }> {
+  return (await request(`/api/v1/devices/authorize/${code}/approve`, {
+    method: "POST",
+  })) as {
+    status: string;
+    device: Device;
+  };
+}
+
+export async function scanInfrastructure(domain: string): Promise<{
+  assessment: AssessmentRecord;
+  report: unknown;
+  endpoints_checked: number;
+  endpoints_succeeded: number;
+  endpoints_failed: number;
+}> {
+  return (await request(
+    "/api/v1/scans/infrastructure",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ domain }),
+    },
+    45000,
+  )) as {
+    assessment: AssessmentRecord;
+    report: unknown;
+    endpoints_checked: number;
+    endpoints_succeeded: number;
+    endpoints_failed: number;
+  };
+}
+
+export type MonitorCadence =
+  | "hourly"
+  | "every_6_hours"
+  | "every_12_hours"
+  | "daily"
+  | "weekly";
+export type MonitorExecutionTarget =
+  | { type: "cloud" }
+  | { type: "agent"; agent_id: string };
+
+export interface InfrastructureMonitor {
+  id: string;
+  organization_id: string;
+  domain: string;
+  enabled: boolean;
+  execution_target: MonitorExecutionTarget;
+  cadence: MonitorCadence;
+  next_run_at: string;
+  last_run_at?: string | null;
+  last_success_at?: string | null;
+  last_failure_at?: string | null;
+  last_assessment_id?: string | null;
+  last_error?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DomainHistoryEntry {
+  assessment_id: string;
+  created_at: string;
+  posture_score: number;
+  posture_grade: string;
+  protocols_identified: string[];
+  findings_count: number;
+  drift_events: DriftEvent[];
+  security_regressions: DriftEvent[];
+}
+
+export interface DomainHistoryResponse {
+  domain: string;
+  monitor: InfrastructureMonitor | null;
+  history: DomainHistoryEntry[];
+}
+
+export async function fetchMonitors(): Promise<InfrastructureMonitor[]> {
+  return (await request("/api/v1/monitors")) as InfrastructureMonitor[];
+}
+
+export async function createMonitor(data: {
+  domain: string;
+  cadence: MonitorCadence;
+  target: MonitorExecutionTarget;
+}): Promise<InfrastructureMonitor> {
+  return (await request("/api/v1/monitors", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  })) as InfrastructureMonitor;
+}
+
+export async function runNowMonitor(
+  id: string,
+): Promise<{ status: string; job_id: string; monitor_id: string }> {
+  return (await request(`/api/v1/monitors/${id}/run_now`, {
+    method: "POST",
+  })) as {
+    status: string;
+    job_id: string;
+    monitor_id: string;
+  };
+}
+
+export async function deleteMonitor(id: string): Promise<{ deleted: boolean }> {
+  return (await request(`/api/v1/monitors/${id}`, { method: "DELETE" })) as {
+    deleted: boolean;
+  };
+}
+
+export async function fetchDomainHistory(
+  domain: string,
+): Promise<DomainHistoryResponse> {
+  return (await request(
+    `/api/v1/monitors/domain/${encodeURIComponent(domain)}/history`,
+  )) as DomainHistoryResponse;
 }

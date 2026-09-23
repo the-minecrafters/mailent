@@ -16,6 +16,7 @@ pub use mta_sts::{
 };
 pub use resolver::{
     DomainIntelligenceResolver, LiveDomainIntelligenceResolver, MockDomainIntelligenceResolver,
+    SrvRecord,
 };
 pub use tls_rpt::{parse_tls_rpt_json, parse_tls_rpt_policy};
 

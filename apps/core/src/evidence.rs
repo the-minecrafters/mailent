@@ -176,6 +176,9 @@ impl EvidenceSnapshot {
             remediation_records: &self.remediations,
             policy_name: state.policy_pack.name.clone(),
             policy_version: state.policy_pack.version.clone(),
+            assessment_source: Some("capture".to_string()),
+            target_domain: None,
+            infrastructure: None,
         };
         let title = self
             .investigation

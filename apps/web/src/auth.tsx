@@ -158,13 +158,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   // If user is not signed in and has not chosen guest mode, or explicitly clicked "Sign in":
   if (client && !user && (!isGuest || showSignInModal)) {
-    return (
-      <AuthPage
-        client={client}
-        allowSkip={!user}
-        onSkip={handleSkip}
-      />
-    );
+    return <AuthPage client={client} allowSkip={!user} onSkip={handleSkip} />;
   }
 
   return (

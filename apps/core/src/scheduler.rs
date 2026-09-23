@@ -273,3 +273,303 @@ pub async fn run_verification_cycle(
 
     Ok(())
 }
+
+/// Spawns a background worker that polls due infrastructure monitors, manages bounded
+/// concurrency, recovers expired leases, and dispatches jobs to agents or executes Cloud jobs.
+pub fn start_infrastructure_monitoring_scheduler(state: AppState) {
+    tokio::spawn(async move {
+        info!("Starting scheduled infrastructure monitoring scheduler");
+        tokio::time::sleep(StdDuration::from_secs(5)).await;
+
+        loop {
+            if let Err(e) = run_monitoring_cycle(&state).await {
+                error!("Error in infrastructure monitoring cycle: {e}");
+            }
+            tokio::time::sleep(StdDuration::from_secs(10)).await;
+        }
+    });
+}
+
+/// Executes one pass of monitoring: recovers expired leases, discovers due monitors,
+/// enforces bounded concurrency, enqueues agent jobs, and processes cloud jobs.
+pub async fn run_monitoring_cycle(
+    state: &AppState,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let now = OffsetDateTime::now_utc();
+
+    // 1. Expiration recovery: reclaim expired leases
+    let recovered = state.jobs.recover_expired_leases(now).await?;
+    if recovered > 0 {
+        info!(recovered, "Recovered expired agent job leases");
+    }
+
+    // 2. Discover due monitors
+    let due_monitors = state.monitors.find_due_monitors(now, 20).await?;
+    for mut monitor in due_monitors {
+        let org_id = monitor.organization_id;
+
+        // Bounded concurrency per org (max 5 active jobs)
+        let active_org_jobs = state.jobs.count_active_for_org(org_id).await.unwrap_or(0);
+        if active_org_jobs >= 5 {
+            debug!(org_id = %org_id, "Max active jobs reached for org; deferring monitor");
+            continue;
+        }
+
+        // Bounded concurrency per agent (max 1 active job per agent)
+        let target_agent_id = match monitor.execution_target {
+            mailent_domain::MonitorExecutionTarget::Cloud => None,
+            mailent_domain::MonitorExecutionTarget::Agent(agent_id) => {
+                let active_agent_jobs = state
+                    .jobs
+                    .count_active_for_agent(agent_id)
+                    .await
+                    .unwrap_or(0);
+                if active_agent_jobs >= 1 {
+                    debug!(agent_id = %agent_id, "Agent already busy; deferring monitor");
+                    continue;
+                }
+                Some(agent_id)
+            }
+        };
+
+        // Deduplication via idempotency key: one run per monitor scheduled time slot
+        let idempotency_key = format!(
+            "monitor-{}-{}",
+            monitor.id,
+            monitor.next_run_at.unix_timestamp()
+        );
+
+        if let Ok(Some(_)) = state
+            .jobs
+            .find_by_idempotency_key(org_id, &idempotency_key)
+            .await
+        {
+            // Already created a job for this slot
+            continue;
+        }
+
+        // Advance monitor schedule
+        monitor.next_run_at = monitor.cadence.next_run_after(now);
+        monitor.updated_at = now;
+        let _ = state.monitors.save(&monitor).await;
+
+        // Enqueue the job
+        let job = mailent_domain::AgentJob::new_infrastructure_assessment(
+            org_id,
+            monitor.domain.clone(),
+            120,
+            target_agent_id,
+            Some(idempotency_key),
+            Some(monitor.id),
+        );
+
+        state.jobs.create_job(&job).await?;
+        info!(
+            job_id = %job.id,
+            domain = %monitor.domain,
+            target = ?monitor.execution_target,
+            "Enqueued scheduled infrastructure assessment job"
+        );
+    }
+
+    // 3. Process pending Cloud jobs
+    while let Ok(Some(job)) = state.jobs.lease_next_cloud_job(now, 300).await {
+        let state_clone = state.clone();
+        tokio::spawn(async move {
+            execute_cloud_job(state_clone, job).await;
+        });
+    }
+
+    Ok(())
+}
+
+/// Executes a leased Cloud-targeted infrastructure assessment job directly within Mailent Core.
+pub async fn execute_cloud_job(state: AppState, mut job: mailent_domain::AgentJob) {
+    let now = OffsetDateTime::now_utc();
+    job.state = mailent_domain::JobState::Running;
+    job.started_at = Some(now);
+    let _ = state.jobs.update_job(&job).await;
+
+    let domain = match &job.job_type {
+        mailent_domain::AgentJobType::InfrastructureAssessment { domain, .. } => domain.clone(),
+        _ => {
+            job.state = mailent_domain::JobState::Failed;
+            job.last_error = Some("Unsupported cloud job type".into());
+            job.completed_at = Some(OffsetDateTime::now_utc());
+            let _ = state.jobs.update_job(&job).await;
+            return;
+        }
+    };
+
+    info!(job_id = %job.id, domain = %domain, "Executing cloud-targeted infrastructure scan");
+
+    let scanner_res = mailent_scanner::DomainScanner::new_live();
+    let scanner = match scanner_res {
+        Ok(s) => s,
+        Err(e) => {
+            let err_msg = format!("Failed to initialize DomainScanner: {e}");
+            job.state = mailent_domain::JobState::Failed;
+            job.last_error = Some(err_msg.clone());
+            job.completed_at = Some(OffsetDateTime::now_utc());
+            let _ = state.jobs.update_job(&job).await;
+            if let Some(monitor_id) = job.monitor_id {
+                if let Ok(Some(mut monitor)) = state.monitors.find_by_id(monitor_id).await {
+                    monitor.last_run_at = Some(now);
+                    monitor.last_failure_at = Some(now);
+                    monitor.last_error = Some(err_msg);
+                    monitor.updated_at = OffsetDateTime::now_utc();
+                    let _ = state.monitors.save(&monitor).await;
+                }
+            }
+            return;
+        }
+    };
+
+    match scanner.scan_domain(&domain).await {
+        Ok(scan_result) => {
+            let assessment = scan_result
+                .assessment
+                .with_organization(job.organization_id);
+            let assessment_id = assessment.id;
+
+            // Save assessment
+            let _ = state.assessments.save(&assessment).await;
+
+            let current_findings = scan_result.findings.clone();
+            for f in &current_findings {
+                let _ = state.findings.save(f.clone()).await;
+            }
+
+            // Check for domain drift against prior infrastructure assessment
+            if let Ok(summaries) = state.assessments.list_for_org(job.organization_id).await {
+                let prior_summary = summaries
+                    .into_iter()
+                    .filter(|s| {
+                        s.source_type == "infrastructure"
+                            && s.target == domain
+                            && s.id != assessment_id
+                    })
+                    .max_by_key(|s| s.created_at);
+
+                if let Some(prior_s) = prior_summary {
+                    if let Ok(Some(prior_rec)) = state
+                        .assessments
+                        .find_by_id_scoped(prior_s.id, job.organization_id)
+                        .await
+                    {
+                        let mut prior_findings = Vec::new();
+                        for fid in &prior_rec.finding_ids {
+                            if let Ok(Some(f)) = state.findings.find_by_id(*fid).await {
+                                prior_findings.push(f);
+                            }
+                        }
+
+                        let drift_events = mailent_correlation::drift::InfrastructureDriftCorrelator::compare_assessments(
+                            &prior_rec,
+                            &assessment,
+                            &prior_findings,
+                            &current_findings,
+                        );
+
+                        let regressions = mailent_correlation::drift::InfrastructureDriftCorrelator::extract_security_regressions(&drift_events, &current_findings);
+
+                        if !regressions.is_empty() {
+                            info!(
+                                domain = %domain,
+                                regressions_count = regressions.len(),
+                                "Security regressions detected in scheduled cloud scan"
+                            );
+                            crate::integrations::notify_event(
+                                &state,
+                                crate::integrations::EventNotification::new(
+                                    mailent_domain::IntegrationEventType::SecurityRegressionDetected,
+                                    format!("Security regression on {domain}"),
+                                    format!(
+                                        "Detected {} security regression(s) during scheduled scan.",
+                                        regressions.len()
+                                    ),
+                                )
+                                .with_details(serde_json::json!({
+                                    "domain": domain,
+                                    "regressions": regressions,
+                                    "assessment_id": assessment_id,
+                                })),
+                            );
+                        } else if !drift_events.is_empty() {
+                            info!(
+                                domain = %domain,
+                                drift_count = drift_events.len(),
+                                "Infrastructure drift detected in scheduled cloud scan"
+                            );
+                            crate::integrations::notify_event(
+                                &state,
+                                crate::integrations::EventNotification::new(
+                                    mailent_domain::IntegrationEventType::InfrastructureDriftDetected,
+                                    format!("Infrastructure drift on {domain}"),
+                                    format!(
+                                        "Detected {} configuration change(s) during scheduled scan.",
+                                        drift_events.len()
+                                    ),
+                                )
+                                .with_details(serde_json::json!({
+                                    "domain": domain,
+                                    "drift_events": drift_events,
+                                    "assessment_id": assessment_id,
+                                })),
+                            );
+                        }
+
+                        // Create or enrich investigation if meaningful regressions exist
+                        let _ = crate::api::agent::sync_infrastructure_investigation(
+                            &state,
+                            &assessment,
+                            &domain,
+                            &drift_events,
+                            &current_findings,
+                            now,
+                        )
+                        .await;
+                    }
+                }
+            }
+
+            // Update monitor if linked
+            if let Some(monitor_id) = job.monitor_id {
+                if let Ok(Some(mut monitor)) = state.monitors.find_by_id(monitor_id).await {
+                    let finish_time = OffsetDateTime::now_utc();
+                    monitor.last_run_at = Some(finish_time);
+                    monitor.last_success_at = Some(finish_time);
+                    monitor.last_assessment_id = Some(assessment_id);
+                    monitor.updated_at = finish_time;
+                    let _ = state.monitors.save(&monitor).await;
+                }
+            }
+
+            // Mark job completed
+            job.state = mailent_domain::JobState::Completed;
+            job.completed_at = Some(OffsetDateTime::now_utc());
+            job.result_assessment_id = Some(assessment_id);
+            let _ = state.jobs.update_job(&job).await;
+            info!(job_id = %job.id, assessment_id = %assessment_id, "Cloud infrastructure scan completed successfully");
+        }
+        Err(e) => {
+            let err_msg = format!("Cloud scan failed: {e}");
+            warn!(job_id = %job.id, error = %err_msg, "Cloud infrastructure scan failed");
+            job.state = mailent_domain::JobState::Failed;
+            job.last_error = Some(err_msg.clone());
+            job.completed_at = Some(OffsetDateTime::now_utc());
+            let _ = state.jobs.update_job(&job).await;
+
+            if let Some(monitor_id) = job.monitor_id {
+                if let Ok(Some(mut monitor)) = state.monitors.find_by_id(monitor_id).await {
+                    let finish_time = OffsetDateTime::now_utc();
+                    monitor.last_run_at = Some(finish_time);
+                    monitor.last_failure_at = Some(finish_time);
+                    monitor.last_error = Some(err_msg);
+                    monitor.updated_at = finish_time;
+                    let _ = state.monitors.save(&monitor).await;
+                }
+            }
+        }
+    }
+}

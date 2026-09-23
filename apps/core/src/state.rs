@@ -11,8 +11,9 @@ use mailent_storage::{
     postgres::PostgresStorage,
     repository::{
         ArchivedReportRepository, AssessmentRepository, AssetRepository, BaselineRepository,
-        CertificateRepository, DecisionRepository, FindingRepository, IntegrationRepository,
-        IntelligenceRepository, InvestigationRepository, ObservationRepository, PostureRepository,
+        CertificateRepository, DecisionRepository, DeviceRepository, FindingRepository,
+        IntegrationRepository, IntelligenceRepository, InvestigationRepository, JobRepository,
+        MonitorRepository, ObservationRepository, OrganizationRepository, PostureRepository,
         ProbeRepository, RemediationRepository, SensorRepository, SessionRepository,
         TrainingRecordRepository,
     },
@@ -45,6 +46,10 @@ pub struct AppState {
     pub integrations: Arc<dyn IntegrationRepository>,
     pub archived_reports: Arc<dyn ArchivedReportRepository>,
     pub assessments: Arc<dyn AssessmentRepository>,
+    pub organizations: Arc<dyn OrganizationRepository>,
+    pub devices: Arc<dyn DeviceRepository>,
+    pub jobs: Arc<dyn JobRepository>,
+    pub monitors: Arc<dyn MonitorRepository>,
     pub intelligence_resolver: Arc<dyn DomainIntelligenceResolver>,
     pub baseline_analyzer: Arc<dyn BaselineAnalyzer>,
     pub decision_provider: Arc<dyn DecisionProvider>,
@@ -77,6 +82,10 @@ impl AppState {
             integrations: mem.clone(),
             archived_reports: mem.clone(),
             assessments: mem.clone(),
+            organizations: mem.clone(),
+            devices: mem.clone(),
+            jobs: mem.clone(),
+            monitors: mem.clone(),
             intelligence_resolver: Arc::new(MockDomainIntelligenceResolver::new()),
             baseline_analyzer: Arc::new(DefaultBaselineAnalyzer::new()),
             decision_provider: Arc::new(DisabledProvider),
@@ -108,6 +117,10 @@ impl AppState {
             integrations,
             archived_reports,
             assessments,
+            organizations,
+            devices,
+            jobs,
+            monitors,
         ): (
             Arc<dyn AssetRepository>,
             Arc<dyn CertificateRepository>,
@@ -124,10 +137,23 @@ impl AppState {
             Arc<dyn IntegrationRepository>,
             Arc<dyn ArchivedReportRepository>,
             Arc<dyn AssessmentRepository>,
+            Arc<dyn OrganizationRepository>,
+            Arc<dyn DeviceRepository>,
+            Arc<dyn JobRepository>,
+            Arc<dyn MonitorRepository>,
         ) = if let Some(ref pg) = pg_storage {
-            tracing::info!("Connecting to PostgreSQL control plane storage (with in-memory guest support)");
-            let dual = Arc::new(crate::dual_storage::DualStorage::new(pg.clone(), mem.clone()));
+            tracing::info!(
+                "Connecting to PostgreSQL control plane storage (with in-memory guest support)"
+            );
+            let dual = Arc::new(crate::dual_storage::DualStorage::new(
+                pg.clone(),
+                mem.clone(),
+            ));
             (
+                dual.clone(),
+                dual.clone(),
+                dual.clone(),
+                dual.clone(),
                 dual.clone(),
                 dual.clone(),
                 dual.clone(),
@@ -164,6 +190,10 @@ impl AppState {
                 mem.clone(),
                 mem.clone(),
                 mem.clone(),
+                mem.clone(),
+                mem.clone(),
+                mem.clone(),
+                mem.clone(),
             )
         };
 
@@ -175,7 +205,10 @@ impl AppState {
                 );
                 (ch.clone(), ch)
             } else if let Some(ref pg) = pg_storage {
-                let dual = Arc::new(crate::dual_storage::DualStorage::new(pg.clone(), mem.clone()));
+                let dual = Arc::new(crate::dual_storage::DualStorage::new(
+                    pg.clone(),
+                    mem.clone(),
+                ));
                 (dual.clone(), dual)
             } else {
                 tracing::warn!(
@@ -264,6 +297,10 @@ impl AppState {
             integrations,
             archived_reports,
             assessments,
+            organizations,
+            devices,
+            jobs,
+            monitors,
             intelligence_resolver,
             baseline_analyzer: Arc::new(DefaultBaselineAnalyzer::new()),
             decision_provider,

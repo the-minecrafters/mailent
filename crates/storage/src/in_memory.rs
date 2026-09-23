@@ -15,16 +15,17 @@ use crate::{
     error::StorageError,
     repository::{
         ArchivedReportRepository, AssessmentRepository, AssetRepository, BaselineRepository,
-        CertificateRepository, DecisionRepository, EvidenceStore, FindingRepository,
-        IntegrationRepository, IntelligenceRepository, InvestigationRepository,
-        ObservationRepository, PostureRepository, ProbeRepository, SensorRepository,
-        SessionRepository, TrainingRecordRepository,
+        CertificateRepository, DecisionRepository, DeviceRepository, EvidenceStore,
+        FindingRepository, IntegrationRepository, IntelligenceRepository, InvestigationRepository,
+        JobRepository, MonitorRepository, ObservationRepository, OrganizationRepository,
+        PostureRepository, ProbeRepository, SensorRepository, SessionRepository,
+        TrainingRecordRepository,
     },
 };
 
 /// In-memory storage implementation used exclusively for testing, local scaffolding,
 /// and fast iteration during isolated unit tests.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct InMemoryStorage {
     remediations: Arc<RwLock<Vec<mailent_domain::RemediationRecord>>>,
     assets: Arc<RwLock<Vec<Asset>>>,
@@ -54,6 +55,56 @@ pub struct InMemoryStorage {
     integrations: Arc<RwLock<Vec<mailent_domain::IntegrationConfig>>>,
     archived_reports: Arc<RwLock<Vec<mailent_domain::ArchivedReportRecord>>>,
     assessments: Arc<RwLock<Vec<mailent_domain::AssessmentRecord>>>,
+    organizations: Arc<RwLock<Vec<mailent_domain::Organization>>>,
+    organization_members: Arc<RwLock<Vec<mailent_domain::OrganizationMember>>>,
+    devices: Arc<RwLock<Vec<mailent_domain::Device>>>,
+    device_challenges: Arc<RwLock<Vec<mailent_domain::DeviceAuthorizationChallenge>>>,
+    device_tokens: Arc<RwLock<Vec<mailent_domain::DeviceTokenRecord>>>,
+    agent_jobs: Arc<RwLock<Vec<mailent_domain::AgentJob>>>,
+    infrastructure_monitors: Arc<RwLock<Vec<mailent_domain::InfrastructureMonitor>>>,
+}
+
+impl Default for InMemoryStorage {
+    fn default() -> Self {
+        let default_org = mailent_domain::Organization::default();
+        Self {
+            remediations: Arc::default(),
+            assets: Arc::default(),
+            drift_events: Arc::default(),
+            findings: Arc::default(),
+            finding_assets: Arc::default(),
+            sessions: Arc::default(),
+            certificates: Arc::default(),
+            sensors: Arc::default(),
+            observations: Arc::default(),
+            evidence: Arc::default(),
+            mx_records: Arc::default(),
+            tlsa_records: Arc::default(),
+            mta_sts_policies: Arc::default(),
+            tls_rpt_policies: Arc::default(),
+            tls_rpt_reports: Arc::default(),
+            ct_certificates: Arc::default(),
+            ct_events: Arc::default(),
+            refresh_statuses: Arc::default(),
+            baselines: Arc::default(),
+            anomalies: Arc::default(),
+            investigations: Arc::default(),
+            decision_records: Arc::default(),
+            probe_runs: Arc::default(),
+            training_records: Arc::default(),
+            posture_snapshots: Arc::default(),
+            integrations: Arc::default(),
+            archived_reports: Arc::default(),
+            assessments: Arc::default(),
+            organizations: Arc::new(RwLock::new(vec![default_org])),
+            organization_members: Arc::default(),
+            devices: Arc::default(),
+            device_challenges: Arc::default(),
+            device_tokens: Arc::default(),
+            agent_jobs: Arc::default(),
+            infrastructure_monitors: Arc::default(),
+        }
+    }
 }
 
 impl InMemoryStorage {
@@ -1130,6 +1181,507 @@ impl AssessmentRepository for InMemoryStorage {
         summaries.sort_by_key(|a| std::cmp::Reverse(a.created_at));
         Ok(summaries)
     }
+
+    async fn list_for_org(
+        &self,
+        organization_id: Uuid,
+    ) -> Result<Vec<AssessmentSummary>, StorageError> {
+        let list = self.assessments.read().await;
+        let mut summaries: Vec<AssessmentSummary> = list
+            .iter()
+            .filter(|a| a.organization_id == Some(organization_id))
+            .map(AssessmentSummary::from)
+            .collect();
+        summaries.sort_by_key(|a| std::cmp::Reverse(a.created_at));
+        Ok(summaries)
+    }
+
+    async fn find_by_id_scoped(
+        &self,
+        id: Uuid,
+        organization_id: Uuid,
+    ) -> Result<Option<AssessmentRecord>, StorageError> {
+        let list = self.assessments.read().await;
+        Ok(list
+            .iter()
+            .find(|a| a.id == id && a.organization_id == Some(organization_id))
+            .cloned())
+    }
+}
+
+#[async_trait]
+impl OrganizationRepository for InMemoryStorage {
+    async fn find_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<mailent_domain::Organization>, StorageError> {
+        let list = self.organizations.read().await;
+        Ok(list.iter().find(|o| o.id == id).cloned())
+    }
+
+    async fn find_by_slug(
+        &self,
+        slug: &str,
+    ) -> Result<Option<mailent_domain::Organization>, StorageError> {
+        let list = self.organizations.read().await;
+        Ok(list.iter().find(|o| o.slug == slug).cloned())
+    }
+
+    async fn list_for_user(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<mailent_domain::Organization>, StorageError> {
+        let members = self.organization_members.read().await;
+        let org_ids: Vec<Uuid> = members
+            .iter()
+            .filter(|m| m.user_id == user_id)
+            .map(|m| m.organization_id)
+            .collect();
+        let orgs = self.organizations.read().await;
+        if org_ids.is_empty() {
+            return Ok(orgs.clone());
+        }
+        Ok(orgs
+            .iter()
+            .filter(|o| org_ids.contains(&o.id))
+            .cloned()
+            .collect())
+    }
+
+    async fn save(&self, org: &mailent_domain::Organization) -> Result<(), StorageError> {
+        let mut list = self.organizations.write().await;
+        if let Some(pos) = list.iter().position(|o| o.id == org.id) {
+            list[pos] = org.clone();
+        } else {
+            list.push(org.clone());
+        }
+        Ok(())
+    }
+
+    async fn add_member(
+        &self,
+        member: &mailent_domain::OrganizationMember,
+    ) -> Result<(), StorageError> {
+        let mut list = self.organization_members.write().await;
+        if let Some(pos) = list.iter().position(|m| {
+            m.organization_id == member.organization_id && m.user_id == member.user_id
+        }) {
+            list[pos] = member.clone();
+        } else {
+            list.push(member.clone());
+        }
+        Ok(())
+    }
+
+    async fn get_member(
+        &self,
+        organization_id: Uuid,
+        user_id: &str,
+    ) -> Result<Option<mailent_domain::OrganizationMember>, StorageError> {
+        let list = self.organization_members.read().await;
+        Ok(list
+            .iter()
+            .find(|m| m.organization_id == organization_id && m.user_id == user_id)
+            .cloned())
+    }
+}
+
+#[async_trait]
+impl DeviceRepository for InMemoryStorage {
+    async fn save_device(&self, device: &mailent_domain::Device) -> Result<(), StorageError> {
+        let mut list = self.devices.write().await;
+        if let Some(pos) = list.iter().position(|d| d.id == device.id) {
+            list[pos] = device.clone();
+        } else {
+            list.push(device.clone());
+        }
+        Ok(())
+    }
+
+    async fn find_device_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<mailent_domain::Device>, StorageError> {
+        let list = self.devices.read().await;
+        Ok(list.iter().find(|d| d.id == id).cloned())
+    }
+
+    async fn list_devices_for_org(
+        &self,
+        organization_id: Uuid,
+    ) -> Result<Vec<mailent_domain::Device>, StorageError> {
+        let list = self.devices.read().await;
+        Ok(list
+            .iter()
+            .filter(|d| d.organization_id == organization_id)
+            .cloned()
+            .collect())
+    }
+
+    async fn revoke_device(&self, id: Uuid) -> Result<(), StorageError> {
+        let mut list = self.devices.write().await;
+        if let Some(device) = list.iter_mut().find(|d| d.id == id) {
+            device.revoked_at = Some(OffsetDateTime::now_utc());
+        }
+        Ok(())
+    }
+
+    async fn create_challenge(
+        &self,
+        challenge: &mailent_domain::DeviceAuthorizationChallenge,
+    ) -> Result<(), StorageError> {
+        let mut list = self.device_challenges.write().await;
+        list.retain(|c| c.code != challenge.code);
+        list.push(challenge.clone());
+        Ok(())
+    }
+
+    async fn get_challenge(
+        &self,
+        code: &str,
+    ) -> Result<Option<mailent_domain::DeviceAuthorizationChallenge>, StorageError> {
+        let list = self.device_challenges.read().await;
+        Ok(list.iter().find(|c| c.code == code).cloned())
+    }
+
+    async fn approve_challenge(
+        &self,
+        code: &str,
+        user_id: &str,
+        org_id: Uuid,
+        device_token: &str,
+        device_id: Uuid,
+    ) -> Result<(), StorageError> {
+        let mut list = self.device_challenges.write().await;
+        if let Some(c) = list.iter_mut().find(|c| c.code == code) {
+            c.authorized_at = Some(OffsetDateTime::now_utc());
+            c.authorized_by_user_id = Some(user_id.to_string());
+            c.organization_id = Some(org_id);
+            c.issued_token = Some(device_token.to_string());
+            c.device_id = Some(device_id);
+        }
+        Ok(())
+    }
+
+    async fn save_device_token(
+        &self,
+        token_hash: &str,
+        device_id: Uuid,
+        org_id: Uuid,
+    ) -> Result<(), StorageError> {
+        let mut list = self.device_tokens.write().await;
+        list.retain(|t| t.token_hash != token_hash);
+        list.push(mailent_domain::DeviceTokenRecord {
+            token_hash: token_hash.to_string(),
+            device_id,
+            organization_id: org_id,
+            created_at: OffsetDateTime::now_utc(),
+            last_used_at: OffsetDateTime::now_utc(),
+        });
+        Ok(())
+    }
+
+    async fn validate_device_token(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<(mailent_domain::Device, Uuid)>, StorageError> {
+        let tokens = self.device_tokens.read().await;
+        let tok = match tokens.iter().find(|t| t.token_hash == token_hash) {
+            Some(t) => t.clone(),
+            None => return Ok(None),
+        };
+        let devices = self.devices.read().await;
+        if let Some(dev) = devices
+            .iter()
+            .find(|d| d.id == tok.device_id && d.is_active())
+        {
+            Ok(Some((dev.clone(), tok.organization_id)))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn revoke_device_token(&self, token_hash: &str) -> Result<(), StorageError> {
+        let mut list = self.device_tokens.write().await;
+        if let Some(tok) = list.iter().find(|t| t.token_hash == token_hash).cloned() {
+            let mut devices = self.devices.write().await;
+            if let Some(dev) = devices.iter_mut().find(|d| d.id == tok.device_id) {
+                dev.revoked_at = Some(OffsetDateTime::now_utc());
+            }
+        }
+        list.retain(|t| t.token_hash != token_hash);
+        Ok(())
+    }
+
+    async fn heartbeat(
+        &self,
+        device_id: Uuid,
+        version: Option<String>,
+        capabilities: Vec<String>,
+        status: String,
+        now: OffsetDateTime,
+    ) -> Result<(), StorageError> {
+        let mut list = self.devices.write().await;
+        if let Some(device) = list.iter_mut().find(|d| d.id == device_id)
+            && device.revoked_at.is_none()
+        {
+            device.last_seen_at = now;
+            if let Some(v) = version {
+                device.version = Some(v);
+            }
+            if !capabilities.is_empty() {
+                device.capabilities = capabilities;
+            }
+            device.agent_enabled = true;
+            device.agent_status = Some(status);
+        }
+        Ok(())
+    }
+
+    async fn update_agent_status(
+        &self,
+        device_id: Uuid,
+        status: Option<String>,
+        current_job_id: Option<Uuid>,
+        increment_completed: bool,
+    ) -> Result<(), StorageError> {
+        let mut list = self.devices.write().await;
+        if let Some(device) = list.iter_mut().find(|d| d.id == device_id) {
+            if let Some(s) = status {
+                device.agent_status = Some(s);
+            }
+            device.current_job_id = current_job_id;
+            if increment_completed {
+                device.completed_jobs_count += 1;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl JobRepository for InMemoryStorage {
+    async fn create_job(&self, job: &mailent_domain::AgentJob) -> Result<(), StorageError> {
+        let mut list = self.agent_jobs.write().await;
+        list.retain(|j| j.id != job.id);
+        list.push(job.clone());
+        Ok(())
+    }
+
+    async fn find_by_id(&self, id: Uuid) -> Result<Option<mailent_domain::AgentJob>, StorageError> {
+        let list = self.agent_jobs.read().await;
+        Ok(list.iter().find(|j| j.id == id).cloned())
+    }
+
+    async fn find_by_idempotency_key(
+        &self,
+        org_id: Uuid,
+        key: &str,
+    ) -> Result<Option<mailent_domain::AgentJob>, StorageError> {
+        let list = self.agent_jobs.read().await;
+        Ok(list
+            .iter()
+            .find(|j| j.organization_id == org_id && j.idempotency_key.as_deref() == Some(key))
+            .cloned())
+    }
+
+    async fn lease_next_job(
+        &self,
+        agent_id: Uuid,
+        org_id: Uuid,
+        now: OffsetDateTime,
+        lease_duration_secs: u64,
+    ) -> Result<Option<mailent_domain::AgentJob>, StorageError> {
+        let mut list = self.agent_jobs.write().await;
+        for job in list.iter_mut() {
+            if job.organization_id == org_id
+                && (job.state == mailent_domain::JobState::Pending
+                    || (job.is_lease_expired(now)
+                        && job.state != mailent_domain::JobState::Completed
+                        && job.state != mailent_domain::JobState::Canceled))
+                && (job.target_agent_id == Some(agent_id)
+                    || (job.target_agent_id.is_none()
+                        && matches!(
+                            job.execution_target,
+                            mailent_domain::JobExecutionTarget::Agent(_)
+                        )))
+            {
+                job.state = mailent_domain::JobState::Leased;
+                job.leased_at = Some(now);
+                job.lease_expires_at =
+                    Some(now + time::Duration::seconds(lease_duration_secs as i64));
+                job.attempt += 1;
+                return Ok(Some(job.clone()));
+            }
+        }
+        Ok(None)
+    }
+
+    async fn lease_next_cloud_job(
+        &self,
+        now: OffsetDateTime,
+        lease_duration_secs: u64,
+    ) -> Result<Option<mailent_domain::AgentJob>, StorageError> {
+        let mut list = self.agent_jobs.write().await;
+        for job in list.iter_mut() {
+            if matches!(
+                job.execution_target,
+                mailent_domain::JobExecutionTarget::Cloud
+            ) && (job.state == mailent_domain::JobState::Pending
+                || (job.is_lease_expired(now)
+                    && job.state != mailent_domain::JobState::Completed
+                    && job.state != mailent_domain::JobState::Canceled))
+            {
+                job.state = mailent_domain::JobState::Leased;
+                job.leased_at = Some(now);
+                job.lease_expires_at =
+                    Some(now + time::Duration::seconds(lease_duration_secs as i64));
+                job.attempt += 1;
+                return Ok(Some(job.clone()));
+            }
+        }
+        Ok(None)
+    }
+
+    async fn update_job(&self, job: &mailent_domain::AgentJob) -> Result<(), StorageError> {
+        let mut list = self.agent_jobs.write().await;
+        if let Some(pos) = list.iter().position(|j| j.id == job.id) {
+            list[pos] = job.clone();
+        } else {
+            list.push(job.clone());
+        }
+        Ok(())
+    }
+
+    async fn recover_expired_leases(&self, now: OffsetDateTime) -> Result<u64, StorageError> {
+        let mut list = self.agent_jobs.write().await;
+        let mut count = 0;
+        for job in list.iter_mut() {
+            if job.is_lease_expired(now)
+                && job.state != mailent_domain::JobState::Completed
+                && job.state != mailent_domain::JobState::Canceled
+            {
+                if job.attempt >= job.max_attempts {
+                    job.state = mailent_domain::JobState::Failed;
+                    job.last_error = Some("Max lease attempts exceeded".to_string());
+                } else {
+                    job.state = mailent_domain::JobState::Pending;
+                    job.leased_at = None;
+                    job.lease_expires_at = None;
+                }
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
+    async fn list_for_org(
+        &self,
+        org_id: Uuid,
+        limit: usize,
+    ) -> Result<Vec<mailent_domain::AgentJob>, StorageError> {
+        let list = self.agent_jobs.read().await;
+        Ok(list
+            .iter()
+            .filter(|j| j.organization_id == org_id)
+            .take(limit)
+            .cloned()
+            .collect())
+    }
+
+    async fn count_active_for_org(&self, org_id: Uuid) -> Result<usize, StorageError> {
+        let list = self.agent_jobs.read().await;
+        Ok(list
+            .iter()
+            .filter(|j| {
+                j.organization_id == org_id
+                    && (j.state == mailent_domain::JobState::Pending
+                        || j.state == mailent_domain::JobState::Leased
+                        || j.state == mailent_domain::JobState::Running)
+            })
+            .count())
+    }
+
+    async fn count_active_for_agent(&self, agent_id: Uuid) -> Result<usize, StorageError> {
+        let list = self.agent_jobs.read().await;
+        Ok(list
+            .iter()
+            .filter(|j| {
+                j.target_agent_id == Some(agent_id)
+                    && (j.state == mailent_domain::JobState::Leased
+                        || j.state == mailent_domain::JobState::Running)
+            })
+            .count())
+    }
+}
+
+#[async_trait]
+impl MonitorRepository for InMemoryStorage {
+    async fn save(
+        &self,
+        monitor: &mailent_domain::InfrastructureMonitor,
+    ) -> Result<(), StorageError> {
+        let mut list = self.infrastructure_monitors.write().await;
+        if let Some(pos) = list.iter().position(|m| m.id == monitor.id) {
+            list[pos] = monitor.clone();
+        } else {
+            list.push(monitor.clone());
+        }
+        Ok(())
+    }
+
+    async fn find_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<mailent_domain::InfrastructureMonitor>, StorageError> {
+        let list = self.infrastructure_monitors.read().await;
+        Ok(list.iter().find(|m| m.id == id).cloned())
+    }
+
+    async fn find_by_domain(
+        &self,
+        org_id: Uuid,
+        domain: &str,
+    ) -> Result<Option<mailent_domain::InfrastructureMonitor>, StorageError> {
+        let list = self.infrastructure_monitors.read().await;
+        Ok(list
+            .iter()
+            .find(|m| m.organization_id == org_id && m.domain.eq_ignore_ascii_case(domain))
+            .cloned())
+    }
+
+    async fn list_for_org(
+        &self,
+        org_id: Uuid,
+    ) -> Result<Vec<mailent_domain::InfrastructureMonitor>, StorageError> {
+        let list = self.infrastructure_monitors.read().await;
+        Ok(list
+            .iter()
+            .filter(|m| m.organization_id == org_id)
+            .cloned()
+            .collect())
+    }
+
+    async fn find_due_monitors(
+        &self,
+        now: OffsetDateTime,
+        limit: usize,
+    ) -> Result<Vec<mailent_domain::InfrastructureMonitor>, StorageError> {
+        let list = self.infrastructure_monitors.read().await;
+        Ok(list
+            .iter()
+            .filter(|m| m.enabled && m.next_run_at <= now)
+            .take(limit)
+            .cloned()
+            .collect())
+    }
+
+    async fn delete(&self, id: Uuid, org_id: Uuid) -> Result<bool, StorageError> {
+        let mut list = self.infrastructure_monitors.write().await;
+        let len_before = list.len();
+        list.retain(|m| !(m.id == id && m.organization_id == org_id));
+        Ok(list.len() < len_before)
+    }
 }
 
 #[cfg(test)]
@@ -1161,6 +1713,7 @@ mod tests {
                 observation_id: None,
                 description: "Evidence 1".to_string(),
             }],
+            organization_id: None,
         };
 
         FindingRepository::save(&storage, finding.clone())

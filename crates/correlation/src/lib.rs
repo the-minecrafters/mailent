@@ -2,8 +2,10 @@ use mailent_domain::{EmailSession, Finding, FindingCandidate};
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
+pub mod drift;
 pub mod posture;
 
+pub use drift::*;
 pub use posture::{PostureInput, build_guidance, compute_posture};
 
 /// Correlator responsible for converting low-level FindingCandidate records
@@ -61,6 +63,7 @@ impl FindingCorrelator {
                 first_seen: session.first_seen,
                 last_seen: session.last_seen,
                 evidence: all_evidence,
+                organization_id: None,
             });
         }
 
@@ -264,6 +267,7 @@ mod tests {
             first_seen: now,
             last_seen: now,
             evidence: vec![],
+            organization_id: None,
         };
 
         let anomaly = AnomalySignal {

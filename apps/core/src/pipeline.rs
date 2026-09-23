@@ -94,6 +94,9 @@ pub async fn process_observation(
                     new_value: tls_ver.to_string(),
                     observed_at: now,
                     session_id: Some(session.session_id),
+                    assessment_id: None,
+                    domain: None,
+                    organization_id: None,
                 });
                 a.tls_versions.push(tls_ver.clone());
             }
@@ -112,6 +115,9 @@ pub async fn process_observation(
                     new_value: cs.name.clone(),
                     observed_at: now,
                     session_id: Some(session.session_id),
+                    assessment_id: None,
+                    domain: None,
+                    organization_id: None,
                 });
                 a.cipher_suites.push(cs.name.clone());
             }
@@ -139,6 +145,9 @@ pub async fn process_observation(
                         new_value: "PFS Disabled".to_string(),
                         observed_at: now,
                         session_id: Some(session.session_id),
+                        assessment_id: None,
+                        domain: None,
+                        organization_id: None,
                     });
                 }
             }
@@ -159,6 +168,9 @@ pub async fn process_observation(
                     new_value: fp.clone(),
                     observed_at: now,
                     session_id: Some(session.session_id),
+                    assessment_id: None,
+                    domain: None,
+                    organization_id: None,
                 });
                 a.certificate_fingerprints.push(fp.clone());
 
@@ -173,6 +185,9 @@ pub async fn process_observation(
                         new_value: issuer.clone(),
                         observed_at: now,
                         session_id: Some(session.session_id),
+                        assessment_id: None,
+                        domain: None,
+                        organization_id: None,
                     });
                 }
             }
@@ -193,6 +208,9 @@ pub async fn process_observation(
                     new_value: format!("{protocol}:{port}"),
                     observed_at: now,
                     session_id: Some(session.session_id),
+                    assessment_id: None,
+                    domain: None,
+                    organization_id: None,
                 });
                 a.endpoints.push(AssetEndpoint {
                     protocol,
@@ -280,6 +298,7 @@ pub async fn process_observation(
                 active_findings_count: findings.len(),
                 first_seen: now,
                 last_seen: now,
+                organization_id: None,
             }
         }
     };

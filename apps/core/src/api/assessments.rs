@@ -1,18 +1,20 @@
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Extension, Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
-use mailent_domain::{AssessmentRecord, EmailProtocol, ProtocolEvidence, StartTlsState};
-use serde::Deserialize;
+use mailent_domain::{
+    AssessmentRecord, CaptureMetadata, EmailProtocol, ProtocolEvidence, StartTlsState,
+};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use time::OffsetDateTime;
 use tokio::process::Command;
 use uuid::Uuid;
 
-use crate::{pipeline::process_observation, state::AppState};
+use crate::{auth::ExecutionContext, pipeline::process_observation, state::AppState};
 
 #[derive(Debug, Deserialize)]
 pub struct AnalyzeCaptureRequest {
@@ -86,6 +88,7 @@ fn locate_zeek() -> PathBuf {
 
 pub async fn analyze_capture_handler(
     State(state): State<AppState>,
+    ctx: Option<Extension<ExecutionContext>>,
     Json(req): Json<AnalyzeCaptureRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     use base64::Engine;
@@ -375,28 +378,42 @@ pub async fn analyze_capture_handler(
         .map(|title| title.trim().chars().take(160).collect())
         .unwrap_or_else(|| capture_name.clone());
 
-    let assessment = AssessmentRecord {
-        id: Uuid::new_v4(),
-        title,
+    let capture_metadata = CaptureMetadata {
         capture_name,
         capture_hash,
         capture_size_bytes: file_size,
-        created_at: OffsetDateTime::now_utc(),
         time_range_start,
         time_range_end,
-        protocols_identified: protocols_set.into_iter().collect(),
+    };
+
+    let mut assessment = AssessmentRecord::new_capture(
+        Uuid::new_v4(),
+        title,
+        capture_metadata,
+        OffsetDateTime::now_utc(),
+        protocols_set.into_iter().collect(),
         protocol_evidence,
         session_ids,
         asset_ids,
         finding_ids,
-        posture_score: total_score,
-        posture_grade: grade.to_string(),
+        total_score,
+        grade.to_string(),
         evidence_gaps,
         ai_risk_classification,
         ai_risk_rationale,
-        ai_confidence: 0.0,
-        metadata: serde_json::json!({"risk_method": "policy_rules", "policy_name": state.policy_pack.name, "policy_version": state.policy_pack.version}),
-    };
+        0.0,
+        serde_json::json!({
+            "risk_method": "policy_rules",
+            "policy_name": state.policy_pack.name,
+            "policy_version": state.policy_pack.version,
+        }),
+    );
+
+    if let Some(Extension(ref c)) = ctx {
+        if let Some(org_id) = c.organization_id {
+            assessment = assessment.with_organization(org_id);
+        }
+    }
 
     // Save assessment to persistent storage
     state
@@ -411,26 +428,107 @@ pub async fn analyze_capture_handler(
     Ok((StatusCode::CREATED, Json(assessment)))
 }
 
-pub async fn list_assessments_handler(
+#[derive(Debug, Deserialize)]
+pub struct SyncAssessmentRequest {
+    pub client_sync_id: Option<String>,
+    pub assessment: AssessmentRecord,
+    #[serde(default)]
+    pub findings: Vec<mailent_domain::Finding>,
+    #[serde(default)]
+    pub assets: Vec<mailent_domain::Asset>,
+    #[serde(default)]
+    pub sessions: Vec<mailent_domain::EmailSession>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SyncAssessmentResponse {
+    pub synced: bool,
+    pub assessment_id: Uuid,
+    pub organization_id: Option<Uuid>,
+    pub findings_count: usize,
+    pub assets_count: usize,
+}
+
+pub async fn sync_assessment_handler(
     State(state): State<AppState>,
+    ctx: Option<Extension<ExecutionContext>>,
+    Json(mut req): Json<SyncAssessmentRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let list = state
+    let org_id = ctx
+        .as_ref()
+        .and_then(|Extension(c)| c.organization_id)
+        .or(req.assessment.organization_id);
+
+    if let Some(oid) = org_id {
+        req.assessment = req.assessment.with_organization(oid);
+        for finding in &mut req.findings {
+            finding.organization_id = Some(oid);
+        }
+        for asset in &mut req.assets {
+            asset.organization_id = Some(oid);
+        }
+    }
+
+    let assessment_id = req.assessment.id;
+    let findings_count = req.findings.len();
+    let assets_count = req.assets.len();
+
+    state
         .assessments
-        .list_all()
+        .save(&req.assessment)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    for finding in req.findings {
+        let _ = state.findings.save(finding).await;
+    }
+
+    for asset in req.assets {
+        let _ = state.assets.upsert(asset).await;
+    }
+
+    for session in req.sessions {
+        let _ = state.sessions.save(session).await;
+    }
+
+    Ok((
+        StatusCode::OK,
+        Json(SyncAssessmentResponse {
+            synced: true,
+            assessment_id,
+            organization_id: org_id,
+            findings_count,
+            assets_count,
+        }),
+    ))
+}
+
+pub async fn list_assessments_handler(
+    State(state): State<AppState>,
+    ctx: Option<Extension<ExecutionContext>>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let org_id = ctx.as_ref().and_then(|Extension(c)| c.organization_id);
+    let list = if let Some(org_id) = org_id {
+        state.assessments.list_for_org(org_id).await
+    } else {
+        state.assessments.list_all().await
+    }
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(list))
 }
 
 pub async fn get_assessment_handler(
     State(state): State<AppState>,
+    ctx: Option<Extension<ExecutionContext>>,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let assessment = state
-        .assessments
-        .find_by_id(id)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "Assessment not found".to_string()))?;
+    let org_id = ctx.as_ref().and_then(|Extension(c)| c.organization_id);
+    let assessment = if let Some(org_id) = org_id {
+        state.assessments.find_by_id_scoped(id, org_id).await
+    } else {
+        state.assessments.find_by_id(id).await
+    }
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    .ok_or_else(|| (StatusCode::NOT_FOUND, "Assessment not found".to_string()))?;
     Ok(Json(assessment))
 }

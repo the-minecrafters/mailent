@@ -71,4 +71,6 @@ pub struct Finding {
     #[serde(with = "time::serde::rfc3339")]
     pub last_seen: OffsetDateTime,
     pub evidence: Vec<EvidenceRef>,
+    #[serde(default)]
+    pub organization_id: Option<Uuid>,
 }

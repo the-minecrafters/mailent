@@ -53,6 +53,7 @@ async fn test_postgres_integration() {
         active_findings_count: 0,
         first_seen: now,
         last_seen: now,
+        organization_id: None,
     };
 
     AssetRepository::upsert(&storage, asset.clone())
@@ -107,6 +108,9 @@ async fn test_postgres_integration() {
         previous_value: Some("TLS 1.2".to_string()),
         new_value: "TLS 1.3".to_string(),
         session_id: Some(Uuid::new_v4()),
+        assessment_id: None,
+        domain: None,
+        organization_id: None,
         observed_at: now,
     };
     AssetRepository::save_drift_event(&storage, drift.clone())
@@ -156,6 +160,7 @@ async fn test_postgres_integration() {
         first_seen: now,
         last_seen: now,
         affected_count: 1,
+        organization_id: None,
     };
     FindingRepository::save(&storage, finding.clone())
         .await

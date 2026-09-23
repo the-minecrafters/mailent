@@ -364,4 +364,154 @@ pub trait AssessmentRepository: Send + Sync {
         id: Uuid,
     ) -> Result<Option<mailent_domain::AssessmentRecord>, StorageError>;
     async fn list_all(&self) -> Result<Vec<mailent_domain::AssessmentSummary>, StorageError>;
+    async fn list_for_org(
+        &self,
+        organization_id: Uuid,
+    ) -> Result<Vec<mailent_domain::AssessmentSummary>, StorageError>;
+    async fn find_by_id_scoped(
+        &self,
+        id: Uuid,
+        organization_id: Uuid,
+    ) -> Result<Option<mailent_domain::AssessmentRecord>, StorageError>;
+}
+
+#[async_trait]
+pub trait OrganizationRepository: Send + Sync {
+    async fn find_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<mailent_domain::Organization>, StorageError>;
+    async fn find_by_slug(
+        &self,
+        slug: &str,
+    ) -> Result<Option<mailent_domain::Organization>, StorageError>;
+    async fn list_for_user(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<mailent_domain::Organization>, StorageError>;
+    async fn save(&self, org: &mailent_domain::Organization) -> Result<(), StorageError>;
+    async fn add_member(
+        &self,
+        member: &mailent_domain::OrganizationMember,
+    ) -> Result<(), StorageError>;
+    async fn get_member(
+        &self,
+        organization_id: Uuid,
+        user_id: &str,
+    ) -> Result<Option<mailent_domain::OrganizationMember>, StorageError>;
+}
+
+#[async_trait]
+pub trait DeviceRepository: Send + Sync {
+    async fn save_device(&self, device: &mailent_domain::Device) -> Result<(), StorageError>;
+    async fn find_device_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<mailent_domain::Device>, StorageError>;
+    async fn list_devices_for_org(
+        &self,
+        organization_id: Uuid,
+    ) -> Result<Vec<mailent_domain::Device>, StorageError>;
+    async fn revoke_device(&self, id: Uuid) -> Result<(), StorageError>;
+    async fn create_challenge(
+        &self,
+        challenge: &mailent_domain::DeviceAuthorizationChallenge,
+    ) -> Result<(), StorageError>;
+    async fn get_challenge(
+        &self,
+        code: &str,
+    ) -> Result<Option<mailent_domain::DeviceAuthorizationChallenge>, StorageError>;
+    async fn approve_challenge(
+        &self,
+        code: &str,
+        user_id: &str,
+        org_id: Uuid,
+        device_token: &str,
+        device_id: Uuid,
+    ) -> Result<(), StorageError>;
+    async fn save_device_token(
+        &self,
+        token_hash: &str,
+        device_id: Uuid,
+        org_id: Uuid,
+    ) -> Result<(), StorageError>;
+    async fn validate_device_token(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<(mailent_domain::Device, Uuid)>, StorageError>;
+    async fn revoke_device_token(&self, token_hash: &str) -> Result<(), StorageError>;
+    async fn heartbeat(
+        &self,
+        device_id: Uuid,
+        version: Option<String>,
+        capabilities: Vec<String>,
+        status: String,
+        now: time::OffsetDateTime,
+    ) -> Result<(), StorageError>;
+    async fn update_agent_status(
+        &self,
+        device_id: Uuid,
+        status: Option<String>,
+        current_job_id: Option<Uuid>,
+        increment_completed: bool,
+    ) -> Result<(), StorageError>;
+}
+
+#[async_trait]
+pub trait JobRepository: Send + Sync {
+    async fn create_job(&self, job: &mailent_domain::AgentJob) -> Result<(), StorageError>;
+    async fn find_by_id(&self, id: Uuid) -> Result<Option<mailent_domain::AgentJob>, StorageError>;
+    async fn find_by_idempotency_key(
+        &self,
+        org_id: Uuid,
+        key: &str,
+    ) -> Result<Option<mailent_domain::AgentJob>, StorageError>;
+    async fn lease_next_job(
+        &self,
+        agent_id: Uuid,
+        org_id: Uuid,
+        now: time::OffsetDateTime,
+        lease_duration_secs: u64,
+    ) -> Result<Option<mailent_domain::AgentJob>, StorageError>;
+    async fn lease_next_cloud_job(
+        &self,
+        now: time::OffsetDateTime,
+        lease_duration_secs: u64,
+    ) -> Result<Option<mailent_domain::AgentJob>, StorageError>;
+    async fn update_job(&self, job: &mailent_domain::AgentJob) -> Result<(), StorageError>;
+    async fn recover_expired_leases(&self, now: time::OffsetDateTime) -> Result<u64, StorageError>;
+    async fn list_for_org(
+        &self,
+        org_id: Uuid,
+        limit: usize,
+    ) -> Result<Vec<mailent_domain::AgentJob>, StorageError>;
+    async fn count_active_for_org(&self, org_id: Uuid) -> Result<usize, StorageError>;
+    async fn count_active_for_agent(&self, agent_id: Uuid) -> Result<usize, StorageError>;
+}
+
+#[async_trait]
+pub trait MonitorRepository: Send + Sync {
+    async fn save(
+        &self,
+        monitor: &mailent_domain::InfrastructureMonitor,
+    ) -> Result<(), StorageError>;
+    async fn find_by_id(
+        &self,
+        id: Uuid,
+    ) -> Result<Option<mailent_domain::InfrastructureMonitor>, StorageError>;
+    async fn find_by_domain(
+        &self,
+        org_id: Uuid,
+        domain: &str,
+    ) -> Result<Option<mailent_domain::InfrastructureMonitor>, StorageError>;
+    async fn list_for_org(
+        &self,
+        org_id: Uuid,
+    ) -> Result<Vec<mailent_domain::InfrastructureMonitor>, StorageError>;
+    async fn find_due_monitors(
+        &self,
+        now: time::OffsetDateTime,
+        limit: usize,
+    ) -> Result<Vec<mailent_domain::InfrastructureMonitor>, StorageError>;
+    async fn delete(&self, id: Uuid, org_id: Uuid) -> Result<bool, StorageError>;
 }

@@ -80,12 +80,17 @@ pub async fn analyze(
     )
     .await?;
     let version = run(&zeek, &["--version"], work.path()).await?;
-    let zeek_version = String::from_utf8_lossy(&version.stdout).trim().to_string();
-    if !zeek_version.starts_with("zeek version ") {
-        return Err(SensorError::Zeek(
-            "executable did not identify itself as Zeek".into(),
-        ));
+    let raw_version = String::from_utf8_lossy(&version.stdout).trim().to_string();
+    if !(raw_version.to_lowercase().contains("zeek") && raw_version.contains("version")) {
+        return Err(SensorError::Zeek(format!(
+            "executable did not identify itself as Zeek (got: '{raw_version}')"
+        )));
     }
+    let zeek_version = if let Some(idx) = raw_version.find("version ") {
+        format!("zeek {}", &raw_version[idx..])
+    } else {
+        raw_version
+    };
     let mut args = vec!["-b", "-D", "-r", "capture.pcap", "mailent"];
     if ignore_checksums {
         args.push("-C");

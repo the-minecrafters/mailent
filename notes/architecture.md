@@ -808,3 +808,60 @@ The domain model and event schemas do not change between phases.
 8. no service split without a scaling, locality or trust-boundary reason.
 9. every finding must be reproducible from evidence + rule/model versions.
 10. "unknown" is better than invented certainty.
+
+## 28. generalized assessment & infrastructure scanning architecture
+
+### assessment source duality
+
+Assessments are first-class persistent security records (`AssessmentRecord`) originating from two distinct evidence modalities:
+
+```text
+                    ┌────────────────────────┐
+                    │    AssessmentRecord    │
+                    └───────────┬────────────┘
+                                │
+               ┌────────────────┴────────────────┐
+               │                                 │
+               ▼                                 ▼
+   AssessmentSource::Capture         AssessmentSource::Infrastructure
+   - capture_name                    - target_domain
+   - capture_hash                    - discovered_endpoints
+   - capture_size_bytes              - discovery_evidence (MX, SRV)
+   - time_range_start/end            - scan_start / scan_end
+```
+
+Both share the canonical evaluation philosophy:
+- deterministic policy rule candidates (`mailent-policy`)
+- session correlation (`mailent-correlation`)
+- deterministic 0..100 posture scoring and deductions (`compute_posture`)
+- evidence-backed remediation playbooks (`build_guidance`)
+- canonical forensic reports rendered identically across JSON, HTML, and PDF (`mailent-reporting`)
+
+### library boundaries & zero-spawn architecture
+
+Components interact as native Rust library crates without shelling out between Mailent executables:
+
+```text
+                      ┌──────────────────────┐
+                      │     mailent CLI      │
+                      └───────┬──────────┬───┘
+                              │          │
+                 ┌────────────┘          └────────────┐
+                 ▼                                    ▼
+       mailent-sensor (lib)                 mailent-scanner (lib)
+        └── zeek 8.0.4 binary                ├── mailent-probe (lib)
+                                             ├── mailent-integrations (DNS/DoH)
+                                             ├── mailent-policy (lib)
+                                             └── mailent-correlation (lib)
+```
+
+1. **Capture Analysis**: `mailent-sensor` exposes `analyze::analyze(capture, zeek, sensor_id, ignore_checksums)` as an async library call. Zeek remains the only external process dependency for protocol dissections.
+2. **Infrastructure Scanning**: `crates/scanner` (`mailent-scanner`) accepts a target domain and performs bounded RFC-compliant mail discovery (MX, RFC 7505 Null MX, RFC 6186 SRV for submission/IMAP/POP3), active probing via `mailent-probe` as a direct Rust library, and external policy correlation (MTA-STS, DANE, TLS-RPT, DNSSEC).
+3. **Unified CLI**: `apps/cli` compiles the single user-facing `mailent` binary supporting `mailent analyze <pcap>` and `mailent scan <domain>` with human-readable tables and machine-readable `--format json`.
+
+### future boundaries (next phase)
+
+The following components are deferred to future slices:
+- Multi-tenancy and organization data model (`organization_id` foreign keys)
+- Agent token enrollment and device registration (`mailent login`, `mailent agent install`)
+- Background scheduled reassessments and automated drift alarms across infrastructure domains

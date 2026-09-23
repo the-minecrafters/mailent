@@ -11,6 +11,8 @@ pub enum IntegrationEventType {
     VerificationCompleted,
     RemediationVerified,
     VerificationFailed,
+    InfrastructureDriftDetected,
+    SecurityRegressionDetected,
 }
 
 impl std::fmt::Display for IntegrationEventType {
@@ -21,6 +23,8 @@ impl std::fmt::Display for IntegrationEventType {
             Self::VerificationCompleted => write!(f, "verification_completed"),
             Self::RemediationVerified => write!(f, "remediation_verified"),
             Self::VerificationFailed => write!(f, "verification_failed"),
+            Self::InfrastructureDriftDetected => write!(f, "infrastructure_drift_detected"),
+            Self::SecurityRegressionDetected => write!(f, "security_regression_detected"),
         }
     }
 }
@@ -103,8 +107,10 @@ impl IntegrationEventPayload {
     pub fn to_cef(&self) -> String {
         let severity = match self.event_type {
             IntegrationEventType::FindingConfirmed => "8",
+            IntegrationEventType::SecurityRegressionDetected => "8",
             IntegrationEventType::VerificationFailed => "7",
             IntegrationEventType::InvestigationCreated => "6",
+            IntegrationEventType::InfrastructureDriftDetected => "4",
             IntegrationEventType::VerificationCompleted => "3",
             IntegrationEventType::RemediationVerified => "1",
         };

@@ -15,8 +15,8 @@ export function AuthPage({
   onSkip?: () => void;
 }) {
   const [mode, setMode] = useState<"password" | "otp">("password");
-  const [email, setEmail] = useState("seadeepie@gmail.com");
-  const [password, setPassword] = useState("Mailent2026!");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
   const [error, setError] = useState("");
@@ -100,7 +100,7 @@ export function AuthPage({
                 id="sign-in-email"
                 type="email"
                 autoComplete="email"
-                placeholder="seadeepie@gmail.com"
+                placeholder="you@example.com"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -122,16 +122,37 @@ export function AuthPage({
               />
             </div>
 
-            <Button type="submit" disabled={busy} style={{ width: "100%", marginTop: "0.5rem" }}>
+            <Button
+              type="submit"
+              disabled={busy}
+              style={{ width: "100%", marginTop: "0.5rem" }}
+            >
               {busy ? "Signing in…" : "Sign in (Persistent Storage)"}
             </Button>
 
-            <div style={{ marginTop: "0.75rem", display: "flex", justifyContent: "space-between", fontSize: "0.8125rem" }}>
+            <div
+              style={{
+                marginTop: "0.75rem",
+                display: "flex",
+                justifyContent: "space-between",
+                fontSize: "0.8125rem",
+              }}
+            >
               <button
                 type="button"
                 className="btn-link"
-                style={{ background: "none", border: "none", color: "var(--ink-secondary)", cursor: "pointer", textDecoration: "underline", padding: 0 }}
-                onClick={() => { setMode("otp"); setError(""); }}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "var(--ink-secondary)",
+                  cursor: "pointer",
+                  textDecoration: "underline",
+                  padding: 0,
+                }}
+                onClick={() => {
+                  setMode("otp");
+                  setError("");
+                }}
               >
                 Sign in with magic link
               </button>
@@ -145,7 +166,7 @@ export function AuthPage({
                 id="sign-in-email"
                 type="email"
                 autoComplete="email"
-                placeholder="seadeepie@gmail.com"
+                placeholder="you@example.com"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -153,16 +174,36 @@ export function AuthPage({
               />
             </div>
 
-            <Button type="submit" disabled={busy} style={{ width: "100%", marginTop: "0.5rem" }}>
+            <Button
+              type="submit"
+              disabled={busy}
+              style={{ width: "100%", marginTop: "0.5rem" }}
+            >
               {busy ? "Sending magic link…" : "Send sign-in link"}
             </Button>
 
-            <div style={{ marginTop: "0.75rem", textAlign: "center", fontSize: "0.8125rem" }}>
+            <div
+              style={{
+                marginTop: "0.75rem",
+                textAlign: "center",
+                fontSize: "0.8125rem",
+              }}
+            >
               <button
                 type="button"
                 className="btn-link"
-                style={{ background: "none", border: "none", color: "var(--ink-secondary)", cursor: "pointer", textDecoration: "underline", padding: 0 }}
-                onClick={() => { setMode("password"); setError(""); }}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "var(--ink-secondary)",
+                  cursor: "pointer",
+                  textDecoration: "underline",
+                  padding: 0,
+                }}
+                onClick={() => {
+                  setMode("password");
+                  setError("");
+                }}
               >
                 Back to password sign-in
               </button>
@@ -171,7 +212,11 @@ export function AuthPage({
         )}
 
         {error && (
-          <p role="alert" className="error-message" style={{ marginTop: "1rem" }}>
+          <p
+            role="alert"
+            className="error-message"
+            style={{ marginTop: "1rem" }}
+          >
             {error}
           </p>
         )}
@@ -194,7 +239,11 @@ export function AuthPage({
             </Button>
             <p
               className="secondary-text"
-              style={{ marginTop: "0.5rem", fontSize: "0.75rem", lineHeight: 1.4 }}
+              style={{
+                marginTop: "0.5rem",
+                fontSize: "0.75rem",
+                lineHeight: 1.4,
+              }}
             >
               Inspect sessions, evaluate rules, and analyze captures in-memory.
               Evidence is not persisted to PostgreSQL.

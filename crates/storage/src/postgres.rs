@@ -1,11 +1,13 @@
 use async_trait::async_trait;
 use mailent_domain::{
-    AnomalySignal, AssessmentRecord, AssessmentSummary, Asset, AssetBaseline, AssetEndpoint,
-    AssetIdentity, CertificateRecord, CtCertificateRecord, CtIntelligenceEvent,
-    CtIntelligenceEventKind, DecisionRecord, DecisionResult, DnssecState, DriftEvent, DriftKind,
-    EmailProtocol, EvidenceRef, Finding, FindingCategory, FindingSeverity,
-    IntelligenceRefreshStatus, Investigation, InvestigationStatus, MtaStsMode, MtaStsPolicy,
-    MxRecord, PerspectiveMismatch, PriorityLevel, ProbeOutcome, ProbeResult, ProbeRun,
+    AgentJob, AgentJobType, AnomalySignal, AssessmentRecord, AssessmentSource, AssessmentSummary,
+    Asset, AssetBaseline, AssetEndpoint, AssetIdentity, CaptureMetadata, CertificateRecord,
+    CtCertificateRecord, CtIntelligenceEvent, CtIntelligenceEventKind, DecisionRecord,
+    DecisionResult, Device, DeviceAuthorizationChallenge, DnssecState, DriftEvent, DriftKind,
+    EmailProtocol, EvidenceRef, Finding, FindingCategory, FindingSeverity, InfrastructureMonitor,
+    IntelligenceRefreshStatus, Investigation, InvestigationStatus, JobExecutionTarget, JobState,
+    MonitorCadence, MonitorExecutionTarget, MtaStsMode, MtaStsPolicy, MxRecord, Organization,
+    OrganizationMember, PerspectiveMismatch, PriorityLevel, ProbeOutcome, ProbeResult, ProbeRun,
     ProbeTrigger, RiskLevel, SensorHeartbeat, SensorRecord, SensorStatus, TlsRptAggregateReport,
     TlsRptPolicy, TlsVersion, TlsaRecord, TrainingRecord,
 };
@@ -18,8 +20,9 @@ use crate::{
     error::StorageError,
     repository::{
         ArchivedReportRepository, AssessmentRepository, AssetRepository, BaselineRepository,
-        CertificateRepository, DecisionRepository, FindingRepository, IntegrationRepository,
-        IntelligenceRepository, InvestigationRepository, PostureRepository, ProbeRepository,
+        CertificateRepository, DecisionRepository, DeviceRepository, FindingRepository,
+        IntegrationRepository, IntelligenceRepository, InvestigationRepository, JobRepository,
+        MonitorRepository, OrganizationRepository, PostureRepository, ProbeRepository,
         SensorRepository, TrainingRecordRepository,
     },
 };
@@ -83,7 +86,7 @@ impl PostgresStorage {
 impl AssetRepository for PostgresStorage {
     async fn find_by_id(&self, id: Uuid) -> Result<Option<Asset>, StorageError> {
         let row = sqlx::query(
-            "SELECT id, primary_name, addresses, hostnames, tls_versions, cipher_suites, certificate_fingerprints, active_findings_count, first_seen, last_seen FROM assets WHERE id = $1"
+            "SELECT id, primary_name, addresses, hostnames, tls_versions, cipher_suites, certificate_fingerprints, active_findings_count, first_seen, last_seen, organization_id FROM assets WHERE id = $1"
         )
         .bind(id)
         .fetch_optional(&*self.pool)
@@ -114,6 +117,7 @@ impl AssetRepository for PostgresStorage {
             active_findings_count: row.get::<i32, _>("active_findings_count") as usize,
             first_seen: row.get("first_seen"),
             last_seen: row.get("last_seen"),
+            organization_id: row.try_get("organization_id").ok(),
         }))
     }
 
@@ -222,7 +226,7 @@ impl AssetRepository for PostgresStorage {
 
     async fn list_all(&self) -> Result<Vec<Asset>, StorageError> {
         let rows = sqlx::query(
-            "SELECT id, primary_name, addresses, hostnames, tls_versions, cipher_suites, certificate_fingerprints, active_findings_count, first_seen, last_seen FROM assets ORDER BY last_seen DESC"
+            "SELECT id, primary_name, addresses, hostnames, tls_versions, cipher_suites, certificate_fingerprints, active_findings_count, first_seen, last_seen, organization_id FROM assets ORDER BY last_seen DESC"
         )
         .fetch_all(&*self.pool)
         .await
@@ -249,6 +253,7 @@ impl AssetRepository for PostgresStorage {
                 active_findings_count: row.get::<i32, _>("active_findings_count") as usize,
                 first_seen: row.get("first_seen"),
                 last_seen: row.get("last_seen"),
+                organization_id: row.try_get("organization_id").ok(),
             });
         }
         Ok(assets)
@@ -309,6 +314,9 @@ impl AssetRepository for PostgresStorage {
                 new_value: r.get("new_value"),
                 observed_at: r.get("observed_at"),
                 session_id: r.get("session_id"),
+                assessment_id: r.try_get("assessment_id").ok(),
+                domain: r.try_get("domain").ok(),
+                organization_id: r.try_get("organization_id").ok(),
             })
             .collect();
         Ok(events)
@@ -698,6 +706,7 @@ impl FindingRepository for PostgresStorage {
                 first_seen: row.get("first_seen"),
                 last_seen: row.get("last_seen"),
                 evidence,
+                organization_id: row.try_get("organization_id").ok(),
             });
         }
         Ok(findings)
@@ -705,7 +714,7 @@ impl FindingRepository for PostgresStorage {
 
     async fn find_by_id(&self, id: Uuid) -> Result<Option<Finding>, StorageError> {
         let row = sqlx::query(
-            "SELECT id, rule_id, policy_name, policy_version, reference, severity, category, title, description, remediation, affected_count, first_seen, last_seen FROM findings WHERE id = $1"
+            "SELECT id, rule_id, policy_name, policy_version, reference, severity, category, title, description, remediation, affected_count, first_seen, last_seen, organization_id FROM findings WHERE id = $1"
         )
         .bind(id)
         .fetch_optional(&*self.pool)
@@ -733,12 +742,13 @@ impl FindingRepository for PostgresStorage {
             first_seen: row.get("first_seen"),
             last_seen: row.get("last_seen"),
             evidence,
+            organization_id: row.try_get("organization_id").ok(),
         }))
     }
 
     async fn list_for_session(&self, session_id: Uuid) -> Result<Vec<Finding>, StorageError> {
         let rows = sqlx::query(
-            r#"SELECT DISTINCT f.id, f.rule_id, f.policy_name, f.policy_version, f.reference, f.severity, f.category, f.title, f.description, f.remediation, f.affected_count, f.first_seen, f.last_seen
+            r#"SELECT DISTINCT f.id, f.rule_id, f.policy_name, f.policy_version, f.reference, f.severity, f.category, f.title, f.description, f.remediation, f.affected_count, f.first_seen, f.last_seen, f.organization_id
                FROM findings f
                JOIN finding_evidence fe ON f.id = fe.finding_id
                WHERE fe.session_id = $1
@@ -768,6 +778,7 @@ impl FindingRepository for PostgresStorage {
                 first_seen: row.get("first_seen"),
                 last_seen: row.get("last_seen"),
                 evidence,
+                organization_id: row.try_get("organization_id").ok(),
             });
         }
         Ok(findings)
@@ -775,7 +786,7 @@ impl FindingRepository for PostgresStorage {
 
     async fn list_for_asset(&self, asset_id: Uuid) -> Result<Vec<Finding>, StorageError> {
         let rows = sqlx::query(
-            "SELECT id, rule_id, policy_name, policy_version, reference, severity, category, title, description, remediation, affected_count, first_seen, last_seen FROM findings WHERE asset_id = $1 ORDER BY last_seen DESC"
+            "SELECT id, rule_id, policy_name, policy_version, reference, severity, category, title, description, remediation, affected_count, first_seen, last_seen, organization_id FROM findings WHERE asset_id = $1 ORDER BY last_seen DESC"
         )
         .bind(asset_id)
         .fetch_all(&*self.pool)
@@ -801,6 +812,7 @@ impl FindingRepository for PostgresStorage {
                 first_seen: row.get("first_seen"),
                 last_seen: row.get("last_seen"),
                 evidence,
+                organization_id: row.try_get("organization_id").ok(),
             });
         }
         Ok(findings)
@@ -859,6 +871,24 @@ fn drift_kind_to_string(kind: &DriftKind) -> &'static str {
         DriftKind::CertificateChanged => "certificate_changed",
         DriftKind::NewCertificateIssuer => "new_certificate_issuer",
         DriftKind::NewEndpoint => "new_endpoint",
+        DriftKind::MxAdded => "mx_added",
+        DriftKind::MxRemoved => "mx_removed",
+        DriftKind::EndpointAdded => "endpoint_added",
+        DriftKind::EndpointRemoved => "endpoint_removed",
+        DriftKind::StartTlsLost => "starttls_lost",
+        DriftKind::StartTlsRestored => "starttls_restored",
+        DriftKind::LegacyTlsEnabled => "legacy_tls_enabled",
+        DriftKind::LegacyTlsDisabled => "legacy_tls_disabled",
+        DriftKind::ForwardSecrecyRestored => "forward_secrecy_restored",
+        DriftKind::CertificateExpired => "certificate_expired",
+        DriftKind::CertificateRenewed => "certificate_renewed",
+        DriftKind::CertificateTrustChanged => "certificate_trust_changed",
+        DriftKind::MtaStsChanged => "mta_sts_changed",
+        DriftKind::DaneChanged => "dane_changed",
+        DriftKind::TlsRptChanged => "tls_rpt_changed",
+        DriftKind::FindingIntroduced => "finding_introduced",
+        DriftKind::FindingResolved => "finding_resolved",
+        DriftKind::PostureChanged => "posture_changed",
     }
 }
 
@@ -871,6 +901,24 @@ fn parse_drift_kind(s: String) -> DriftKind {
         "certificate_changed" => DriftKind::CertificateChanged,
         "new_certificate_issuer" => DriftKind::NewCertificateIssuer,
         "new_endpoint" => DriftKind::NewEndpoint,
+        "mx_added" => DriftKind::MxAdded,
+        "mx_removed" => DriftKind::MxRemoved,
+        "endpoint_added" => DriftKind::EndpointAdded,
+        "endpoint_removed" => DriftKind::EndpointRemoved,
+        "starttls_lost" => DriftKind::StartTlsLost,
+        "starttls_restored" => DriftKind::StartTlsRestored,
+        "legacy_tls_enabled" => DriftKind::LegacyTlsEnabled,
+        "legacy_tls_disabled" => DriftKind::LegacyTlsDisabled,
+        "forward_secrecy_restored" => DriftKind::ForwardSecrecyRestored,
+        "certificate_expired" => DriftKind::CertificateExpired,
+        "certificate_renewed" => DriftKind::CertificateRenewed,
+        "certificate_trust_changed" => DriftKind::CertificateTrustChanged,
+        "mta_sts_changed" => DriftKind::MtaStsChanged,
+        "dane_changed" => DriftKind::DaneChanged,
+        "tls_rpt_changed" => DriftKind::TlsRptChanged,
+        "finding_introduced" => DriftKind::FindingIntroduced,
+        "finding_resolved" => DriftKind::FindingResolved,
+        "posture_changed" => DriftKind::PostureChanged,
         _ => DriftKind::NewTlsVersion,
     }
 }
@@ -2783,6 +2831,8 @@ impl AssessmentRepository for PostgresStorage {
             .map_err(|e| StorageError::Backend(e.to_string()))?;
         let evidence_gaps_json = serde_json::to_value(&assessment.evidence_gaps)
             .map_err(|e| StorageError::Backend(e.to_string()))?;
+        let source_json = serde_json::to_value(&assessment.source)
+            .map_err(|e| StorageError::Backend(e.to_string()))?;
 
         sqlx::query(
             r#"
@@ -2791,12 +2841,13 @@ impl AssessmentRepository for PostgresStorage {
                 created_at, time_range_start, time_range_end,
                 protocols_identified, protocol_evidence, session_ids, asset_ids, finding_ids,
                 posture_score, posture_grade, evidence_gaps,
-                ai_risk_classification, ai_risk_rationale, ai_confidence, metadata
+                ai_risk_classification, ai_risk_rationale, ai_confidence, metadata, source, organization_id
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
             )
             ON CONFLICT (id) DO UPDATE SET
                 title = EXCLUDED.title,
+                source = EXCLUDED.source,
                 protocols_identified = EXCLUDED.protocols_identified,
                 protocol_evidence = EXCLUDED.protocol_evidence,
                 session_ids = EXCLUDED.session_ids,
@@ -2808,7 +2859,8 @@ impl AssessmentRepository for PostgresStorage {
                 ai_risk_classification = EXCLUDED.ai_risk_classification,
                 ai_risk_rationale = EXCLUDED.ai_risk_rationale,
                 ai_confidence = EXCLUDED.ai_confidence,
-                metadata = EXCLUDED.metadata
+                metadata = EXCLUDED.metadata,
+                organization_id = EXCLUDED.organization_id
             "#
         )
         .bind(assessment.id)
@@ -2831,6 +2883,8 @@ impl AssessmentRepository for PostgresStorage {
         .bind(&assessment.ai_risk_rationale)
         .bind(assessment.ai_confidence)
         .bind(&assessment.metadata)
+        .bind(source_json)
+        .bind(assessment.organization_id)
         .execute(&*self.pool)
         .await
         .map_err(|e| StorageError::Backend(format!("save assessment error: {e}")))?;
@@ -2845,7 +2899,7 @@ impl AssessmentRepository for PostgresStorage {
                    created_at, time_range_start, time_range_end,
                    protocols_identified, protocol_evidence, session_ids, asset_ids, finding_ids,
                    posture_score, posture_grade, evidence_gaps,
-                   ai_risk_classification, ai_risk_rationale, ai_confidence, metadata
+                   ai_risk_classification, ai_risk_rationale, ai_confidence, metadata, source, organization_id
             FROM assessments
             WHERE id = $1
             "#,
@@ -2866,16 +2920,40 @@ impl AssessmentRepository for PostgresStorage {
         let finding_ids: serde_json::Value = row.get("finding_ids");
         let evidence_gaps: serde_json::Value = row.get("evidence_gaps");
         let size_bytes: i64 = row.get("capture_size_bytes");
+        let capture_name: String = row.get("capture_name");
+        let capture_hash: String = row.get("capture_hash");
+        let time_range_start: Option<OffsetDateTime> = row.get("time_range_start");
+        let time_range_end: Option<OffsetDateTime> = row.get("time_range_end");
+
+        let source: AssessmentSource = match row.try_get::<serde_json::Value, _>("source") {
+            Ok(val) if !val.is_null() => serde_json::from_value(val).unwrap_or_else(|_| {
+                AssessmentSource::Capture(CaptureMetadata {
+                    capture_name: capture_name.clone(),
+                    capture_hash: capture_hash.clone(),
+                    capture_size_bytes: size_bytes as u64,
+                    time_range_start,
+                    time_range_end,
+                })
+            }),
+            _ => AssessmentSource::Capture(CaptureMetadata {
+                capture_name: capture_name.clone(),
+                capture_hash: capture_hash.clone(),
+                capture_size_bytes: size_bytes as u64,
+                time_range_start,
+                time_range_end,
+            }),
+        };
 
         Ok(Some(AssessmentRecord {
             id: row.get("id"),
             title: row.get("title"),
-            capture_name: row.get("capture_name"),
-            capture_hash: row.get("capture_hash"),
+            source,
+            capture_name,
+            capture_hash,
             capture_size_bytes: size_bytes as u64,
             created_at: row.get("created_at"),
-            time_range_start: row.get("time_range_start"),
-            time_range_end: row.get("time_range_end"),
+            time_range_start,
+            time_range_end,
             protocols_identified: serde_json::from_value(protocols).unwrap_or_default(),
             protocol_evidence: serde_json::from_value(protocol_evidence).unwrap_or_default(),
             session_ids: serde_json::from_value(session_ids).unwrap_or_default(),
@@ -2888,7 +2966,20 @@ impl AssessmentRepository for PostgresStorage {
             ai_risk_rationale: row.get("ai_risk_rationale"),
             ai_confidence: row.get("ai_confidence"),
             metadata: row.get("metadata"),
+            organization_id: row.get("organization_id"),
         }))
+    }
+
+    async fn find_by_id_scoped(
+        &self,
+        id: Uuid,
+        organization_id: Uuid,
+    ) -> Result<Option<AssessmentRecord>, StorageError> {
+        let assessment = AssessmentRepository::find_by_id(self, id).await?;
+        match assessment {
+            Some(a) if a.organization_id == Some(organization_id) => Ok(Some(a)),
+            _ => Ok(None),
+        }
     }
 
     async fn list_all(&self) -> Result<Vec<AssessmentSummary>, StorageError> {
@@ -2896,7 +2987,7 @@ impl AssessmentRepository for PostgresStorage {
             r#"
             SELECT id, title, capture_name, capture_hash, capture_size_bytes,
                    created_at, protocols_identified, session_ids, finding_ids,
-                   posture_score, posture_grade, ai_risk_classification
+                   posture_score, posture_grade, ai_risk_classification, source, organization_id
             FROM assessments
             ORDER BY created_at DESC
             "#,
@@ -2911,14 +3002,30 @@ impl AssessmentRepository for PostgresStorage {
             let session_ids: serde_json::Value = row.get("session_ids");
             let finding_ids: serde_json::Value = row.get("finding_ids");
             let size_bytes: i64 = row.get("capture_size_bytes");
+            let capture_name: String = row.get("capture_name");
 
             let s_ids: Vec<Uuid> = serde_json::from_value(session_ids).unwrap_or_default();
             let f_ids: Vec<Uuid> = serde_json::from_value(finding_ids).unwrap_or_default();
 
+            let (source_type, target) = match row.try_get::<serde_json::Value, _>("source") {
+                Ok(val) if !val.is_null() => {
+                    match serde_json::from_value::<AssessmentSource>(val) {
+                        Ok(AssessmentSource::Capture(c)) => ("capture".to_string(), c.capture_name),
+                        Ok(AssessmentSource::Infrastructure(i)) => {
+                            ("infrastructure".to_string(), i.target_domain)
+                        }
+                        Err(_) => ("capture".to_string(), capture_name.clone()),
+                    }
+                }
+                _ => ("capture".to_string(), capture_name.clone()),
+            };
+
             list.push(AssessmentSummary {
                 id: row.get("id"),
                 title: row.get("title"),
-                capture_name: row.get("capture_name"),
+                source_type,
+                target,
+                capture_name,
                 capture_hash: row.get("capture_hash"),
                 capture_size_bytes: size_bytes as u64,
                 created_at: row.get("created_at"),
@@ -2928,8 +3035,1160 @@ impl AssessmentRepository for PostgresStorage {
                 posture_score: row.get("posture_score"),
                 posture_grade: row.get("posture_grade"),
                 ai_risk_classification: row.get("ai_risk_classification"),
+                organization_id: row.get("organization_id"),
             });
         }
         Ok(list)
     }
+
+    async fn list_for_org(
+        &self,
+        organization_id: Uuid,
+    ) -> Result<Vec<AssessmentSummary>, StorageError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, title, capture_name, capture_hash, capture_size_bytes,
+                   created_at, protocols_identified, session_ids, finding_ids,
+                   posture_score, posture_grade, ai_risk_classification, source, organization_id
+            FROM assessments
+            WHERE organization_id = $1
+            ORDER BY created_at DESC
+            "#,
+        )
+        .bind(organization_id)
+        .fetch_all(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("list assessments for org error: {e}")))?;
+
+        let mut list = Vec::new();
+        for row in rows {
+            let protocols: serde_json::Value = row.get("protocols_identified");
+            let session_ids: serde_json::Value = row.get("session_ids");
+            let finding_ids: serde_json::Value = row.get("finding_ids");
+            let size_bytes: i64 = row.get("capture_size_bytes");
+            let capture_name: String = row.get("capture_name");
+
+            let s_ids: Vec<Uuid> = serde_json::from_value(session_ids).unwrap_or_default();
+            let f_ids: Vec<Uuid> = serde_json::from_value(finding_ids).unwrap_or_default();
+
+            let (source_type, target) = match row.try_get::<serde_json::Value, _>("source") {
+                Ok(val) if !val.is_null() => {
+                    match serde_json::from_value::<AssessmentSource>(val) {
+                        Ok(AssessmentSource::Capture(c)) => ("capture".to_string(), c.capture_name),
+                        Ok(AssessmentSource::Infrastructure(i)) => {
+                            ("infrastructure".to_string(), i.target_domain)
+                        }
+                        Err(_) => ("capture".to_string(), capture_name.clone()),
+                    }
+                }
+                _ => ("capture".to_string(), capture_name.clone()),
+            };
+
+            list.push(AssessmentSummary {
+                id: row.get("id"),
+                title: row.get("title"),
+                source_type,
+                target,
+                capture_name,
+                capture_hash: row.get("capture_hash"),
+                capture_size_bytes: size_bytes as u64,
+                created_at: row.get("created_at"),
+                protocols_identified: serde_json::from_value(protocols).unwrap_or_default(),
+                session_count: s_ids.len(),
+                finding_count: f_ids.len(),
+                posture_score: row.get("posture_score"),
+                posture_grade: row.get("posture_grade"),
+                ai_risk_classification: row.get("ai_risk_classification"),
+                organization_id: row.get("organization_id"),
+            });
+        }
+        Ok(list)
+    }
+}
+
+#[async_trait]
+impl OrganizationRepository for PostgresStorage {
+    async fn find_by_id(&self, id: Uuid) -> Result<Option<Organization>, StorageError> {
+        let row = sqlx::query("SELECT id, name, slug, created_at FROM organizations WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&*self.pool)
+            .await
+            .map_err(|e| StorageError::Backend(format!("find organization by id error: {e}")))?;
+
+        Ok(row.map(|r| Organization {
+            id: r.get("id"),
+            name: r.get("name"),
+            slug: r.get("slug"),
+            created_at: r.get("created_at"),
+        }))
+    }
+
+    async fn find_by_slug(&self, slug: &str) -> Result<Option<Organization>, StorageError> {
+        let row =
+            sqlx::query("SELECT id, name, slug, created_at FROM organizations WHERE slug = $1")
+                .bind(slug)
+                .fetch_optional(&*self.pool)
+                .await
+                .map_err(|e| {
+                    StorageError::Backend(format!("find organization by slug error: {e}"))
+                })?;
+
+        Ok(row.map(|r| Organization {
+            id: r.get("id"),
+            name: r.get("name"),
+            slug: r.get("slug"),
+            created_at: r.get("created_at"),
+        }))
+    }
+
+    async fn list_for_user(&self, user_id: &str) -> Result<Vec<Organization>, StorageError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT o.id, o.name, o.slug, o.created_at
+            FROM organizations o
+            JOIN organization_members om ON om.organization_id = o.id
+            WHERE om.user_id = $1
+            ORDER BY o.created_at ASC
+            "#,
+        )
+        .bind(user_id)
+        .fetch_all(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("list organizations for user error: {e}")))?;
+
+        let mut list: Vec<Organization> = rows
+            .into_iter()
+            .map(|r| Organization {
+                id: r.get("id"),
+                name: r.get("name"),
+                slug: r.get("slug"),
+                created_at: r.get("created_at"),
+            })
+            .collect();
+
+        if list.is_empty()
+            && let Some(default_org) =
+                OrganizationRepository::find_by_id(self, mailent_domain::DEFAULT_ORG_ID).await?
+        {
+            list.push(default_org);
+        }
+
+        Ok(list)
+    }
+
+    async fn save(&self, org: &Organization) -> Result<(), StorageError> {
+        sqlx::query(
+            r#"
+            INSERT INTO organizations (id, name, slug, created_at)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, slug = EXCLUDED.slug
+            "#,
+        )
+        .bind(org.id)
+        .bind(&org.name)
+        .bind(&org.slug)
+        .bind(org.created_at)
+        .execute(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("save organization error: {e}")))?;
+
+        Ok(())
+    }
+
+    async fn add_member(&self, member: &OrganizationMember) -> Result<(), StorageError> {
+        sqlx::query(
+            r#"
+            INSERT INTO organization_members (organization_id, user_id, role, created_at)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (organization_id, user_id) DO UPDATE SET role = EXCLUDED.role
+            "#,
+        )
+        .bind(member.organization_id)
+        .bind(&member.user_id)
+        .bind(&member.role)
+        .bind(member.created_at)
+        .execute(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("add organization member error: {e}")))?;
+
+        Ok(())
+    }
+
+    async fn get_member(
+        &self,
+        organization_id: Uuid,
+        user_id: &str,
+    ) -> Result<Option<OrganizationMember>, StorageError> {
+        let row = sqlx::query(
+            r#"
+            SELECT organization_id, user_id, role, created_at
+            FROM organization_members
+            WHERE organization_id = $1 AND user_id = $2
+            "#,
+        )
+        .bind(organization_id)
+        .bind(user_id)
+        .fetch_optional(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("get organization member error: {e}")))?;
+
+        Ok(row.map(|r| OrganizationMember {
+            organization_id: r.get("organization_id"),
+            user_id: r.get("user_id"),
+            role: r.get("role"),
+            created_at: r.get("created_at"),
+        }))
+    }
+}
+
+#[async_trait]
+impl DeviceRepository for PostgresStorage {
+    async fn save_device(&self, device: &Device) -> Result<(), StorageError> {
+        sqlx::query(
+            r#"
+            INSERT INTO devices (
+                id, organization_id, registered_by_user_id, name,
+                hostname, platform, architecture, created_at,
+                last_seen_at, revoked_at, capabilities,
+                version, agent_enabled, agent_status, current_job_id, completed_jobs_count
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
+            )
+            ON CONFLICT (id) DO UPDATE SET
+                name = EXCLUDED.name,
+                hostname = EXCLUDED.hostname,
+                platform = EXCLUDED.platform,
+                architecture = EXCLUDED.architecture,
+                last_seen_at = EXCLUDED.last_seen_at,
+                revoked_at = EXCLUDED.revoked_at,
+                capabilities = EXCLUDED.capabilities,
+                version = EXCLUDED.version,
+                agent_enabled = EXCLUDED.agent_enabled,
+                agent_status = EXCLUDED.agent_status,
+                current_job_id = EXCLUDED.current_job_id,
+                completed_jobs_count = EXCLUDED.completed_jobs_count
+            "#,
+        )
+        .bind(device.id)
+        .bind(device.organization_id)
+        .bind(&device.registered_by_user_id)
+        .bind(&device.name)
+        .bind(&device.hostname)
+        .bind(&device.platform)
+        .bind(&device.architecture)
+        .bind(device.created_at)
+        .bind(device.last_seen_at)
+        .bind(device.revoked_at)
+        .bind(&device.capabilities)
+        .bind(&device.version)
+        .bind(device.agent_enabled)
+        .bind(&device.agent_status)
+        .bind(device.current_job_id)
+        .bind(device.completed_jobs_count as i32)
+        .execute(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("save device error: {e}")))?;
+
+        Ok(())
+    }
+
+    async fn find_device_by_id(&self, id: Uuid) -> Result<Option<Device>, StorageError> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, organization_id, registered_by_user_id, name,
+                   hostname, platform, architecture, created_at,
+                   last_seen_at, revoked_at, capabilities,
+                   version, agent_enabled, agent_status, current_job_id, completed_jobs_count
+            FROM devices
+            WHERE id = $1
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("find device error: {e}")))?;
+
+        Ok(row.map(|r| Device {
+            id: r.get("id"),
+            organization_id: r.get("organization_id"),
+            registered_by_user_id: r.get("registered_by_user_id"),
+            name: r.get("name"),
+            hostname: r.get("hostname"),
+            platform: r.get("platform"),
+            architecture: r.get("architecture"),
+            created_at: r.get("created_at"),
+            last_seen_at: r.get("last_seen_at"),
+            revoked_at: r.get("revoked_at"),
+            capabilities: r.get("capabilities"),
+            version: r.try_get("version").ok(),
+            agent_enabled: r.try_get("agent_enabled").unwrap_or(false),
+            agent_status: r.try_get("agent_status").ok(),
+            current_job_id: r.try_get("current_job_id").ok(),
+            completed_jobs_count: r
+                .try_get::<i32, _>("completed_jobs_count")
+                .map(|c| c as u32)
+                .unwrap_or(0),
+        }))
+    }
+
+    async fn list_devices_for_org(
+        &self,
+        organization_id: Uuid,
+    ) -> Result<Vec<Device>, StorageError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, organization_id, registered_by_user_id, name,
+                   hostname, platform, architecture, created_at,
+                   last_seen_at, revoked_at, capabilities,
+                   version, agent_enabled, agent_status, current_job_id, completed_jobs_count
+            FROM devices
+            WHERE organization_id = $1
+            ORDER BY created_at DESC
+            "#,
+        )
+        .bind(organization_id)
+        .fetch_all(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("list devices error: {e}")))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| Device {
+                id: r.get("id"),
+                organization_id: r.get("organization_id"),
+                registered_by_user_id: r.get("registered_by_user_id"),
+                name: r.get("name"),
+                hostname: r.get("hostname"),
+                platform: r.get("platform"),
+                architecture: r.get("architecture"),
+                created_at: r.get("created_at"),
+                last_seen_at: r.get("last_seen_at"),
+                revoked_at: r.get("revoked_at"),
+                capabilities: r.get("capabilities"),
+                version: r.try_get("version").ok(),
+                agent_enabled: r.try_get("agent_enabled").unwrap_or(false),
+                agent_status: r.try_get("agent_status").ok(),
+                current_job_id: r.try_get("current_job_id").ok(),
+                completed_jobs_count: r
+                    .try_get::<i32, _>("completed_jobs_count")
+                    .map(|c| c as u32)
+                    .unwrap_or(0),
+            })
+            .collect())
+    }
+
+    async fn revoke_device(&self, id: Uuid) -> Result<(), StorageError> {
+        sqlx::query("UPDATE devices SET revoked_at = NOW() WHERE id = $1")
+            .bind(id)
+            .execute(&*self.pool)
+            .await
+            .map_err(|e| StorageError::Backend(format!("revoke device error: {e}")))?;
+        Ok(())
+    }
+
+    async fn create_challenge(
+        &self,
+        challenge: &DeviceAuthorizationChallenge,
+    ) -> Result<(), StorageError> {
+        sqlx::query(
+            r#"
+            INSERT INTO device_challenges (
+                code, device_name, hostname, platform, architecture,
+                expires_at, authorized_at, authorized_by_user_id,
+                organization_id, issued_token, device_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            ON CONFLICT (code) DO UPDATE SET
+                device_name = EXCLUDED.device_name,
+                hostname = EXCLUDED.hostname,
+                platform = EXCLUDED.platform,
+                architecture = EXCLUDED.architecture,
+                expires_at = EXCLUDED.expires_at,
+                authorized_at = EXCLUDED.authorized_at,
+                authorized_by_user_id = EXCLUDED.authorized_by_user_id,
+                organization_id = EXCLUDED.organization_id,
+                issued_token = EXCLUDED.issued_token,
+                device_id = EXCLUDED.device_id
+            "#,
+        )
+        .bind(&challenge.code)
+        .bind(&challenge.device_name)
+        .bind(&challenge.hostname)
+        .bind(&challenge.platform)
+        .bind(&challenge.architecture)
+        .bind(challenge.expires_at)
+        .bind(challenge.authorized_at)
+        .bind(&challenge.authorized_by_user_id)
+        .bind(challenge.organization_id)
+        .bind(&challenge.issued_token)
+        .bind(challenge.device_id)
+        .execute(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("create challenge error: {e}")))?;
+        Ok(())
+    }
+
+    async fn get_challenge(
+        &self,
+        code: &str,
+    ) -> Result<Option<DeviceAuthorizationChallenge>, StorageError> {
+        let row = sqlx::query(
+            r#"
+            SELECT code, device_name, hostname, platform, architecture,
+                   expires_at, authorized_at, authorized_by_user_id,
+                   organization_id, issued_token, device_id
+            FROM device_challenges
+            WHERE code = $1
+            "#,
+        )
+        .bind(code)
+        .fetch_optional(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("get challenge error: {e}")))?;
+
+        Ok(row.map(|r| DeviceAuthorizationChallenge {
+            code: r.get("code"),
+            device_name: r.get("device_name"),
+            hostname: r.get("hostname"),
+            platform: r.get("platform"),
+            architecture: r.get("architecture"),
+            expires_at: r.get("expires_at"),
+            authorized_at: r.get("authorized_at"),
+            authorized_by_user_id: r.get("authorized_by_user_id"),
+            organization_id: r.get("organization_id"),
+            issued_token: r.get("issued_token"),
+            device_id: r.get("device_id"),
+        }))
+    }
+
+    async fn approve_challenge(
+        &self,
+        code: &str,
+        user_id: &str,
+        org_id: Uuid,
+        device_token: &str,
+        device_id: Uuid,
+    ) -> Result<(), StorageError> {
+        sqlx::query(
+            r#"
+            UPDATE device_challenges
+            SET authorized_at = NOW(),
+                authorized_by_user_id = $2,
+                organization_id = $3,
+                issued_token = $4,
+                device_id = $5
+            WHERE code = $1
+            "#,
+        )
+        .bind(code)
+        .bind(user_id)
+        .bind(org_id)
+        .bind(device_token)
+        .bind(device_id)
+        .execute(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("approve challenge error: {e}")))?;
+        Ok(())
+    }
+
+    async fn save_device_token(
+        &self,
+        token_hash: &str,
+        device_id: Uuid,
+        org_id: Uuid,
+    ) -> Result<(), StorageError> {
+        sqlx::query(
+            r#"
+            INSERT INTO device_tokens (token_hash, device_id, organization_id, created_at, last_used_at)
+            VALUES ($1, $2, $3, NOW(), NOW())
+            ON CONFLICT (token_hash) DO UPDATE SET last_used_at = NOW()
+            "#,
+        )
+        .bind(token_hash)
+        .bind(device_id)
+        .bind(org_id)
+        .execute(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("save device token error: {e}")))?;
+        Ok(())
+    }
+
+    async fn validate_device_token(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<(Device, Uuid)>, StorageError> {
+        let row = sqlx::query(
+            r#"
+            SELECT d.id, d.organization_id, d.registered_by_user_id, d.name,
+                   d.hostname, d.platform, d.architecture, d.created_at,
+                   d.last_seen_at, d.revoked_at, d.capabilities,
+                   d.version, d.agent_enabled, d.agent_status, d.current_job_id, d.completed_jobs_count,
+                   dt.organization_id as token_org_id
+            FROM device_tokens dt
+            JOIN devices d ON d.id = dt.device_id
+            WHERE dt.token_hash = $1 AND d.revoked_at IS NULL
+            "#,
+        )
+        .bind(token_hash)
+        .fetch_optional(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("validate device token error: {e}")))?;
+
+        if let Some(r) = row {
+            let device_id: Uuid = r.get("id");
+            let _ =
+                sqlx::query("UPDATE device_tokens SET last_used_at = NOW() WHERE token_hash = $1")
+                    .bind(token_hash)
+                    .execute(&*self.pool)
+                    .await;
+            let _ = sqlx::query("UPDATE devices SET last_seen_at = NOW() WHERE id = $1")
+                .bind(device_id)
+                .execute(&*self.pool)
+                .await;
+            let token_org_id: Uuid = r.get("token_org_id");
+            Ok(Some((
+                Device {
+                    id: device_id,
+                    organization_id: r.get("organization_id"),
+                    registered_by_user_id: r.get("registered_by_user_id"),
+                    name: r.get("name"),
+                    hostname: r.get("hostname"),
+                    platform: r.get("platform"),
+                    architecture: r.get("architecture"),
+                    created_at: r.get("created_at"),
+                    last_seen_at: r.get("last_seen_at"),
+                    revoked_at: r.get("revoked_at"),
+                    capabilities: r.get("capabilities"),
+                    version: r.try_get("version").ok(),
+                    agent_enabled: r.try_get("agent_enabled").unwrap_or(false),
+                    agent_status: r.try_get("agent_status").ok(),
+                    current_job_id: r.try_get("current_job_id").ok(),
+                    completed_jobs_count: r
+                        .try_get::<i32, _>("completed_jobs_count")
+                        .map(|c| c as u32)
+                        .unwrap_or(0),
+                },
+                token_org_id,
+            )))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn revoke_device_token(&self, token_hash: &str) -> Result<(), StorageError> {
+        sqlx::query(
+            r#"
+            UPDATE devices SET revoked_at = NOW()
+            WHERE id IN (SELECT device_id FROM device_tokens WHERE token_hash = $1)
+            "#,
+        )
+        .bind(token_hash)
+        .execute(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("revoke device token error: {e}")))?;
+
+        sqlx::query("DELETE FROM device_tokens WHERE token_hash = $1")
+            .bind(token_hash)
+            .execute(&*self.pool)
+            .await
+            .map_err(|e| StorageError::Backend(format!("delete device token error: {e}")))?;
+
+        Ok(())
+    }
+
+    async fn heartbeat(
+        &self,
+        device_id: Uuid,
+        version: Option<String>,
+        capabilities: Vec<String>,
+        status: String,
+        now: OffsetDateTime,
+    ) -> Result<(), StorageError> {
+        sqlx::query(
+            r#"
+            UPDATE devices
+            SET last_seen_at = $2,
+                version = COALESCE($3, version),
+                capabilities = CASE WHEN array_length($4::text[], 1) > 0 THEN $4 ELSE capabilities END,
+                agent_enabled = true,
+                agent_status = $5
+            WHERE id = $1 AND revoked_at IS NULL
+            "#,
+        )
+        .bind(device_id)
+        .bind(now)
+        .bind(version)
+        .bind(&capabilities)
+        .bind(status)
+        .execute(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("device heartbeat error: {e}")))?;
+        Ok(())
+    }
+
+    async fn update_agent_status(
+        &self,
+        device_id: Uuid,
+        status: Option<String>,
+        current_job_id: Option<Uuid>,
+        increment_completed: bool,
+    ) -> Result<(), StorageError> {
+        let inc = if increment_completed { 1 } else { 0 };
+        sqlx::query(
+            r#"
+            UPDATE devices
+            SET agent_status = COALESCE($2, agent_status),
+                current_job_id = $3,
+                completed_jobs_count = completed_jobs_count + $4
+            WHERE id = $1
+            "#,
+        )
+        .bind(device_id)
+        .bind(status)
+        .bind(current_job_id)
+        .bind(inc)
+        .execute(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("update agent status error: {e}")))?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl JobRepository for PostgresStorage {
+    async fn create_job(&self, job: &AgentJob) -> Result<(), StorageError> {
+        let exec_target = serde_json::to_value(&job.execution_target)
+            .map_err(|e| StorageError::Backend(format!("Serialization error: {e}")))?;
+        let job_type = serde_json::to_value(&job.job_type)
+            .map_err(|e| StorageError::Backend(format!("Serialization error: {e}")))?;
+        let state_str = match job.state {
+            JobState::Pending => "pending",
+            JobState::Leased => "leased",
+            JobState::Running => "running",
+            JobState::Completed => "completed",
+            JobState::Failed => "failed",
+            JobState::Canceled => "canceled",
+        };
+
+        sqlx::query(
+            r#"
+            INSERT INTO agent_jobs (
+                id, organization_id, target_agent_id, execution_target,
+                job_type, state, created_at, available_at,
+                leased_at, lease_expires_at, started_at, completed_at,
+                attempt, max_attempts, result_assessment_id,
+                last_error, idempotency_key, monitor_id
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
+            )
+            ON CONFLICT (id) DO UPDATE SET
+                state = EXCLUDED.state,
+                leased_at = EXCLUDED.leased_at,
+                lease_expires_at = EXCLUDED.lease_expires_at,
+                started_at = EXCLUDED.started_at,
+                completed_at = EXCLUDED.completed_at,
+                attempt = EXCLUDED.attempt,
+                result_assessment_id = EXCLUDED.result_assessment_id,
+                last_error = EXCLUDED.last_error
+            "#,
+        )
+        .bind(job.id)
+        .bind(job.organization_id)
+        .bind(job.target_agent_id)
+        .bind(exec_target)
+        .bind(job_type)
+        .bind(state_str)
+        .bind(job.created_at)
+        .bind(job.available_at)
+        .bind(job.leased_at)
+        .bind(job.lease_expires_at)
+        .bind(job.started_at)
+        .bind(job.completed_at)
+        .bind(job.attempt as i32)
+        .bind(job.max_attempts as i32)
+        .bind(job.result_assessment_id)
+        .bind(&job.last_error)
+        .bind(&job.idempotency_key)
+        .bind(job.monitor_id)
+        .execute(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("create job error: {e}")))?;
+
+        Ok(())
+    }
+
+    async fn find_by_id(&self, id: Uuid) -> Result<Option<AgentJob>, StorageError> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, organization_id, target_agent_id, execution_target,
+                   job_type, state, created_at, available_at,
+                   leased_at, lease_expires_at, started_at, completed_at,
+                   attempt, max_attempts, result_assessment_id,
+                   last_error, idempotency_key, monitor_id
+            FROM agent_jobs
+            WHERE id = $1
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("find job error: {e}")))?;
+
+        match row {
+            Some(r) => Ok(Some(map_job_row(r)?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn find_by_idempotency_key(
+        &self,
+        org_id: Uuid,
+        key: &str,
+    ) -> Result<Option<AgentJob>, StorageError> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, organization_id, target_agent_id, execution_target,
+                   job_type, state, created_at, available_at,
+                   leased_at, lease_expires_at, started_at, completed_at,
+                   attempt, max_attempts, result_assessment_id,
+                   last_error, idempotency_key, monitor_id
+            FROM agent_jobs
+            WHERE organization_id = $1 AND idempotency_key = $2
+            "#,
+        )
+        .bind(org_id)
+        .bind(key)
+        .fetch_optional(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("find job by idempotency error: {e}")))?;
+
+        match row {
+            Some(r) => Ok(Some(map_job_row(r)?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn lease_next_job(
+        &self,
+        agent_id: Uuid,
+        org_id: Uuid,
+        now: OffsetDateTime,
+        lease_duration_secs: u64,
+    ) -> Result<Option<AgentJob>, StorageError> {
+        let lease_expires = now + time::Duration::seconds(lease_duration_secs as i64);
+
+        let row = sqlx::query(
+            r#"
+            UPDATE agent_jobs
+            SET state = 'leased',
+                leased_at = $3,
+                lease_expires_at = $4,
+                attempt = attempt + 1
+            WHERE id = (
+                SELECT id
+                FROM agent_jobs
+                WHERE organization_id = $2
+                  AND (state = 'pending' OR (state IN ('leased', 'running') AND lease_expires_at < $3))
+                  AND (target_agent_id = $1 OR (target_agent_id IS NULL AND execution_target->>'type' = 'agent'))
+                ORDER BY created_at ASC
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+            )
+            RETURNING id, organization_id, target_agent_id, execution_target,
+                      job_type, state, created_at, available_at,
+                      leased_at, lease_expires_at, started_at, completed_at,
+                      attempt, max_attempts, result_assessment_id,
+                      last_error, idempotency_key, monitor_id
+            "#,
+        )
+        .bind(agent_id)
+        .bind(org_id)
+        .bind(now)
+        .bind(lease_expires)
+        .fetch_optional(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("lease next job error: {e}")))?;
+
+        match row {
+            Some(r) => Ok(Some(map_job_row(r)?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn lease_next_cloud_job(
+        &self,
+        now: OffsetDateTime,
+        lease_duration_secs: u64,
+    ) -> Result<Option<AgentJob>, StorageError> {
+        let lease_expires = now + time::Duration::seconds(lease_duration_secs as i64);
+
+        let row = sqlx::query(
+            r#"
+            UPDATE agent_jobs
+            SET state = 'leased',
+                leased_at = $1,
+                lease_expires_at = $2,
+                attempt = attempt + 1
+            WHERE id = (
+                SELECT id
+                FROM agent_jobs
+                WHERE (execution_target->>'type' = 'cloud' OR target_agent_id IS NULL)
+                  AND (state = 'pending' OR (state IN ('leased', 'running') AND lease_expires_at < $1))
+                ORDER BY created_at ASC
+                FOR UPDATE SKIP LOCKED
+                LIMIT 1
+            )
+            RETURNING id, organization_id, target_agent_id, execution_target,
+                      job_type, state, created_at, available_at,
+                      leased_at, lease_expires_at, started_at, completed_at,
+                      attempt, max_attempts, result_assessment_id,
+                      last_error, idempotency_key, monitor_id
+            "#,
+        )
+        .bind(now)
+        .bind(lease_expires)
+        .fetch_optional(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("lease cloud job error: {e}")))?;
+
+        match row {
+            Some(r) => Ok(Some(map_job_row(r)?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn update_job(&self, job: &AgentJob) -> Result<(), StorageError> {
+        self.create_job(job).await
+    }
+
+    async fn recover_expired_leases(&self, now: OffsetDateTime) -> Result<u64, StorageError> {
+        let res = sqlx::query(
+            r#"
+            UPDATE agent_jobs
+            SET state = CASE WHEN attempt >= max_attempts THEN 'failed' ELSE 'pending' END,
+                leased_at = NULL,
+                lease_expires_at = NULL,
+                last_error = CASE WHEN attempt >= max_attempts THEN 'Max lease attempts exceeded' ELSE last_error END
+            WHERE state IN ('leased', 'running') AND lease_expires_at < $1
+            "#,
+        )
+        .bind(now)
+        .execute(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("recover expired leases error: {e}")))?;
+
+        Ok(res.rows_affected())
+    }
+
+    async fn list_for_org(
+        &self,
+        org_id: Uuid,
+        limit: usize,
+    ) -> Result<Vec<AgentJob>, StorageError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, organization_id, target_agent_id, execution_target,
+                   job_type, state, created_at, available_at,
+                   leased_at, lease_expires_at, started_at, completed_at,
+                   attempt, max_attempts, result_assessment_id,
+                   last_error, idempotency_key, monitor_id
+            FROM agent_jobs
+            WHERE organization_id = $1
+            ORDER BY created_at DESC
+            LIMIT $2
+            "#,
+        )
+        .bind(org_id)
+        .bind(limit as i64)
+        .fetch_all(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("list jobs error: {e}")))?;
+
+        let mut jobs = Vec::with_capacity(rows.len());
+        for r in rows {
+            jobs.push(map_job_row(r)?);
+        }
+        Ok(jobs)
+    }
+
+    async fn count_active_for_org(&self, org_id: Uuid) -> Result<usize, StorageError> {
+        let count: (i64,) = sqlx::query_as(
+            r#"
+            SELECT COUNT(*) FROM agent_jobs
+            WHERE organization_id = $1 AND state IN ('pending', 'leased', 'running')
+            "#,
+        )
+        .bind(org_id)
+        .fetch_one(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("count jobs for org error: {e}")))?;
+
+        Ok(count.0 as usize)
+    }
+
+    async fn count_active_for_agent(&self, agent_id: Uuid) -> Result<usize, StorageError> {
+        let count: (i64,) = sqlx::query_as(
+            r#"
+            SELECT COUNT(*) FROM agent_jobs
+            WHERE target_agent_id = $1 AND state IN ('leased', 'running')
+            "#,
+        )
+        .bind(agent_id)
+        .fetch_one(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("count jobs for agent error: {e}")))?;
+
+        Ok(count.0 as usize)
+    }
+}
+
+#[async_trait]
+impl MonitorRepository for PostgresStorage {
+    async fn save(&self, monitor: &InfrastructureMonitor) -> Result<(), StorageError> {
+        let exec_target = serde_json::to_value(&monitor.execution_target)
+            .map_err(|e| StorageError::Backend(format!("Serialization error: {e}")))?;
+        let cadence_str = match monitor.cadence {
+            MonitorCadence::Hourly => "hourly",
+            MonitorCadence::Every6Hours => "every_6_hours",
+            MonitorCadence::Every12Hours => "every_12_hours",
+            MonitorCadence::Daily => "daily",
+            MonitorCadence::Weekly => "weekly",
+        };
+
+        sqlx::query(
+            r#"
+            INSERT INTO infrastructure_monitors (
+                id, organization_id, domain, enabled, execution_target,
+                cadence, next_run_at, last_run_at, last_success_at,
+                last_failure_at, last_assessment_id, last_error,
+                created_at, updated_at
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+            )
+            ON CONFLICT (organization_id, domain) DO UPDATE SET
+                enabled = EXCLUDED.enabled,
+                execution_target = EXCLUDED.execution_target,
+                cadence = EXCLUDED.cadence,
+                next_run_at = EXCLUDED.next_run_at,
+                last_run_at = EXCLUDED.last_run_at,
+                last_success_at = EXCLUDED.last_success_at,
+                last_failure_at = EXCLUDED.last_failure_at,
+                last_assessment_id = EXCLUDED.last_assessment_id,
+                last_error = EXCLUDED.last_error,
+                updated_at = EXCLUDED.updated_at
+            "#,
+        )
+        .bind(monitor.id)
+        .bind(monitor.organization_id)
+        .bind(&monitor.domain)
+        .bind(monitor.enabled)
+        .bind(exec_target)
+        .bind(cadence_str)
+        .bind(monitor.next_run_at)
+        .bind(monitor.last_run_at)
+        .bind(monitor.last_success_at)
+        .bind(monitor.last_failure_at)
+        .bind(monitor.last_assessment_id)
+        .bind(&monitor.last_error)
+        .bind(monitor.created_at)
+        .bind(monitor.updated_at)
+        .execute(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("save monitor error: {e}")))?;
+
+        Ok(())
+    }
+
+    async fn find_by_id(&self, id: Uuid) -> Result<Option<InfrastructureMonitor>, StorageError> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, organization_id, domain, enabled, execution_target,
+                   cadence, next_run_at, last_run_at, last_success_at,
+                   last_failure_at, last_assessment_id, last_error,
+                   created_at, updated_at
+            FROM infrastructure_monitors
+            WHERE id = $1
+            "#,
+        )
+        .bind(id)
+        .fetch_optional(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("find monitor error: {e}")))?;
+
+        match row {
+            Some(r) => Ok(Some(map_monitor_row(r)?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn find_by_domain(
+        &self,
+        org_id: Uuid,
+        domain: &str,
+    ) -> Result<Option<InfrastructureMonitor>, StorageError> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, organization_id, domain, enabled, execution_target,
+                   cadence, next_run_at, last_run_at, last_success_at,
+                   last_failure_at, last_assessment_id, last_error,
+                   created_at, updated_at
+            FROM infrastructure_monitors
+            WHERE organization_id = $1 AND LOWER(domain) = LOWER($2)
+            "#,
+        )
+        .bind(org_id)
+        .bind(domain)
+        .fetch_optional(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("find monitor by domain error: {e}")))?;
+
+        match row {
+            Some(r) => Ok(Some(map_monitor_row(r)?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn list_for_org(&self, org_id: Uuid) -> Result<Vec<InfrastructureMonitor>, StorageError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, organization_id, domain, enabled, execution_target,
+                   cadence, next_run_at, last_run_at, last_success_at,
+                   last_failure_at, last_assessment_id, last_error,
+                   created_at, updated_at
+            FROM infrastructure_monitors
+            WHERE organization_id = $1
+            ORDER BY domain ASC
+            "#,
+        )
+        .bind(org_id)
+        .fetch_all(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("list monitors error: {e}")))?;
+
+        let mut list = Vec::with_capacity(rows.len());
+        for r in rows {
+            list.push(map_monitor_row(r)?);
+        }
+        Ok(list)
+    }
+
+    async fn find_due_monitors(
+        &self,
+        now: OffsetDateTime,
+        limit: usize,
+    ) -> Result<Vec<InfrastructureMonitor>, StorageError> {
+        let rows = sqlx::query(
+            r#"
+            SELECT id, organization_id, domain, enabled, execution_target,
+                   cadence, next_run_at, last_run_at, last_success_at,
+                   last_failure_at, last_assessment_id, last_error,
+                   created_at, updated_at
+            FROM infrastructure_monitors
+            WHERE enabled = true AND next_run_at <= $1
+            ORDER BY next_run_at ASC
+            LIMIT $2
+            "#,
+        )
+        .bind(now)
+        .bind(limit as i64)
+        .fetch_all(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("find due monitors error: {e}")))?;
+
+        let mut list = Vec::with_capacity(rows.len());
+        for r in rows {
+            list.push(map_monitor_row(r)?);
+        }
+        Ok(list)
+    }
+
+    async fn delete(&self, id: Uuid, org_id: Uuid) -> Result<bool, StorageError> {
+        let res = sqlx::query(
+            "DELETE FROM infrastructure_monitors WHERE id = $1 AND organization_id = $2",
+        )
+        .bind(id)
+        .bind(org_id)
+        .execute(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("delete monitor error: {e}")))?;
+
+        Ok(res.rows_affected() > 0)
+    }
+}
+
+fn map_job_row(r: sqlx::postgres::PgRow) -> Result<AgentJob, StorageError> {
+    let exec_target_val: serde_json::Value = r.get("execution_target");
+    let execution_target: JobExecutionTarget = serde_json::from_value(exec_target_val)
+        .map_err(|e| StorageError::Backend(format!("Serialization error: {e}")))?;
+
+    let job_type_val: serde_json::Value = r.get("job_type");
+    let job_type: AgentJobType = serde_json::from_value(job_type_val)
+        .map_err(|e| StorageError::Backend(format!("Serialization error: {e}")))?;
+
+    let state_str: String = r.get("state");
+    let state = match state_str.as_str() {
+        "pending" => JobState::Pending,
+        "leased" => JobState::Leased,
+        "running" => JobState::Running,
+        "completed" => JobState::Completed,
+        "failed" => JobState::Failed,
+        "canceled" => JobState::Canceled,
+        _ => JobState::Pending,
+    };
+
+    let attempt: i32 = r.get("attempt");
+    let max_attempts: i32 = r.get("max_attempts");
+
+    Ok(AgentJob {
+        id: r.get("id"),
+        organization_id: r.get("organization_id"),
+        target_agent_id: r.get("target_agent_id"),
+        execution_target,
+        job_type,
+        state,
+        created_at: r.get("created_at"),
+        available_at: r.get("available_at"),
+        leased_at: r.get("leased_at"),
+        lease_expires_at: r.get("lease_expires_at"),
+        started_at: r.get("started_at"),
+        completed_at: r.get("completed_at"),
+        attempt: attempt as u32,
+        max_attempts: max_attempts as u32,
+        result_assessment_id: r.get("result_assessment_id"),
+        last_error: r.get("last_error"),
+        idempotency_key: r.get("idempotency_key"),
+        monitor_id: r.get("monitor_id"),
+    })
+}
+
+fn map_monitor_row(r: sqlx::postgres::PgRow) -> Result<InfrastructureMonitor, StorageError> {
+    let exec_target_val: serde_json::Value = r.get("execution_target");
+    let execution_target: MonitorExecutionTarget = serde_json::from_value(exec_target_val)
+        .map_err(|e| StorageError::Backend(format!("Serialization error: {e}")))?;
+
+    let cadence_str: String = r.get("cadence");
+    let cadence = match cadence_str.as_str() {
+        "hourly" => MonitorCadence::Hourly,
+        "every_6_hours" => MonitorCadence::Every6Hours,
+        "every_12_hours" => MonitorCadence::Every12Hours,
+        "daily" => MonitorCadence::Daily,
+        "weekly" => MonitorCadence::Weekly,
+        _ => MonitorCadence::Daily,
+    };
+
+    Ok(InfrastructureMonitor {
+        id: r.get("id"),
+        organization_id: r.get("organization_id"),
+        domain: r.get("domain"),
+        enabled: r.get("enabled"),
+        execution_target,
+        cadence,
+        next_run_at: r.get("next_run_at"),
+        last_run_at: r.get("last_run_at"),
+        last_success_at: r.get("last_success_at"),
+        last_failure_at: r.get("last_failure_at"),
+        last_assessment_id: r.get("last_assessment_id"),
+        last_error: r.get("last_error"),
+        created_at: r.get("created_at"),
+        updated_at: r.get("updated_at"),
+    })
 }

@@ -30,6 +30,7 @@ async fn seed(state: &AppState) -> (Asset, Investigation) {
         active_findings_count: 1,
         first_seen: t,
         last_seen: t,
+        organization_id: None,
     };
     state.assets.upsert(asset.clone()).await.unwrap();
     let inv = Investigation {
@@ -401,6 +402,7 @@ async fn sensitive_or_raw_data_excluded_from_snapshot() {
             observation_id: None,
             description: "raw smtp conversation 203.0.113.4 auth PASSWD".into(),
         }],
+        organization_id: None,
     }];
     let record = mailent_core::training::capture_training(
         &state,

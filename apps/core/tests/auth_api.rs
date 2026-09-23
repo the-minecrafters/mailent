@@ -16,7 +16,8 @@ async fn cloud_routes_reject_missing_and_forged_credentials() {
         "sb_publishable_test".into(),
         vec!["owner@test.invalid".into()],
     );
-    let app = protect(create_router(AppState::new()), Some(auth));
+    let state = AppState::new();
+    let app = protect(create_router(state.clone()), Some(auth), state);
     for path in ["/ready", "/api/v1/assets", "/api/v1/reports/archived"] {
         let response = app
             .clone()
@@ -65,13 +66,15 @@ async fn authorization_uses_verified_email_and_confirmation() {
     let task = tokio::spawn(async move {
         axum::serve(listener, mock).await.unwrap();
     });
+    let state2 = AppState::new();
     let app = protect(
-        create_router(AppState::new()),
+        create_router(state2.clone()),
         Some(AuthConfig::new(
             format!("http://{addr}"),
             "test-key".into(),
             vec!["owner@test.invalid".into()],
         )),
+        state2,
     );
     for (token, expected) in [
         ("valid", StatusCode::OK),
@@ -100,13 +103,15 @@ async fn spa_is_public_while_the_api_stays_private() {
     use tower_http::services::{ServeDir, ServeFile};
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join("index.html"), "<h1>Mailent</h1>").unwrap();
+    let state3 = AppState::new();
     let app = protect(
-        create_router(AppState::new()),
+        create_router(state3.clone()),
         Some(AuthConfig::new(
             "https://invalid.supabase.co".into(),
             "sb_publishable_test".into(),
             vec!["owner@test.invalid".into()],
         )),
+        state3,
     )
     .fallback_service(
         ServeDir::new(directory.path())
@@ -183,7 +188,8 @@ async fn guest_mode_allows_in_memory_access_without_credentials() {
         "sb_publishable_test".into(),
         vec!["owner@test.invalid".into()],
     );
-    let app = protect(create_router(AppState::new()), Some(auth));
+    let state4 = AppState::new();
+    let app = protect(create_router(state4.clone()), Some(auth), state4);
 
     // With X-Mailent-Guest header, unauthenticated requests are allowed
     let response = app

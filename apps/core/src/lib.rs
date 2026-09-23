@@ -1,3 +1,9 @@
+#![allow(
+    clippy::collapsible_if,
+    clippy::unnecessary_map_or,
+    clippy::let_and_return
+)]
+
 pub mod api;
 pub mod auth;
 pub mod config;

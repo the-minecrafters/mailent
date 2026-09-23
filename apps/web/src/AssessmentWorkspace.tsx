@@ -11,14 +11,17 @@ import {
   fetchAssetAnomalies,
   fetchAssetPosture,
   fetchAssets,
+  fetchDomainHistory,
   fetchFindings,
   fetchSessions,
+  runNowMonitor,
 } from "./api";
 import { Icon } from "./components/Icon";
 import { MailentLogo } from "./components/MailentLogo";
 import { ErrorState, LoadingState } from "./components/ui";
 import { ProbeEvidence } from "./ProbePanel";
 import { RemediationWorkflow } from "./RemediationWorkflow";
+import { ScheduleMonitorModal } from "./ScheduleMonitorModal";
 
 interface AssessmentWorkspaceProps {
   assessmentId: string;
@@ -34,7 +37,8 @@ type WorkspaceTab =
   | "findings"
   | "risk"
   | "remediation"
-  | "report";
+  | "report"
+  | "history";
 
 export function AssessmentWorkspace({
   assessmentId,
@@ -52,6 +56,7 @@ export function AssessmentWorkspace({
     "risk",
     "remediation",
     "report",
+    "history",
   ];
   const activeTab = tabs.includes(params.get("tab") as WorkspaceTab)
     ? (params.get("tab") as WorkspaceTab)
@@ -101,6 +106,35 @@ export function AssessmentWorkspace({
   });
 
   const assessment = assessmentQuery.data;
+  const isInfra =
+    assessment?.source?.type === "infrastructure" ||
+    Boolean(
+      assessment?.metadata && assessment?.metadata.source === "infrastructure",
+    ) ||
+    Boolean(assessment?.title.toLowerCase().includes("infrastructure"));
+  const infraMeta = isInfra ? (assessment?.source as any) : null;
+  const targetDomain = isInfra
+    ? (infraMeta?.target_domain ??
+      assessment?.title.replace(" Infrastructure Assessment", "").trim() ??
+      "")
+    : "";
+
+  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+
+  const historyQuery = useQuery({
+    queryKey: ["domainHistory", targetDomain],
+    queryFn: () => fetchDomainHistory(targetDomain),
+    enabled: isInfra && !!targetDomain,
+  });
+
+  const runNowMutation = useMutation({
+    mutationFn: (monitorId: string) => runNowMonitor(monitorId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["domainHistory", targetDomain],
+      });
+    },
+  });
 
   // Filter entities belonging to this assessment
   const assessmentSessions = (sessionsQuery.data ?? [])
@@ -321,6 +355,21 @@ export function AssessmentWorkspace({
             <Icon name="print" size={16} />
             <span>Print / PDF</span>
           </button>
+          {isInfra && (
+            <button
+              className="btn btn-secondary"
+              onClick={() => setScheduleModalOpen(true)}
+              title="Schedule recurring monitoring for this domain"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "0.4rem",
+              }}
+            >
+              <Icon name="schedule" size={16} />
+              <span>Schedule monitoring</span>
+            </button>
+          )}
           <button
             className="btn btn-primary"
             onClick={handleArchiveReport}
@@ -373,7 +422,9 @@ export function AssessmentWorkspace({
                 marginBottom: "0.4rem",
               }}
             >
-              <span className="badge">Capture analysis</span>
+              <span className={`badge ${isInfra ? "fresh" : ""}`}>
+                {isInfra ? "Infrastructure assessment" : "Capture analysis"}
+              </span>
               <span
                 className="secondary-text"
                 style={{ fontSize: "0.8125rem" }}
@@ -400,36 +451,65 @@ export function AssessmentWorkspace({
                 fontSize: "0.8125rem",
               }}
             >
-              <span className="mono secondary-text">
-                File: <strong>{assessment.capture_name}</strong> (
-                {(assessment.capture_size_bytes / 1024).toFixed(1)} KB)
-              </span>
-              <span style={{ color: "var(--border)" }}>•</span>
-              <span
-                className="mono secondary-text"
-                style={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "0.35rem",
-                }}
-              >
-                SHA-256: {assessment.capture_hash.slice(0, 16)}…
-                <button
-                  type="button"
-                  onClick={handleCopyHash}
-                  style={{
-                    background: "transparent",
-                    border: "none",
-                    cursor: "pointer",
-                    padding: "0 0.25rem",
-                    fontSize: "0.75rem",
-                    color: "var(--accent)",
-                  }}
-                  title="Copy full SHA-256 hash"
-                >
-                  {copiedHash ? "Copied!" : "Copy"}
-                </button>
-              </span>
+              {isInfra ? (
+                <>
+                  <span className="mono secondary-text">
+                    Target:{" "}
+                    <strong>
+                      {infraMeta?.target_domain ??
+                        assessment.title.replace(
+                          " Infrastructure Assessment",
+                          "",
+                        )}
+                    </strong>
+                  </span>
+                  <span style={{ color: "var(--border)" }}>•</span>
+                  <span className="mono secondary-text">
+                    Endpoints:{" "}
+                    <strong>
+                      {infraMeta?.discovered_endpoints?.length ??
+                        assessment.asset_ids.length}
+                    </strong>
+                  </span>
+                  <span style={{ color: "var(--border)" }}>•</span>
+                  <span className="mono secondary-text">
+                    Discovery: <strong>DNS MX &amp; Active Probing</strong>
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="mono secondary-text">
+                    File: <strong>{assessment.capture_name}</strong> (
+                    {(assessment.capture_size_bytes / 1024).toFixed(1)} KB)
+                  </span>
+                  <span style={{ color: "var(--border)" }}>•</span>
+                  <span
+                    className="mono secondary-text"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "0.35rem",
+                    }}
+                  >
+                    SHA-256: {assessment.capture_hash.slice(0, 16)}…
+                    <button
+                      type="button"
+                      onClick={handleCopyHash}
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        cursor: "pointer",
+                        padding: "0 0.25rem",
+                        fontSize: "0.75rem",
+                        color: "var(--accent)",
+                      }}
+                      title="Copy full SHA-256 hash"
+                    >
+                      {copiedHash ? "Copied!" : "Copy"}
+                    </button>
+                  </span>
+                </>
+              )}
             </div>
           </div>
 
@@ -644,6 +724,16 @@ export function AssessmentWorkspace({
           <Icon name="article" size={16} />
           <span>Report</span>
         </button>
+        {isInfra && (
+          <button
+            className={`tab-btn ${activeTab === "history" ? "active" : ""}`}
+            aria-current={activeTab === "history" ? "page" : undefined}
+            onClick={() => setActiveTab("history")}
+          >
+            <Icon name="history" size={16} />
+            <span>Monitoring &amp; Drift</span>
+          </button>
+        )}
       </nav>
 
       {assessmentAssets.length > 0 && (
@@ -1029,6 +1119,85 @@ export function AssessmentWorkspace({
                           </div>
                         </div>
                       ))}
+                    </div>
+                  ) : isInfra ? (
+                    <div style={{ padding: "0.5rem 0" }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.5rem",
+                          marginBottom: "0.75rem",
+                        }}
+                      >
+                        <span className="badge fresh">
+                          Active Probing Transition
+                        </span>
+                        <span
+                          className="secondary-text"
+                          style={{ fontSize: "0.8125rem" }}
+                        >
+                          Verified over TCP port {selectedSession.flow.dst_port}
+                        </span>
+                      </div>
+                      <div
+                        style={{
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: "0.75rem",
+                        }}
+                      >
+                        <div
+                          style={{
+                            padding: "0.75rem 1rem",
+                            border: "1px solid var(--border)",
+                            borderRadius: "6px",
+                            background: "var(--canvas-sunken)",
+                          }}
+                        >
+                          <div
+                            style={{ fontWeight: 600, fontSize: "0.875rem" }}
+                          >
+                            Protocol Handshake:{" "}
+                            {selectedSession.protocol.toUpperCase()}
+                          </div>
+                          <div
+                            className="secondary-text mono"
+                            style={{
+                              fontSize: "0.75rem",
+                              marginTop: "0.25rem",
+                            }}
+                          >
+                            STARTTLS Status: {selectedSession.starttls_state}
+                          </div>
+                        </div>
+                        {selectedSession.tls_version && (
+                          <div
+                            style={{
+                              padding: "0.75rem 1rem",
+                              border: "1px solid var(--border)",
+                              borderRadius: "6px",
+                              background: "var(--canvas-sunken)",
+                            }}
+                          >
+                            <div
+                              style={{ fontWeight: 600, fontSize: "0.875rem" }}
+                            >
+                              Negotiated TLS: {selectedSession.tls_version}
+                            </div>
+                            <div
+                              className="secondary-text mono"
+                              style={{
+                                fontSize: "0.75rem",
+                                marginTop: "0.25rem",
+                              }}
+                            >
+                              Cipher:{" "}
+                              {selectedSession.cipher_suite?.name || "Standard"}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   ) : (
                     <div
@@ -1844,6 +2013,400 @@ export function AssessmentWorkspace({
             </div>
           </div>
         </div>
+      )}
+
+      {/* TAB 9: MONITORING & HISTORICAL DRIFT */}
+      {activeTab === "history" && isInfra && (
+        <div
+          style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}
+        >
+          {/* Active Monitor Card */}
+          <div className="card" style={{ padding: "1.25rem 1.5rem" }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: "0.75rem",
+                flexWrap: "wrap",
+                gap: "0.75rem",
+              }}
+            >
+              <div
+                style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
+              >
+                <Icon name="schedule" size={20} />
+                <h3 className="card-title" style={{ margin: 0 }}>
+                  Scheduled Infrastructure Monitor
+                </h3>
+              </div>
+              <div>
+                {historyQuery.data?.monitor ? (
+                  <button
+                    className="btn btn-primary"
+                    onClick={() =>
+                      runNowMutation.mutate(historyQuery.data.monitor!.id)
+                    }
+                    disabled={runNowMutation.isPending}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "0.4rem",
+                    }}
+                  >
+                    <Icon name="refresh" size={16} />
+                    <span>
+                      {runNowMutation.isPending ? "Queuing scan…" : "Run Now"}
+                    </span>
+                  </button>
+                ) : (
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => setScheduleModalOpen(true)}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "0.4rem",
+                    }}
+                  >
+                    <Icon name="add" size={16} />
+                    <span>Schedule Monitoring</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {historyQuery.isLoading ? (
+              <LoadingState label="Loading monitoring telemetry…" />
+            ) : historyQuery.data?.monitor ? (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+                  gap: "1rem",
+                  marginTop: "1rem",
+                }}
+              >
+                <div
+                  style={{
+                    background: "var(--canvas-sunken)",
+                    padding: "0.75rem 1rem",
+                    borderRadius: "6px",
+                  }}
+                >
+                  <div
+                    className="secondary-text"
+                    style={{ fontSize: "0.75rem" }}
+                  >
+                    Cadence
+                  </div>
+                  <div
+                    style={{
+                      fontWeight: 600,
+                      fontSize: "0.95rem",
+                      textTransform: "capitalize",
+                    }}
+                  >
+                    {historyQuery.data.monitor.cadence.replace(/_/g, " ")}
+                  </div>
+                </div>
+                <div
+                  style={{
+                    background: "var(--canvas-sunken)",
+                    padding: "0.75rem 1rem",
+                    borderRadius: "6px",
+                  }}
+                >
+                  <div
+                    className="secondary-text"
+                    style={{ fontSize: "0.75rem" }}
+                  >
+                    Execution Target
+                  </div>
+                  <div style={{ fontWeight: 600, fontSize: "0.95rem" }}>
+                    {historyQuery.data.monitor.execution_target.type === "cloud"
+                      ? "Cloud Core Node"
+                      : "Registered Agent Machine"}
+                  </div>
+                </div>
+                <div
+                  style={{
+                    background: "var(--canvas-sunken)",
+                    padding: "0.75rem 1rem",
+                    borderRadius: "6px",
+                  }}
+                >
+                  <div
+                    className="secondary-text"
+                    style={{ fontSize: "0.75rem" }}
+                  >
+                    Next Scheduled Run
+                  </div>
+                  <div style={{ fontWeight: 600, fontSize: "0.95rem" }}>
+                    {new Date(
+                      historyQuery.data.monitor.next_run_at,
+                    ).toLocaleString()}
+                  </div>
+                </div>
+                <div
+                  style={{
+                    background: "var(--canvas-sunken)",
+                    padding: "0.75rem 1rem",
+                    borderRadius: "6px",
+                  }}
+                >
+                  <div
+                    className="secondary-text"
+                    style={{ fontSize: "0.75rem" }}
+                  >
+                    Last Run Status
+                  </div>
+                  <div style={{ fontWeight: 600, fontSize: "0.95rem" }}>
+                    {historyQuery.data.monitor.last_run_at ? (
+                      historyQuery.data.monitor.last_error ? (
+                        <span style={{ color: "var(--status-danger-ink)" }}>
+                          Failed
+                        </span>
+                      ) : (
+                        <span style={{ color: "var(--status-success-ink)" }}>
+                          Success
+                        </span>
+                      )
+                    ) : (
+                      "Pending initial run"
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <p
+                className="secondary-text"
+                style={{ margin: "0.5rem 0 0 0", fontSize: "0.875rem" }}
+              >
+                Automated continuous monitoring is not yet configured for{" "}
+                <strong>{targetDomain}</strong>. Schedule an automated cadence
+                to track drift and security regressions.
+              </p>
+            )}
+          </div>
+
+          {/* Historical Scans & "What Changed?" Diff Timeline */}
+          <div className="card" style={{ padding: "1.25rem 1.5rem" }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: "1rem",
+              }}
+            >
+              <div
+                style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
+              >
+                <Icon name="history" size={20} />
+                <h3 className="card-title" style={{ margin: 0 }}>
+                  Scan History &amp; What Changed?
+                </h3>
+              </div>
+              <span
+                className="secondary-text"
+                style={{ fontSize: "0.8125rem" }}
+              >
+                {historyQuery.data?.history?.length ?? 0} historical
+                assessment(s)
+              </span>
+            </div>
+
+            {historyQuery.isLoading ? (
+              <LoadingState label="Computing chronological diffs…" />
+            ) : !historyQuery.data?.history ||
+              historyQuery.data.history.length === 0 ? (
+              <div
+                className="secondary-text"
+                style={{ padding: "1.5rem", textAlign: "center" }}
+              >
+                No prior assessments recorded for this target domain.
+              </div>
+            ) : (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "1rem",
+                }}
+              >
+                {historyQuery.data.history.map((entry, idx) => {
+                  const isCurrent = entry.assessment_id === assessment.id;
+                  const hasRegressions = entry.security_regressions.length > 0;
+                  const hasDrift = entry.drift_events.length > 0;
+
+                  return (
+                    <div
+                      key={entry.assessment_id}
+                      style={{
+                        border: isCurrent
+                          ? "2px solid var(--accent)"
+                          : "1px solid var(--border)",
+                        borderRadius: "8px",
+                        padding: "1rem 1.25rem",
+                        background: isCurrent
+                          ? "var(--surface)"
+                          : "var(--canvas-sunken)",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          flexWrap: "wrap",
+                          gap: "0.5rem",
+                          marginBottom: "0.5rem",
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "0.6rem",
+                          }}
+                        >
+                          <span
+                            style={{ fontWeight: 600, fontSize: "0.95rem" }}
+                          >
+                            {new Date(entry.created_at).toLocaleString()}
+                          </span>
+                          {isCurrent && (
+                            <span className="badge fresh">Viewing</span>
+                          )}
+                          <span className="badge" style={{ fontWeight: 600 }}>
+                            Score: {entry.posture_score} ({entry.posture_grade})
+                          </span>
+                        </div>
+                        <div
+                          className="secondary-text"
+                          style={{ fontSize: "0.8125rem" }}
+                        >
+                          {entry.findings_count} finding(s)
+                        </div>
+                      </div>
+
+                      {/* Security Regressions Banner */}
+                      {hasRegressions && (
+                        <div
+                          style={{
+                            background: "rgba(220, 38, 38, 0.1)",
+                            border: "1px solid rgba(220, 38, 38, 0.3)",
+                            borderRadius: "6px",
+                            padding: "0.6rem 0.85rem",
+                            marginTop: "0.5rem",
+                            fontSize: "0.8125rem",
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontWeight: 700,
+                              color: "var(--status-danger-ink)",
+                              display: "flex",
+                              alignItems: "center",
+                              gap: "0.35rem",
+                              marginBottom: "0.25rem",
+                            }}
+                          >
+                            <Icon name="warning" size={15} />
+                            <span>
+                              Security Regression Detected (Change != Finding)
+                            </span>
+                          </div>
+                          <ul
+                            style={{
+                              margin: 0,
+                              paddingLeft: "1.2rem",
+                              color: "var(--status-danger-ink)",
+                            }}
+                          >
+                            {entry.security_regressions.map((reg, rIdx) => (
+                              <li key={rIdx}>
+                                <strong>{reg.title}:</strong> {reg.description}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {/* Configuration Drift Details */}
+                      {hasDrift && (
+                        <div
+                          style={{
+                            background: "rgba(234, 179, 8, 0.08)",
+                            border: "1px solid rgba(234, 179, 8, 0.25)",
+                            borderRadius: "6px",
+                            padding: "0.6rem 0.85rem",
+                            marginTop: "0.5rem",
+                            fontSize: "0.8125rem",
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontWeight: 600,
+                              color: "var(--status-warning-ink)",
+                              marginBottom: "0.25rem",
+                            }}
+                          >
+                            What changed since previous scan:
+                          </div>
+                          <ul
+                            style={{
+                              margin: 0,
+                              paddingLeft: "1.2rem",
+                              color: "var(--text)",
+                            }}
+                          >
+                            {entry.drift_events.map((drift, dIdx) => (
+                              <li key={dIdx}>
+                                <strong>{drift.title}:</strong>{" "}
+                                {drift.description}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {!hasRegressions &&
+                        !hasDrift &&
+                        idx < historyQuery.data.history.length - 1 && (
+                          <div
+                            className="secondary-text"
+                            style={{
+                              fontSize: "0.8125rem",
+                              marginTop: "0.5rem",
+                            }}
+                          >
+                            ✓ Baseline preserved — no configuration drift or
+                            regressions detected.
+                          </div>
+                        )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {isInfra && (
+        <ScheduleMonitorModal
+          isOpen={scheduleModalOpen}
+          domain={targetDomain}
+          onClose={() => setScheduleModalOpen(false)}
+          onCreated={() => {
+            setScheduleModalOpen(false);
+            void queryClient.invalidateQueries({
+              queryKey: ["domainHistory", targetDomain],
+            });
+          }}
+        />
       )}
     </div>
   );

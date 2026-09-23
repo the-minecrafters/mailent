@@ -1,3 +1,9 @@
+#![allow(
+    clippy::collapsible_if,
+    clippy::unnecessary_map_or,
+    clippy::let_and_return
+)]
+
 use mailent_core::{api::create_router, config::CoreConfig, state::AppState};
 use tokio::net::TcpListener;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -37,6 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     mailent_core::scheduler::start_intelligence_refresh_scheduler(state.clone());
     mailent_core::scheduler::start_verification_scheduler(state.clone());
+    mailent_core::scheduler::start_infrastructure_monitoring_scheduler(state.clone());
 
     mailent_core::probes::recover_stale_probes(&state).await?;
     let recovery_state = state.clone();
@@ -49,7 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
-    let mut app = mailent_core::auth::protect(create_router(state), auth);
+    let mut app = mailent_core::auth::protect(create_router(state.clone()), auth, state);
     if let Ok(directory) = std::env::var("MAILENT_WEB_DIR") {
         use tower_http::services::{ServeDir, ServeFile};
         app = app.fallback_service(

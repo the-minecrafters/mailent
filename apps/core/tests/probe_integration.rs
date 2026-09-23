@@ -32,6 +32,7 @@ async fn seed(state: &AppState) -> (Asset, Investigation) {
         active_findings_count: 0,
         first_seen: now,
         last_seen: now,
+        organization_id: None,
     };
     state.assets.upsert(asset.clone()).await.unwrap();
     let inv = Investigation {
@@ -145,6 +146,9 @@ async fn unknown_passive_is_not_a_mismatch_and_drift_is_separate() {
         new_value: "TLSv1.0".into(),
         observed_at: passive.last_seen,
         session_id: Some(passive.session_id),
+        assessment_id: None,
+        domain: None,
+        organization_id: None,
     };
     state.assets.save_drift_event(event.clone()).await.unwrap();
     let mut result = ProbeResult::unavailable("127.0.0.1", None);

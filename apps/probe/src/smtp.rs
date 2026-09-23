@@ -44,6 +44,7 @@ impl SmtpProbeError {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct ProbeLimits {
     /// Exact protocol challenge, used only by authorized remediation verification.
     pub forced_tls_version: Option<TlsVersion>,
@@ -183,6 +184,25 @@ async fn exchange(
             "unexpected plaintext after STARTTLS acceptance".into(),
         ));
     }
+    if ehlo.is_none() {
+        result.starttls = ProbeStartTlsResult::ImplicitTls;
+    }
+    let stream = reader.into_inner();
+    if let Some(mut tls) = perform_tls_handshake(host, stream, limits, result).await?
+        && ehlo.is_some()
+    {
+        result.starttls = ProbeStartTlsResult::AdvertisedAndAccepted;
+        let _ = tls.write_all(b"QUIT\r\n").await;
+    }
+    Ok(())
+}
+
+async fn perform_tls_handshake(
+    host: &str,
+    stream: TcpStream,
+    limits: &ProbeLimits,
+    result: &mut ProbeResult,
+) -> Result<Option<tokio_openssl::SslStream<TcpStream>>, SmtpProbeError> {
     let tls_error =
         |e: openssl::error::ErrorStack| SmtpProbeError::TlsHandshakeFailed(e.to_string());
     let mut connector = SslConnector::builder(SslMethod::tls()).map_err(tls_error)?;
@@ -215,15 +235,12 @@ async fn exchange(
         .build()
         .configure()
         .map_err(tls_error)?
-        .into_ssl(host)
+        .into_ssl(host.trim_end_matches('.'))
         .map_err(tls_error)?;
-    let mut tls = tokio_openssl::SslStream::new(ssl, reader.into_inner()).map_err(tls_error)?;
+    let mut tls = tokio_openssl::SslStream::new(ssl, stream).map_err(tls_error)?;
     if let Err(e) = Pin::new(&mut tls).connect().await {
         result.error = Some(format!("TLS handshake failed: {e}"));
-        return Ok(());
-    }
-    if ehlo.is_some() {
-        result.starttls = ProbeStartTlsResult::AdvertisedAndAccepted;
+        return Ok(None);
     }
     let ssl = tls.ssl();
     result.tls_version = Some(match ssl.version_str() {
@@ -256,7 +273,8 @@ async fn exchange(
             .public_key()
             .and_then(|k| k.public_key_to_der())
             .map_err(tls_error)?;
-        let (mut observation, hostname_valid) = parse_certificate(&der, host)?;
+        let (mut observation, hostname_valid) =
+            parse_certificate(&der, host.trim_end_matches('.'))?;
         // Chain/trust state is deterministic active-probe evidence from OpenSSL.
         let details = observation
             .crypto_details
@@ -280,11 +298,147 @@ async fn exchange(
         result.certificate_hostname_valid = Some(hostname_valid);
         result.certificate_der = der;
     }
-    // No application commands on implicit TLS: IMAP/POP3 have different logout syntax.
-    if ehlo.is_some() {
-        tls.write_all(b"QUIT\r\n").await?;
+    Ok(Some(tls))
+}
+
+pub async fn probe_imap_starttls(
+    host: &str,
+    port: u16,
+    limits: &ProbeLimits,
+    scope: &ProbeScope,
+) -> Result<ProbeResult, SmtpProbeError> {
+    scope.validate(host)?;
+    let started = Instant::now();
+    let mut result = ProbeResult::unavailable(host, None);
+    let work = async {
+        let stream = tokio::time::timeout(
+            limits.connect_timeout,
+            TcpStream::connect((host.trim_end_matches('.'), port)),
+        )
+        .await
+        .map_err(|_| SmtpProbeError::Timeout(limits.connect_timeout.as_secs()))?
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::ConnectionRefused {
+                SmtpProbeError::ConnectionRefused
+            } else {
+                SmtpProbeError::Io(e)
+            }
+        })?;
+        result.resolved_ip = Some(stream.peer_addr()?.ip().to_string());
+        let mut reader = BufReader::new(stream);
+        let mut greeting = String::new();
+        reader.read_line(&mut greeting).await?;
+        if !greeting.starts_with("* OK") && !greeting.starts_with("* PREAUTH") {
+            return Err(SmtpProbeError::Protocol(format!(
+                "invalid IMAP greeting: {}",
+                greeting.trim()
+            )));
+        }
+        result.smtp_greeting = Some(greeting.trim().to_string());
+
+        reader.get_mut().write_all(b"a001 STARTTLS\r\n").await?;
+        let mut reply = String::new();
+        reader.read_line(&mut reply).await?;
+        if !reply.starts_with("a001 OK") {
+            result.starttls = ProbeStartTlsResult::AdvertisedAndRejected;
+            result.error = Some(format!("IMAP STARTTLS rejected: {}", reply.trim()));
+            let _ = reader.get_mut().write_all(b"a002 LOGOUT\r\n").await;
+            return Ok(());
+        }
+        result.starttls = ProbeStartTlsResult::AcceptedHandshakeFailed;
+
+        let stream = reader.into_inner();
+        if let Some(mut tls) = perform_tls_handshake(host, stream, limits, &mut result).await? {
+            result.starttls = ProbeStartTlsResult::AdvertisedAndAccepted;
+            let _ = tls.write_all(b"a002 LOGOUT\r\n").await;
+        }
+        Ok(())
+    };
+    let failure = match tokio::time::timeout(limits.read_timeout, work).await {
+        Ok(Ok(())) => None,
+        Ok(Err(e)) => Some(e),
+        Err(_) => Some(SmtpProbeError::Timeout(limits.read_timeout.as_secs())),
+    };
+    if let Some(error) = failure {
+        result.error = Some(error.to_string());
+        result.latency_ms = started.elapsed().as_millis() as u64;
+        return Err(SmtpProbeError::Partial {
+            source: Box::new(error),
+            evidence: Box::new(result),
+        });
     }
-    Ok(())
+    result.latency_ms = started.elapsed().as_millis() as u64;
+    Ok(result)
+}
+
+pub async fn probe_pop3_stls(
+    host: &str,
+    port: u16,
+    limits: &ProbeLimits,
+    scope: &ProbeScope,
+) -> Result<ProbeResult, SmtpProbeError> {
+    scope.validate(host)?;
+    let started = Instant::now();
+    let mut result = ProbeResult::unavailable(host, None);
+    let work = async {
+        let stream = tokio::time::timeout(
+            limits.connect_timeout,
+            TcpStream::connect((host.trim_end_matches('.'), port)),
+        )
+        .await
+        .map_err(|_| SmtpProbeError::Timeout(limits.connect_timeout.as_secs()))?
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::ConnectionRefused {
+                SmtpProbeError::ConnectionRefused
+            } else {
+                SmtpProbeError::Io(e)
+            }
+        })?;
+        result.resolved_ip = Some(stream.peer_addr()?.ip().to_string());
+        let mut reader = BufReader::new(stream);
+        let mut greeting = String::new();
+        reader.read_line(&mut greeting).await?;
+        if !greeting.starts_with("+OK") {
+            return Err(SmtpProbeError::Protocol(format!(
+                "invalid POP3 greeting: {}",
+                greeting.trim()
+            )));
+        }
+        result.smtp_greeting = Some(greeting.trim().to_string());
+
+        reader.get_mut().write_all(b"STLS\r\n").await?;
+        let mut reply = String::new();
+        reader.read_line(&mut reply).await?;
+        if !reply.starts_with("+OK") {
+            result.starttls = ProbeStartTlsResult::AdvertisedAndRejected;
+            result.error = Some(format!("POP3 STLS rejected: {}", reply.trim()));
+            let _ = reader.get_mut().write_all(b"QUIT\r\n").await;
+            return Ok(());
+        }
+        result.starttls = ProbeStartTlsResult::AcceptedHandshakeFailed;
+
+        let stream = reader.into_inner();
+        if let Some(mut tls) = perform_tls_handshake(host, stream, limits, &mut result).await? {
+            result.starttls = ProbeStartTlsResult::AdvertisedAndAccepted;
+            let _ = tls.write_all(b"QUIT\r\n").await;
+        }
+        Ok(())
+    };
+    let failure = match tokio::time::timeout(limits.read_timeout, work).await {
+        Ok(Ok(())) => None,
+        Ok(Err(e)) => Some(e),
+        Err(_) => Some(SmtpProbeError::Timeout(limits.read_timeout.as_secs())),
+    };
+    if let Some(error) = failure {
+        result.error = Some(error.to_string());
+        result.latency_ms = started.elapsed().as_millis() as u64;
+        return Err(SmtpProbeError::Partial {
+            source: Box::new(error),
+            evidence: Box::new(result),
+        });
+    }
+    result.latency_ms = started.elapsed().as_millis() as u64;
+    Ok(result)
 }
 
 fn require_code(lines: &[String], code: &str) -> Result<(), SmtpProbeError> {

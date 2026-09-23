@@ -3,6 +3,7 @@ members = [
     "apps/core",
     "apps/sensor",
     "apps/probe",
+    "apps/cli",
     "crates/domain",
     "crates/events",
     "crates/policy",
@@ -12,6 +13,7 @@ members = [
     "crates/decision",
     "crates/integrations",
     "crates/reporting",
+    "crates/scanner",
 ]
 resolver = "2"
 
@@ -33,6 +35,7 @@ mailent-storage = { path = "crates/storage" }
 mailent-decision = { path = "crates/decision" }
 mailent-integrations = { path = "crates/integrations" }
 mailent-reporting = { path = "crates/reporting" }
+mailent-scanner = { path = "crates/scanner" }
 
 # Async & Runtime
 tokio = { version = "1.43", features = ["full"] }

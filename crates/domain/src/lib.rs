@@ -5,6 +5,7 @@ pub mod capture;
 pub mod cert;
 pub mod cert_crypto;
 pub mod decision;
+pub mod device;
 pub mod dnssec;
 pub mod drift;
 pub mod error;
@@ -14,6 +15,7 @@ pub mod integration;
 pub mod intelligence;
 pub mod investigation;
 pub mod observation;
+pub mod organization;
 pub mod posture;
 pub mod probe;
 pub mod protocol;
@@ -24,7 +26,10 @@ pub mod simulation;
 pub mod tls;
 pub mod training;
 
-pub use assessment::{AssessmentRecord, AssessmentSummary, ProtocolEvidence};
+pub use assessment::{
+    AssessmentRecord, AssessmentSource, AssessmentSummary, CaptureMetadata, DiscoveredEndpoint,
+    DiscoveryEvidence, InfrastructureMetadata, ProtocolEvidence,
+};
 pub use asset::{Asset, AssetEndpoint, AssetIdentity};
 pub use baseline::{AnomalySignal, AssetBaseline};
 pub use capture::{CaptureEvidence, TimelineEvent};
@@ -79,4 +84,10 @@ pub use training::{
 };
 
 pub mod remediation;
+pub use device::*;
+pub use organization::*;
 pub use remediation::*;
+pub mod job;
+pub use job::*;
+pub mod monitor;
+pub use monitor::*;

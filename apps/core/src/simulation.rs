@@ -21,8 +21,13 @@ use crate::state::AppState;
 pub struct PolicyPackSummary {
     pub name: String,
     pub version: String,
+    pub title: String,
     pub description: String,
+    pub rule_count: usize,
     pub rules_count: usize,
+    pub require_pfs: bool,
+    pub require_mta_sts: bool,
+    pub require_dane: bool,
     pub rules: Vec<PolicyRuleSummary>,
 }
 
@@ -38,11 +43,29 @@ pub struct PolicyRuleSummary {
 
 impl PolicyPackSummary {
     pub fn from_pack(pack: &PolicyPack) -> Self {
+        let title = match pack.name.as_str() {
+            "modern" => "Modern Baseline".to_string(),
+            "high-security" => "High Security Strict".to_string(),
+            "permissive" => "Permissive Transport".to_string(),
+            other => other.to_string(),
+        };
+        let require_pfs = pack
+            .rules
+            .iter()
+            .any(|r| r.id == "FORWARD_SECRECY_MISSING" || r.id == "PFS_REQUIRED");
+        let require_mta_sts = pack.rules.iter().any(|r| r.id.contains("MTA_STS"));
+        let require_dane = pack.rules.iter().any(|r| r.id.contains("DANE"));
+
         Self {
             name: pack.name.clone(),
             version: pack.version.clone(),
+            title,
             description: pack.description.clone(),
+            rule_count: pack.rules.len(),
             rules_count: pack.rules.len(),
+            require_pfs,
+            require_mta_sts,
+            require_dane,
             rules: pack
                 .rules
                 .iter()

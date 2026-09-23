@@ -73,6 +73,9 @@ const icons: Record<string, LucideIcon> = {
   content_copy: Copy,
   check: Check,
   monitoring: Activity,
+  devices: Monitor,
+  phonelink_lock: LockKeyhole,
+  block: CircleAlert,
 };
 export interface IconProps {
   name: string;

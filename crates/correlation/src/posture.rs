@@ -676,6 +676,7 @@ mod tests {
                 observation_id: None,
                 description: format!("Observed {rule_id}"),
             }],
+            organization_id: None,
         }
     }
 

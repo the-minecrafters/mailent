@@ -2661,29 +2661,138 @@ input[type="checkbox"] {
   }
 }
 
-.sign-in-page { min-height: 100dvh; display: grid; place-items: center; padding: 24px; background: radial-gradient(ellipse at 25% 15%, #e5f2ed, transparent 65%), #f5f7f7; }
-.sign-in-card { width: min(100%, 440px); padding: 36px; border: 1px solid #dee5e1; border-radius: 6px; background: white; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04); }
-.sign-in-brand { display: flex; align-items: center; gap: 10px; font-size: 24px; margin-bottom: 28px; }
-.sign-in-card h1 { font-size: 24px; letter-spacing: -.5px; margin: 8px 0; }
-.sign-in-card p { color: #586a63; line-height: 1.5; font-size: 14px; }
-.sign-in-form { display: flex; flex-direction: column; gap: 12px; margin-top: 20px; }
-.sign-in-form label { font-size: 13px; font-weight: 600; }
-.sign-in-form input { border: 1px solid #cdd8d2; border-radius: 4px; padding: 10px 12px; font: inherit; }
-.sign-in-form .btn { margin-top: 8px; justify-content: center; }
-.sign-in-form p { font-size: 12px; text-align: center; }
-.sidebar-footer > div { min-width: 0; flex: 1; }
+.sign-in-page {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(ellipse at 25% 15%, #e5f2ed, transparent 65%), #f5f7f7;
+}
+.sign-in-card {
+  width: min(100%, 440px);
+  padding: 36px;
+  border: 1px solid #dee5e1;
+  border-radius: 6px;
+  background: white;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
+}
+.sign-in-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 24px;
+  margin-bottom: 28px;
+}
+.sign-in-card h1 {
+  font-size: 24px;
+  letter-spacing: -0.5px;
+  margin: 8px 0;
+}
+.sign-in-card p {
+  color: #586a63;
+  line-height: 1.5;
+  font-size: 14px;
+}
+.sign-in-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 20px;
+}
+.sign-in-form label {
+  font-size: 13px;
+  font-weight: 600;
+}
+.sign-in-form input {
+  border: 1px solid #cdd8d2;
+  border-radius: 4px;
+  padding: 10px 12px;
+  font: inherit;
+}
+.sign-in-form .btn {
+  margin-top: 8px;
+  justify-content: center;
+}
+.sign-in-form p {
+  font-size: 12px;
+  text-align: center;
+}
+.sidebar-footer > div {
+  min-width: 0;
+  flex: 1;
+}
 
 /* Readable working typography: semibold is the default, with no tiny metadata. */
-body, button, input, select, textarea { font-weight: 600; }
-.app-shell :is(p,span,a,div,td,th,button,label,small,input,select,textarea) { font-weight: 600; }
-.app-shell :is(.secondary-text,.eyebrow,.nav-group-title,.workspace-footnote,.metric-description,.card-description,.badge,.brand-subtitle,.breadcrumb,.supported-formats,.capture-servers) { font-size:14px!important; }
-.app-shell :is([style*="font-size: 0.75rem"],[style*="font-size: 0.7rem"],[style*="font-size: 0.6875rem"],[style*="font-size: 0.65rem"],[style*="font-size: 0.8125rem"]) { font-size:14px!important; }
-.nav-item { font-size:15px; }
-.sidebar-footer span { font-size:14px; }
-.console-main { font-size:15px; }
-.overview-metric .metric-heading { font-size:15px; }
-.overview-metric .metric-description { line-height:1.5; }
-.onboarding-steps p, .getting-started-copy p, .empty-state p { font-size:15px; }
-.assessment-workspace .card { overflow-wrap:anywhere; }
-.assessment-workspace .card div[style*="display: flex"] { flex-wrap:wrap; min-width:0; }
-@media(min-width:1100px) { .console-main { padding:36px 40px; } .overview-grid { gap:24px; } }
+body,
+button,
+input,
+select,
+textarea {
+  font-weight: 600;
+}
+.app-shell
+  :is(p, span, a, div, td, th, button, label, small, input, select, textarea) {
+  font-weight: 600;
+}
+.app-shell
+  :is(
+    .secondary-text,
+    .eyebrow,
+    .nav-group-title,
+    .workspace-footnote,
+    .metric-description,
+    .card-description,
+    .badge,
+    .brand-subtitle,
+    .breadcrumb,
+    .supported-formats,
+    .capture-servers
+  ) {
+  font-size: 14px !important;
+}
+.app-shell
+  :is(
+    [style*="font-size: 0.75rem"],
+    [style*="font-size: 0.7rem"],
+    [style*="font-size: 0.6875rem"],
+    [style*="font-size: 0.65rem"],
+    [style*="font-size: 0.8125rem"]
+  ) {
+  font-size: 14px !important;
+}
+.nav-item {
+  font-size: 15px;
+}
+.sidebar-footer span {
+  font-size: 14px;
+}
+.console-main {
+  font-size: 15px;
+}
+.overview-metric .metric-heading {
+  font-size: 15px;
+}
+.overview-metric .metric-description {
+  line-height: 1.5;
+}
+.onboarding-steps p,
+.getting-started-copy p,
+.empty-state p {
+  font-size: 15px;
+}
+.assessment-workspace .card {
+  overflow-wrap: anywhere;
+}
+.assessment-workspace .card div[style*="display: flex"] {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+@media (min-width: 1100px) {
+  .console-main {
+    padding: 36px 40px;
+  }
+  .overview-grid {
+    gap: 24px;
+  }
+}

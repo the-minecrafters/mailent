@@ -50,6 +50,8 @@ pub struct Asset {
     pub first_seen: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
     pub last_seen: OffsetDateTime,
+    #[serde(default)]
+    pub organization_id: Option<Uuid>,
 }
 
 impl Asset {

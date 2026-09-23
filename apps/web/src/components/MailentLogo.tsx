@@ -1,4 +1,4 @@
-import { useId, type CSSProperties } from "react";
+import { type CSSProperties, useId } from "react";
 
 export interface MailentLogoProps {
   size?: number | string;
@@ -25,7 +25,12 @@ export function MailentLogo({
       role="img"
       aria-label={ariaLabel}
       className={className}
-      style={{ display: "inline-block", flexShrink: 0, verticalAlign: "middle", ...style }}
+      style={{
+        display: "inline-block",
+        flexShrink: 0,
+        verticalAlign: "middle",
+        ...style,
+      }}
     >
       <defs>
         <clipPath id={clipId}>

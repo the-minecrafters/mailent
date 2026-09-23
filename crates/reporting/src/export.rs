@@ -79,6 +79,65 @@ struct SectionData {
 fn evidence_sections(report: &ForensicReport) -> Vec<SectionData> {
     let mut sections = Vec::new();
 
+    // Mail Infrastructure & External Policies (when present)
+    if let Some(infra) = &report.infrastructure {
+        let mut rows = vec![
+            ("Target domain".to_string(), infra.domain.clone()),
+            ("DNSSEC state".to_string(), infra.dnssec_status.clone()),
+            (
+                "MX records".to_string(),
+                if infra.mx_records.is_empty() {
+                    "None discovered".to_string()
+                } else {
+                    infra.mx_records.join(", ")
+                },
+            ),
+            (
+                "MTA-STS policy".to_string(),
+                infra
+                    .mta_sts_mode
+                    .as_deref()
+                    .unwrap_or("Not published")
+                    .to_string(),
+            ),
+            (
+                "TLS-RPT destination".to_string(),
+                infra
+                    .tls_rpt_destination
+                    .as_deref()
+                    .unwrap_or("Not published")
+                    .to_string(),
+            ),
+        ];
+        if let Some(details) = &infra.mta_sts_policy_details {
+            rows.push(("MTA-STS details".to_string(), details.clone()));
+        }
+
+        let mut bullets = Vec::new();
+        for ep in &infra.discovered_endpoints {
+            bullets.push(format!(
+                "[{}] {}:{} (priority: {}) | STARTTLS: {} | TLS: {} | Cipher: {} | DANE: {}",
+                ep.service,
+                ep.host,
+                ep.port,
+                ep.priority
+                    .map(|p| p.to_string())
+                    .unwrap_or_else(|| "n/a".into()),
+                ep.starttls_status,
+                ep.tls_version.as_deref().unwrap_or("unavailable"),
+                ep.cipher.as_deref().unwrap_or("unavailable"),
+                ep.dane_status,
+            ));
+        }
+
+        sections.push(SectionData {
+            heading: format!("Mail Infrastructure & Policies: {}", infra.domain),
+            provenance: ProvenanceClass::ObservedFact,
+            rows,
+            bullets,
+        });
+    }
+
     // Sessions & transport
     for session in &report.sessions {
         let mut rows = vec![
