@@ -25,7 +25,7 @@ COPY --from=rust /app/target/release/mailent-core /usr/local/bin/mailent-core
 COPY --from=rust /app/target/release/mailent-sensor /usr/local/bin/mailent-sensor
 COPY --from=web /app/apps/web/dist /app/web
 WORKDIR /app
-ENV MAILENT_CORE_HOST=0.0.0.0 MAILENT_CORE_ENVIRONMENT=production MAILENT_WEB_DIR=/app/web MAILENT_SENSOR_BIN=/usr/local/bin/mailent-sensor MAILENT_ZEEK=/usr/local/zeek/bin/zeek MAILENT_DATABASE_SCHEMA=mailent MAILENT_RUN_MIGRATIONS=false
+ENV MAILENT_CORE_HOST=0.0.0.0 MAILENT_CORE_ENVIRONMENT=production MAILENT_WEB_DIR=/app/web MAILENT_SENSOR_BIN=/usr/local/bin/mailent-sensor MAILENT_ZEEK=/usr/local/zeek/bin/zeek MAILENT_DATABASE_SCHEMA=mailent MAILENT_RUN_MIGRATIONS=true
 USER 65532:65532
 EXPOSE 10000
 CMD ["mailent-core"]
