@@ -125,23 +125,24 @@ impl AppState {
             Arc<dyn ArchivedReportRepository>,
             Arc<dyn AssessmentRepository>,
         ) = if let Some(ref pg) = pg_storage {
-            tracing::info!("Connecting to PostgreSQL control plane storage");
+            tracing::info!("Connecting to PostgreSQL control plane storage (with in-memory guest support)");
+            let dual = Arc::new(crate::dual_storage::DualStorage::new(pg.clone(), mem.clone()));
             (
-                pg.clone(),
-                pg.clone(),
-                pg.clone(),
-                pg.clone(),
-                pg.clone(),
-                pg.clone(),
-                pg.clone(),
-                pg.clone(),
-                pg.clone(),
-                pg.clone(),
-                pg.clone(),
-                pg.clone(),
-                pg.clone(),
-                pg.clone(),
-                pg.clone(),
+                dual.clone(),
+                dual.clone(),
+                dual.clone(),
+                dual.clone(),
+                dual.clone(),
+                dual.clone(),
+                dual.clone(),
+                dual.clone(),
+                dual.clone(),
+                dual.clone(),
+                dual.clone(),
+                dual.clone(),
+                dual.clone(),
+                dual.clone(),
+                dual,
             )
         } else {
             tracing::warn!(
@@ -173,8 +174,9 @@ impl AppState {
                     ClickHouseStorage::connect(ch_url, &config.clickhouse_database).await?,
                 );
                 (ch.clone(), ch)
-            } else if let Some(pg) = pg_storage {
-                (pg.clone(), pg)
+            } else if let Some(ref pg) = pg_storage {
+                let dual = Arc::new(crate::dual_storage::DualStorage::new(pg.clone(), mem.clone()));
+                (dual.clone(), dual)
             } else {
                 tracing::warn!(
                     "No MAILENT_CLICKHOUSE_URL provided; using in-memory analytical storage"

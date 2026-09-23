@@ -397,7 +397,7 @@ function SiteRoutes() {
 }
 
 function Workspace() {
-  const { user, signOut } = useAuth();
+  const { user, isGuest, signOut, openSignIn } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -477,25 +477,32 @@ function Workspace() {
           <Icon name="computer" size={19} />
         </span>
         <div>
-          <strong>{user ? "Private workspace" : "Local workspace"}</strong>
+          <strong>{user?.email ?? "Guest workspace"}</strong>
           <span>
-            {readinessQuery.data?.storage === "in_memory"
-              ? "Temporary storage"
-              : readinessQuery.data?.storage
-                ? "Persistent storage"
-                : "Storage unavailable"}
+            {user
+              ? "Persistent PostgreSQL"
+              : "In-memory (non-persistent)"}
           </span>
         </div>
-        {signOut && (
+        {user && signOut ? (
           <Button
             variant="secondary"
             aria-label="Sign out"
-            title={user?.email}
+            title={`Sign out (${user.email})`}
             onClick={() => void signOut()}
           >
             <Icon name="logout" size={18} />
           </Button>
-        )}
+        ) : openSignIn ? (
+          <Button
+            variant="secondary"
+            aria-label="Sign in"
+            title="Sign in for persistent storage"
+            onClick={() => openSignIn()}
+          >
+            <Icon name="login" size={18} />
+          </Button>
+        ) : null}
       </div>
     </>
   );
@@ -560,6 +567,37 @@ function Workspace() {
             {id && <span className="breadcrumb-detail">/ Details</span>}
           </div>
           <div className="topbar-actions">
+            {user ? (
+              <span
+                className="badge fresh"
+                title={`Signed in as ${user.email}. Captures persist to database.`}
+                style={{ fontSize: "0.75rem" }}
+              >
+                Persisted
+              </span>
+            ) : (
+              <button
+                type="button"
+                onClick={openSignIn}
+                className="btn-link"
+                title="Non-persistent mode. Click to sign in for PostgreSQL persistence."
+                style={{
+                  background: "var(--surface-subtle)",
+                  border: "1px solid var(--hairline)",
+                  padding: "0.2rem 0.5rem",
+                  borderRadius: "2px",
+                  fontSize: "0.75rem",
+                  color: "var(--ink-secondary)",
+                  cursor: "pointer",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "0.3rem",
+                }}
+              >
+                <span>Guest (In-Memory)</span>
+                <span style={{ textDecoration: "underline", color: "var(--ink-primary)" }}>Sign in</span>
+              </button>
+            )}
             <span
               role={readinessQuery.isPending ? "status" : undefined}
               className={`connection-status ${connected ? "online" : "offline"}`}
@@ -823,15 +861,14 @@ function AssessmentsTab({
                     </td>
                     <td>
                       {a.protocols_identified.length === 0 ? (
-                        <span className="badge">None</span>
+                        <span className="secondary-text">None</span>
                       ) : (
                         a.protocols_identified.map((proto, idx) => (
                           <span
                             key={idx}
-                            className="badge fresh"
+                            className="tag"
                             style={{
                               marginRight: "0.25rem",
-                              fontSize: "0.7rem",
                             }}
                           >
                             {proto}
@@ -840,7 +877,7 @@ function AssessmentsTab({
                       )}
                     </td>
                     <td>
-                      <span className="badge">{a.session_count} flows</span>
+                      <span>{a.session_count} flows</span>
                     </td>
                     <td>
                       {a.finding_count > 0 ? (
@@ -850,27 +887,19 @@ function AssessmentsTab({
                               ? "critical"
                               : a.ai_risk_classification === "HIGH"
                                 ? "high"
-                                : "warning"
+                                : "medium"
                           }`}
                         >
                           {a.finding_count} issue(s)
                         </span>
                       ) : (
-                        <span className="badge fresh">0 issues</span>
+                        <span className="secondary-text">0 issues</span>
                       )}
                     </td>
                     <td>
-                      <span
-                        className={`badge ${
-                          a.posture_score >= 80
-                            ? "fresh"
-                            : a.posture_score >= 60
-                              ? "warning"
-                              : "critical"
-                        }`}
-                        style={{ fontWeight: 700 }}
-                      >
-                        {Math.round(a.posture_score)}/100 ({a.posture_grade})
+                      <span>{Math.round(a.posture_score)}/100</span>{" "}
+                      <span className={`grade-badge ${a.posture_grade}`}>
+                        {a.posture_grade}
                       </span>
                     </td>
                     <td>
@@ -884,7 +913,6 @@ function AssessmentsTab({
                                 ? "fresh"
                                 : ""
                         }`}
-                        style={{ fontSize: "0.7rem", fontWeight: 700 }}
                       >
                         {a.ai_risk_classification}
                       </span>
@@ -1334,7 +1362,7 @@ function AssetsTab({
                     {asset.endpoints.map((e, idx) => (
                       <span
                         key={idx}
-                        className="badge"
+                        className="tag mono"
                         style={{ marginRight: "0.35rem" }}
                       >
                         {e.protocol.toUpperCase()}:{e.port}
@@ -1347,14 +1375,14 @@ function AssetsTab({
                         {asset.active_findings_count} finding(s)
                       </span>
                     ) : (
-                      <span className="badge fresh">No findings</span>
+                      <span className="secondary-text">No findings</span>
                     )}
                   </td>
                   <td>
                     {asset.probe_authorized ? (
                       <span className="badge fresh">Authorized</span>
                     ) : (
-                      <span className="badge">Not authorized</span>
+                      <span className="secondary-text">Not authorized</span>
                     )}
                   </td>
                   <td

@@ -17,6 +17,7 @@ mailent-integrations = { workspace = true }
 mailent-baseline = { workspace = true }
 mailent-reporting = { workspace = true }
 mailent-probe = { path = "../probe" }
+async-trait = { workspace = true }
 
 tokio = { workspace = true }
 axum = { workspace = true }

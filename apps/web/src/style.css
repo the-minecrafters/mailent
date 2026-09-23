@@ -507,70 +507,79 @@ button:disabled,
   transform: none;
 }
 
-/* Badges (Text + explicit contrast border, no bare color) */
-.badge {
+/* Badges & Tags (Sharp, understated contrast border, technical forensic styling) */
+.badge,
+.tag {
   display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
-  padding: 0.2rem 0.55rem;
+  gap: 0.25rem;
+  padding: 0.15rem 0.45rem;
   font-size: 0.75rem;
-  font-weight: 600;
-  border-radius: 4px;
+  font-weight: 550;
+  border-radius: 2px;
   border: 1px solid var(--hairline);
   background: var(--surface-subtle);
   color: var(--ink-primary);
   line-height: 1.2;
 }
 
-/* Severity Badges */
+/* Severity Indicators */
 .badge.critical,
-.badge-critical {
-  color: var(--status-danger-ink);
-  background: var(--status-danger-bg);
-  border-color: var(--status-danger-border);
+.badge-critical,
+.severity-critical {
+  color: #991b1b;
+  background: #fef2f2;
+  border-color: #fecaca;
+  font-weight: 600;
 }
 
 .badge.high,
-.badge-high {
-  color: #c2410c;
+.badge-high,
+.severity-high {
+  color: #9a3412;
   background: #fff7ed;
   border-color: #fed7aa;
+  font-weight: 600;
 }
 
 .badge.medium,
-.badge-medium {
-  color: var(--status-warning-ink);
-  background: var(--status-warning-bg);
-  border-color: var(--status-warning-border);
+.badge-medium,
+.severity-medium {
+  color: #854d0e;
+  background: #fefce8;
+  border-color: #fef08a;
+  font-weight: 600;
 }
 
 .badge.low,
-.badge-low {
-  color: var(--status-info-ink);
-  background: var(--status-info-bg);
-  border-color: var(--status-info-border);
+.badge-low,
+.severity-low {
+  color: #1e40af;
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  font-weight: 600;
 }
 
 /* Verification Freshness Badges */
 .badge.fresh,
 .badge-fresh {
-  color: var(--status-success-ink);
-  background: var(--status-success-bg);
-  border-color: var(--status-success-border);
+  color: #166534;
+  background: #f0fdf4;
+  border-color: #bbf7d0;
 }
 
 .badge.aging,
 .badge-aging {
-  color: var(--status-warning-ink);
-  background: var(--status-warning-bg);
-  border-color: var(--status-warning-border);
+  color: #854d0e;
+  background: #fefce8;
+  border-color: #fef08a;
 }
 
 .badge.stale,
 .badge-stale {
-  color: var(--status-danger-ink);
-  background: var(--status-danger-bg);
-  border-color: var(--status-danger-border);
+  color: #991b1b;
+  background: #fef2f2;
+  border-color: #fecaca;
 }
 
 .badge.never_verified,
@@ -580,14 +589,15 @@ button:disabled,
   border-color: var(--hairline);
 }
 
-/* Posture Grades */
+/* Posture Grades (Sharp block tags) */
 .grade-badge {
-  font-size: 0.8125rem;
-  font-weight: 600;
-  padding: 0.15rem 0.6rem;
-  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.1rem 0.45rem;
+  border-radius: 2px;
   display: inline-block;
   border: 1px solid var(--hairline);
+  letter-spacing: 0.02em;
 }
 
 .grade-badge.A {
@@ -2652,13 +2662,13 @@ input[type="checkbox"] {
 }
 
 .sign-in-page { min-height: 100dvh; display: grid; place-items: center; padding: 24px; background: radial-gradient(ellipse at 25% 15%, #e5f2ed, transparent 65%), #f5f7f7; }
-.sign-in-card { width: min(100%, 440px); padding: 40px; border: 1px solid #dee5e1; border-radius: 16px; background: white; box-shadow: 0 12px 48px #1d48350b; }
-.sign-in-brand { display: flex; align-items: center; gap: 10px; font-size: 24px; margin-bottom: 36px; }
-.sign-in-card h1 { font-size: 28px; letter-spacing: -.7px; margin: 10px 0; }
-.sign-in-card p { color: #586a63; line-height: 1.6; font-size: 14px; }
-.sign-in-form { display: flex; flex-direction: column; gap: 10px; margin-top: 24px; }
+.sign-in-card { width: min(100%, 440px); padding: 36px; border: 1px solid #dee5e1; border-radius: 6px; background: white; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04); }
+.sign-in-brand { display: flex; align-items: center; gap: 10px; font-size: 24px; margin-bottom: 28px; }
+.sign-in-card h1 { font-size: 24px; letter-spacing: -.5px; margin: 8px 0; }
+.sign-in-card p { color: #586a63; line-height: 1.5; font-size: 14px; }
+.sign-in-form { display: flex; flex-direction: column; gap: 12px; margin-top: 20px; }
 .sign-in-form label { font-size: 13px; font-weight: 600; }
-.sign-in-form input { border: 1px solid #cdd8d2; border-radius: 8px; padding: 12px; font: inherit; }
+.sign-in-form input { border: 1px solid #cdd8d2; border-radius: 4px; padding: 10px 12px; font: inherit; }
 .sign-in-form .btn { margin-top: 8px; justify-content: center; }
 .sign-in-form p { font-size: 12px; text-align: center; }
 .sidebar-footer > div { min-width: 0; flex: 1; }

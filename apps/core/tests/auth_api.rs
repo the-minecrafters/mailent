@@ -175,3 +175,40 @@ async fn provider_check_distinguishes_live_responses_from_fallback() {
         assert_eq!(result["connected"], connected);
     }
 }
+
+#[tokio::test]
+async fn guest_mode_allows_in_memory_access_without_credentials() {
+    let auth = AuthConfig::new(
+        "https://invalid.supabase.co".into(),
+        "sb_publishable_test".into(),
+        vec!["owner@test.invalid".into()],
+    );
+    let app = protect(create_router(AppState::new()), Some(auth));
+
+    // With X-Mailent-Guest header, unauthenticated requests are allowed
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/assessments")
+                .header("X-Mailent-Guest", "true")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // With Authorization: Bearer guest, requests are also allowed in guest mode
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/assets")
+                .header("Authorization", "Bearer guest")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+}

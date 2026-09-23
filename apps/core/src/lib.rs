@@ -1,6 +1,7 @@
 pub mod api;
 pub mod auth;
 pub mod config;
+pub mod dual_storage;
 pub mod pipeline;
 pub mod scheduler;
 pub mod state;

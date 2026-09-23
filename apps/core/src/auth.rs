@@ -63,6 +63,10 @@ struct VerifiedUser {
     is_anonymous: bool,
 }
 
+tokio::task_local! {
+    pub static USE_PERSISTENCE: bool;
+}
+
 async fn authorize(
     State(config): State<Arc<AuthConfig>>,
     request: Request,
@@ -71,23 +75,37 @@ async fn authorize(
     if request.uri().path() == "/health" {
         return Ok(next.run(request).await);
     }
+
+    let is_guest = request.headers().contains_key("x-mailent-guest")
+        || request
+            .headers()
+            .get("authorization")
+            .and_then(|h| h.to_str().ok())
+            .map_or(false, |s| s.contains("guest"))
+        || request
+            .uri()
+            .query()
+            .map_or(false, |q| q.contains("guest=true"));
+
     let token = request
         .headers()
         .get("authorization")
         .and_then(|header| header.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "))
-        .filter(|value| !value.is_empty())
-        .ok_or((StatusCode::UNAUTHORIZED, "Sign in to access this workspace"))?;
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "guest");
+
     let ingest = request.method() == axum::http::Method::POST
         && matches!(
             request.uri().path(),
             "/api/v1/observations" | "/api/v1/sensors/heartbeat"
         );
     if ingest
+        && token.is_some()
         && config.collector_token.as_ref().is_some_and(|secret| {
             use sha2::{Digest, Sha256};
             let expected = Sha256::digest(secret.as_bytes());
-            let actual = Sha256::digest(token.as_bytes());
+            let actual = Sha256::digest(token.unwrap().as_bytes());
             expected
                 .iter()
                 .zip(actual.iter())
@@ -95,59 +113,83 @@ async fn authorize(
                 == 0
         })
     {
-        return Ok(next.run(request).await);
+        return Ok(USE_PERSISTENCE.scope(true, next.run(request)).await);
     }
-    let response = config
-        .client
-        .get(format!("{}/auth/v1/user", config.url))
-        .header("apikey", &config.publishable_key)
-        .bearer_auth(token)
-        .send()
-        .await
-        .map_err(|_| {
-            (
+
+    if let Some(token) = token {
+        let response = config
+            .client
+            .get(format!("{}/auth/v1/user", config.url))
+            .header("apikey", &config.publishable_key)
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Sign-in verification is temporarily unavailable",
+                )
+            })?;
+        if response.status().is_server_error() {
+            return Err((
                 StatusCode::SERVICE_UNAVAILABLE,
                 "Sign-in verification is temporarily unavailable",
+            ));
+        }
+        if !response.status().is_success() {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                "Your session has expired. Please sign in again",
+            ));
+        }
+        let user: VerifiedUser = response.json().await.map_err(|_| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Could not verify your session",
             )
         })?;
-    if response.status().is_server_error() {
-        return Err((
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Sign-in verification is temporarily unavailable",
-        ));
+        if user.is_anonymous
+            || user.email_confirmed_at.is_none()
+            || !user
+                .email
+                .is_some_and(|email| config.allowed_emails.contains(&email.to_lowercase()))
+        {
+            return Err((
+                StatusCode::FORBIDDEN,
+                "This account does not have access to this workspace",
+            ));
+        }
+        return Ok(USE_PERSISTENCE.scope(true, next.run(request)).await);
     }
-    if !response.status().is_success() {
-        return Err((
-            StatusCode::UNAUTHORIZED,
-            "Your session has expired. Please sign in again",
-        ));
+
+    if is_guest {
+        return Ok(USE_PERSISTENCE.scope(false, next.run(request)).await);
     }
-    let user: VerifiedUser = response.json().await.map_err(|_| {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Could not verify your session",
-        )
-    })?;
-    if user.is_anonymous
-        || user.email_confirmed_at.is_none()
-        || !user
-            .email
-            .is_some_and(|email| config.allowed_emails.contains(&email.to_lowercase()))
-    {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "This account does not have access to this workspace",
-        ));
-    }
-    Ok(next.run(request).await)
+
+    Err((
+        StatusCode::UNAUTHORIZED,
+        "Sign in to access this workspace, or continue in non-persistent guest mode",
+    ))
 }
 
 pub fn protect(router: Router, config: Option<AuthConfig>) -> Router {
-    let public = config.as_ref().map(|config| serde_json::json!({"enabled": true, "url": config.url, "publishable_key": config.publishable_key})).unwrap_or_else(|| serde_json::json!({"enabled": false}));
+    let public = config
+        .as_ref()
+        .map(|config| {
+            serde_json::json!({
+                "enabled": true,
+                "url": config.url,
+                "publishable_key": config.publishable_key
+            })
+        })
+        .unwrap_or_else(|| serde_json::json!({"enabled": false}));
     let router = if let Some(config) = config {
         router.layer(middleware::from_fn_with_state(Arc::new(config), authorize))
     } else {
-        router
+        router.layer(middleware::from_fn(|request, next: Next| async move {
+            USE_PERSISTENCE.scope(true, next.run(request)).await
+        }))
     };
     router.route("/auth/config", get(move || async { Json(public) }))
 }
+
