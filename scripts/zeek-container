@@ -1,0 +1,5 @@
+#!/bin/sh
+# Drop-in Zeek executable for local analysis; sensor stages all inputs in cwd.
+set -eu
+exec podman run --rm --network none --userns=keep-id \
+  -v "$PWD:/work:Z" -w /work docker.io/zeek/zeek:8.0.4 zeek "$@"

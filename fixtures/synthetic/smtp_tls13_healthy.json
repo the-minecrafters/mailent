@@ -1,0 +1,40 @@
+{
+  "observation_id": "a0000000-0000-0000-0000-000000000002",
+  "timestamp": "2026-09-22T12:05:00Z",
+  "sensor_id": "sensor-edge-01",
+  "flow": {
+    "src_ip": "198.51.100.16",
+    "src_port": 54322,
+    "dst_ip": "203.0.113.25",
+    "dst_port": 25
+  },
+  "protocol": "smtp",
+  "starttls_state": "advertised_and_used",
+  "tls_version": "TLSv1.3",
+  "cipher_suite": {
+    "id": 4866,
+    "name": "TLS_AES_256_GCM_SHA384"
+  },
+  "key_exchange": "ecdhe",
+  "certificate": {
+    "reference": {
+      "sha256_fingerprint": "11223344556677889900aabbccddeeff11223344556677889900aabbccddeeff",
+      "subject": "CN=smtp.modern-host.example",
+      "issuer": "CN=Modern Secure CA"
+    },
+    "validity": {
+      "not_before": "2026-01-01T00:00:00Z",
+      "not_after": "2027-01-01T00:00:00Z"
+    },
+    "is_self_signed": false,
+    "san": [
+      "smtp.modern-host.example"
+    ]
+  },
+  "raw_metadata": null,
+  "provenance": {
+    "source": "synthetic",
+    "parser": "mailent-fixture",
+    "parser_version": "1"
+  }
+}

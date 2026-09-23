@@ -1,0 +1,22 @@
+name: legacy-compatible
+version: 1.0.0
+description: "Transitional policy pack for legacy email partner infrastructure"
+rules:
+  - id: TLS_LEGACY_VERSION
+    when:
+      type: tls_version_in
+      versions: ["TLSv1.0", "TLSv1.1"]
+    title: "Deprecated TLS Version Negotiated"
+    severity: medium
+    description: "Legacy TLS is flagged for gradual migration planning."
+    remediation: "Coordinate with partner domain to upgrade TLS stack."
+    reference: "rfc8996"
+
+  - id: CERTIFICATE_EXPIRED
+    when:
+      type: certificate_expired
+    title: "Expired Leaf Certificate Presented"
+    severity: high
+    description: "Certificate validity period has expired."
+    remediation: "Request certificate renewal."
+    reference: "rfc5280"

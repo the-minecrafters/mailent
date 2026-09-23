@@ -1,0 +1,11 @@
+{
+  "name": "mailent",
+  "private": true,
+  "packageManager": "pnpm@11.26.0",
+  "scripts": {
+    "dev": "pnpm --filter @mailent/web dev"
+  },
+  "devDependencies": {
+    "@bufbuild/buf": "^1.73.0"
+  }
+}

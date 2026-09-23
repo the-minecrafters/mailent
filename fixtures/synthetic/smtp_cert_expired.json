@@ -1,0 +1,40 @@
+{
+  "observation_id": "a0000000-0000-0000-0000-000000000003",
+  "timestamp": "2026-09-22T12:10:00Z",
+  "sensor_id": "sensor-edge-01",
+  "flow": {
+    "src_ip": "198.51.100.17",
+    "src_port": 54323,
+    "dst_ip": "203.0.113.25",
+    "dst_port": 25
+  },
+  "protocol": "smtp",
+  "starttls_state": "advertised_and_used",
+  "tls_version": "TLSv1.2",
+  "cipher_suite": {
+    "id": 49199,
+    "name": "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+  },
+  "key_exchange": "ecdhe",
+  "certificate": {
+    "reference": {
+      "sha256_fingerprint": "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+      "subject": "CN=mail.expired-domain.example",
+      "issuer": "CN=Old Authority CA"
+    },
+    "validity": {
+      "not_before": "2025-01-01T00:00:00Z",
+      "not_after": "2026-01-01T00:00:00Z"
+    },
+    "is_self_signed": false,
+    "san": [
+      "mail.expired-domain.example"
+    ]
+  },
+  "raw_metadata": null,
+  "provenance": {
+    "source": "synthetic",
+    "parser": "mailent-fixture",
+    "parser_version": "1"
+  }
+}

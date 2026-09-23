@@ -1,0 +1,167 @@
+use axum::{
+    Json,
+    extract::{Path, Query, State},
+    http::StatusCode,
+    response::IntoResponse,
+};
+use mailent_storage::StorageError;
+use serde::Deserialize;
+use uuid::Uuid;
+
+use crate::state::AppState;
+
+#[derive(Debug, Deserialize)]
+pub struct ListDriftQuery {
+    pub limit: Option<usize>,
+}
+
+pub async fn list_assets_handler(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let assets = state.assets.list_all().await.map_err(storage_error)?;
+    Ok(Json(assets))
+}
+
+pub async fn get_asset_handler(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let asset = state
+        .assets
+        .find_by_id(id)
+        .await
+        .map_err(storage_error)?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("asset {id} not found")))?;
+
+    // Persisted active perspective is projected separately from passive asset aggregates.
+    let active = state
+        .probes
+        .list_for_asset(id, 20)
+        .await
+        .map_err(storage_error)?
+        .into_iter()
+        .find(|p| p.finished_at.is_some());
+    let authorized =
+        crate::probes::authorized_asset_target(&asset, &state.probe_config.to_scope()).is_some();
+    let mut response = serde_json::to_value(asset)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    response["probe_authorized"] = serde_json::json!(authorized);
+    response["active_verification"] = serde_json::to_value(active)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(response))
+}
+
+pub async fn list_asset_drift_handler(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Query(query): Query<ListDriftQuery>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let limit = query.limit.unwrap_or(100).min(500);
+    let events = state
+        .assets
+        .list_drift_events(Some(id), limit)
+        .await
+        .map_err(storage_error)?;
+
+    Ok(Json(events))
+}
+
+pub async fn list_drift_events_handler(
+    State(state): State<AppState>,
+    Query(query): Query<ListDriftQuery>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let limit = query.limit.unwrap_or(100).min(500);
+    let events = state
+        .assets
+        .list_drift_events(None, limit)
+        .await
+        .map_err(storage_error)?;
+
+    Ok(Json(events))
+}
+
+pub async fn list_asset_certificates_handler(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let certs = state
+        .certificates
+        .list_for_asset(id)
+        .await
+        .map_err(storage_error)?;
+
+    Ok(Json(certs))
+}
+
+pub async fn list_asset_sessions_handler(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Query(query): Query<ListDriftQuery>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let asset = state
+        .assets
+        .find_by_id(id)
+        .await
+        .map_err(storage_error)?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("asset {id} not found")))?;
+
+    let limit = query.limit.unwrap_or(100).min(500);
+    let mut all_sessions = Vec::new();
+
+    for addr in &asset.addresses {
+        let sessions = state
+            .sessions
+            .list_for_asset(addr, limit)
+            .await
+            .map_err(storage_error)?;
+        all_sessions.extend(sessions);
+    }
+
+    all_sessions.sort_by_key(|a| std::cmp::Reverse(a.last_seen));
+    all_sessions.dedup_by(|a, b| a.session_id == b.session_id);
+    all_sessions.truncate(limit);
+
+    Ok(Json(all_sessions))
+}
+
+pub async fn list_asset_findings_handler(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let findings = state
+        .findings
+        .list_for_asset(id)
+        .await
+        .map_err(storage_error)?;
+
+    Ok(Json(findings))
+}
+
+pub async fn get_asset_intelligence_handler(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let asset = state
+        .assets
+        .find_by_id(id)
+        .await
+        .map_err(storage_error)?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("asset {id} not found")))?;
+
+    let domain = asset
+        .primary_name
+        .clone()
+        .or_else(|| asset.hostnames.first().cloned())
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("asset {id} does not have associated domain names"),
+            )
+        })?;
+
+    crate::api::intelligence::get_domain_intelligence_handler(State(state), Path(domain)).await
+}
+
+fn storage_error(error: StorageError) -> (StatusCode, String) {
+    (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
+}

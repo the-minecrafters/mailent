@@ -1,0 +1,5 @@
+FROM docker.io/library/ubuntu:24.04
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends postfix dovecot-core dovecot-imapd dovecot-pop3d tcpdump openssl python3 python3-scapy python3-cryptography && rm -rf /var/lib/apt/lists/*
+COPY generate.py /lab/generate.py
+CMD ["python3", "/lab/generate.py"]

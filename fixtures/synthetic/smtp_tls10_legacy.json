@@ -1,0 +1,40 @@
+{
+  "observation_id": "a0000000-0000-0000-0000-000000000001",
+  "timestamp": "2026-09-22T12:00:00Z",
+  "sensor_id": "sensor-edge-01",
+  "flow": {
+    "src_ip": "198.51.100.15",
+    "src_port": 54321,
+    "dst_ip": "203.0.113.25",
+    "dst_port": 25
+  },
+  "protocol": "smtp",
+  "starttls_state": "advertised_and_used",
+  "tls_version": "TLSv1.0",
+  "cipher_suite": {
+    "id": 47,
+    "name": "TLS_RSA_WITH_AES_128_CBC_SHA"
+  },
+  "key_exchange": "rsa_static",
+  "certificate": {
+    "reference": {
+      "sha256_fingerprint": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "subject": "CN=mail.legacy-gateway.example",
+      "issuer": "CN=Example Commercial CA"
+    },
+    "validity": {
+      "not_before": "2026-01-01T00:00:00Z",
+      "not_after": "2027-01-01T00:00:00Z"
+    },
+    "is_self_signed": false,
+    "san": [
+      "mail.legacy-gateway.example"
+    ]
+  },
+  "raw_metadata": null,
+  "provenance": {
+    "source": "synthetic",
+    "parser": "mailent-fixture",
+    "parser_version": "1"
+  }
+}

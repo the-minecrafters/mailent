@@ -1,0 +1,101 @@
+syntax = "proto3";
+
+package mailent.observation.v1;
+
+// Sensor/core contract. Unknown optional evidence must remain absent.
+message ObservationEnvelope {
+  uint32 schema_version = 1;
+  Observation observation = 2;
+}
+
+message Observation {
+  string observation_id = 1;
+  // RFC 3339 UTC or offset timestamp, evaluated at observation time.
+  string timestamp = 2;
+  string sensor_id = 3;
+  Provenance provenance = 4;
+  NetworkFlow flow = 5;
+  EmailProtocol protocol = 6;
+  optional StartTlsState starttls_state = 7;
+  // Open string vocabulary preserves versions a parser does not recognize.
+  optional string tls_version = 8;
+  CipherSuite cipher_suite = 9;
+  KeyExchange key_exchange = 10;
+  Certificate certificate = 11;
+  CaptureEvidence capture = 12;
+  // No mail bodies, credentials or arbitrary raw metadata in this contract.
+}
+
+message Provenance {
+  string source = 1;
+  string parser = 2;
+  string parser_version = 3;
+}
+
+message NetworkFlow {
+  string src_ip = 1;
+  uint32 src_port = 2;
+  string dst_ip = 3;
+  uint32 dst_port = 4;
+}
+
+message CipherSuite {
+  optional uint32 id = 1;
+  string name = 2;
+}
+
+message KeyExchange {
+  // ecdhe, dhe, rsa_static, hybrid_pqc, or unknown.
+  string kind = 1;
+  // Named group for hybrid_pqc, or the unrecognized value for unknown.
+  string name = 2;
+}
+
+message Certificate {
+  string sha256_fingerprint = 1;
+  string subject = 2;
+  string issuer = 3;
+  string not_before = 4;
+  string not_after = 5;
+  optional bool is_self_signed = 6;
+  repeated string san = 7;
+}
+
+enum EmailProtocol {
+  EMAIL_PROTOCOL_UNSPECIFIED = 0;
+  EMAIL_PROTOCOL_SMTP = 1;
+  EMAIL_PROTOCOL_IMAP = 2;
+  EMAIL_PROTOCOL_POP3 = 3;
+  EMAIL_PROTOCOL_UNKNOWN = 4;
+}
+
+enum StartTlsState {
+  START_TLS_STATE_UNSPECIFIED = 0;
+  START_TLS_STATE_ADVERTISED_AND_USED = 1;
+  START_TLS_STATE_ADVERTISED_NOT_USED = 2;
+  START_TLS_STATE_NOT_ADVERTISED = 3;
+  START_TLS_STATE_REJECTED = 4;
+  START_TLS_STATE_FAILED_HANDSHAKE = 5;
+  START_TLS_STATE_PLAINTEXT_CONTINUATION = 6;
+  START_TLS_STATE_ADVERTISED = 7;
+  START_TLS_STATE_REQUESTED = 8;
+  START_TLS_STATE_ACCEPTED = 9;
+  START_TLS_STATE_TLS_STARTED = 10;
+  START_TLS_STATE_TLS_ESTABLISHED = 11;
+}
+
+message TimelineEvent {
+  string timestamp = 1;
+  string kind = 2;
+  string source = 3;
+}
+message CaptureEvidence {
+  string capture_sha256 = 1;
+  string connection_uid = 2;
+  string normalizer_version = 3;
+  repeated string source_logs = 4;
+  repeated TimelineEvent timeline = 5;
+  repeated string gaps = 6;
+  optional bool tls_established = 7;
+  optional EmailProtocol protocol_hint = 8;
+}

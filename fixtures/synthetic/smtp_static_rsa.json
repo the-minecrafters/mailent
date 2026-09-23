@@ -1,0 +1,40 @@
+{
+  "observation_id": "a0000000-0000-0000-0000-000000000004",
+  "timestamp": "2026-09-22T12:15:00Z",
+  "sensor_id": "sensor-edge-01",
+  "flow": {
+    "src_ip": "198.51.100.18",
+    "src_port": 54324,
+    "dst_ip": "203.0.113.25",
+    "dst_port": 25
+  },
+  "protocol": "smtp",
+  "starttls_state": "advertised_and_used",
+  "tls_version": "TLSv1.2",
+  "cipher_suite": {
+    "id": 47,
+    "name": "TLS_RSA_WITH_AES_128_CBC_SHA"
+  },
+  "key_exchange": "rsa_static",
+  "certificate": {
+    "reference": {
+      "sha256_fingerprint": "99887766554433221100ffeeddccbbaa99887766554433221100ffeeddccbbaa",
+      "subject": "CN=mail.static-rsa.example",
+      "issuer": "CN=Example CA"
+    },
+    "validity": {
+      "not_before": "2026-01-01T00:00:00Z",
+      "not_after": "2027-01-01T00:00:00Z"
+    },
+    "is_self_signed": false,
+    "san": [
+      "mail.static-rsa.example"
+    ]
+  },
+  "raw_metadata": null,
+  "provenance": {
+    "source": "synthetic",
+    "parser": "mailent-fixture",
+    "parser_version": "1"
+  }
+}

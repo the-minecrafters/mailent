@@ -1,0 +1,32 @@
+name: high-security
+version: 1.0.0
+description: "High-assurance email transport requiring TLS 1.3; PQ readiness is not evaluated"
+rules:
+  - id: TLS_MINIMUM_VERSION
+    when:
+      type: tls_version_in
+      versions: ["TLSv1.0", "TLSv1.1", "TLSv1.2"]
+    title: "TLS Version Below Required Minimum"
+    severity: critical
+    description: "TLS versions below TLS 1.3 are not permitted in high-security mode."
+    remediation: "Upgrade MTA to support TLS 1.3 exclusively."
+    reference: "rfc8446"
+
+  - id: CERTIFICATE_EXPIRED
+    when:
+      type: certificate_expired
+    title: "Expired Leaf Certificate Presented"
+    severity: critical
+    description: "Expired certificates are strictly rejected."
+    remediation: "Deploy valid certificate immediately."
+    reference: "rfc5280"
+
+  - id: NO_FORWARD_SECRECY
+    when:
+      type: key_exchange_in
+      values: [rsa_static]
+    title: "Forward Secrecy Unavailable"
+    severity: critical
+    description: "All sessions must provide forward secrecy."
+    remediation: "Require TLS 1.3 PFS cipher suites."
+    reference: "rfc8446"

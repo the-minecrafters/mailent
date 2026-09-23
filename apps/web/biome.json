@@ -1,0 +1,8 @@
+{
+  "files": {
+    "includes": ["**", "!dist", "!test-results", "!playwright-report"]
+  },
+  "formatter": { "enabled": true, "indentStyle": "space" },
+  "linter": { "enabled": true, "rules": { "preset": "none" } },
+  "assist": { "actions": { "source": { "organizeImports": "on" } } }
+}

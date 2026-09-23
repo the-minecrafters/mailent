@@ -1,0 +1,32 @@
+name: modern
+version: 1.0.0
+description: "Modern enterprise email transport security standards (RFC 8996, RFC 8461)"
+rules:
+  - id: TLS_LEGACY_VERSION
+    when:
+      type: tls_version_in
+      versions: ["TLSv1.0", "TLSv1.1"]
+    title: "Deprecated TLS Version Negotiated"
+    severity: critical
+    description: "The session negotiated TLS 1.0 or 1.1, which are formally deprecated under RFC 8996 due to fundamental cryptographic vulnerabilities."
+    remediation: "Disable legacy TLS protocols on the MTA. Configure TLS 1.2 as the minimum version and TLS 1.3 as preferred."
+    reference: "rfc8996"
+
+  - id: CERTIFICATE_EXPIRED
+    when:
+      type: certificate_expired
+    title: "Expired Leaf Certificate Presented"
+    severity: high
+    description: "The presented X.509 leaf certificate has passed its validity expiration timestamp."
+    remediation: "Renew and deploy a currently valid certificate issued by an authorized certificate authority."
+    reference: "rfc5280"
+
+  - id: NO_FORWARD_SECRECY
+    when:
+      type: key_exchange_in
+      values: [rsa_static]
+    title: "Forward Secrecy Unavailable (Static RSA)"
+    severity: high
+    description: "The session negotiated static RSA key exchange without ephemeral Diffie-Hellman, leaving past traffic susceptible to retrospective decryption if private keys leak."
+    remediation: "Enable ECDHE cipher suites (e.g. ECDHE-ECDSA or ECDHE-RSA) with secure curves (X25519 or P-256) or migrate to TLS 1.3."
+    reference: "bcp195"

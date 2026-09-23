@@ -1,0 +1,47 @@
+{
+  "generator": "Postfix/Dovecot loopback lab",
+  "capture_epoch": 1789992000,
+  "certificate_sha256": "e714bc098be8370c1c82fa7d2cdaf60ca8534368198de0527ce887f5a84f99c6",
+  "files": {
+    "empty.pcap": {
+      "sha256": "acc530668c8bc60b2d229281130b1899bfc81d70fdada5c34b3236c628f739c8",
+      "bytes": 24
+    },
+    "imap_starttls.pcap": {
+      "sha256": "31983fc73aac6e5964bf213a3897b5747a27a4b498f3e88424f38745fe47c17f",
+      "bytes": 4948
+    },
+    "imap_tls13.pcap": {
+      "sha256": "edaecd3b09c6faddaf51677dcfe2653a5a26598d6c84f7888d9e47ce3b21afca",
+      "bytes": 4622
+    },
+    "pop3_stls.pcap": {
+      "sha256": "4dd745ce3d4b09700d68d7dd24b248fe5c02b5990a57b7098c0fed092875cb7e",
+      "bytes": 4268
+    },
+    "smtp_legacy.pcap": {
+      "sha256": "8ac3ec4c7c36f991a306d4779eaa21151c8b6f5079b90f359d9db39592d673dc",
+      "bytes": 3914
+    },
+    "smtp_midstream.pcap": {
+      "sha256": "1df5e138e24caf0278368eacb87fd1953996f7dfd9ebc50534fc38218075a293",
+      "bytes": 3348
+    },
+    "smtp_starttls.pcap": {
+      "sha256": "ec0ed1deac16ebb45e3e4693bf61d219a606d5fa1bec0648212880bf82769414",
+      "bytes": 3729
+    },
+    "smtp_starttls.pcapng": {
+      "sha256": "c2877835223b21abe61a522d9a6c96741707ca2d0d28d1eb0425d453e4ba06e6",
+      "bytes": 4104
+    },
+    "smtp_truncated.pcap": {
+      "sha256": "f4a998d88fb8c6ab8a467b98e2bfbecafd856e36ea45a9145aedc3b0e3248b39",
+      "bytes": 1118
+    },
+    "smtp_unused.pcap": {
+      "sha256": "2172f1d3cf1c6f109263d374d0cc0b07cfd04efa4ad5e8949bcea4691272947f",
+      "bytes": 1529
+    }
+  }
+}

@@ -1,0 +1,128 @@
+pub mod assets;
+pub mod baselines;
+pub mod certificates;
+pub mod findings;
+pub mod health;
+pub mod intelligence;
+pub mod investigations;
+pub mod metrics;
+pub mod observations;
+pub mod probes;
+pub mod sensors;
+pub mod sessions;
+
+use axum::{
+    Router,
+    routing::{get, patch, post},
+};
+use tower_http::trace::TraceLayer;
+
+use crate::state::AppState;
+
+pub fn create_router(state: AppState) -> Router {
+    Router::new()
+        .route("/health", get(health::health_handler))
+        .route("/ready", get(health::ready_handler))
+        .route(
+            "/api/v1/observations",
+            post(observations::submit_observation_handler),
+        )
+        .route(
+            "/api/v1/observations/evaluate",
+            post(observations::evaluate_observation_handler),
+        )
+        .route("/api/v1/sessions", get(sessions::list_sessions_handler))
+        .route("/api/v1/sessions/{id}", get(sessions::get_session_handler))
+        .route("/api/v1/findings", get(findings::list_findings_handler))
+        .route("/api/v1/findings/{id}", get(findings::get_finding_handler))
+        .route("/api/v1/assets", get(assets::list_assets_handler))
+        .route("/api/v1/assets/{id}", get(assets::get_asset_handler))
+        .route(
+            "/api/v1/assets/{id}/drift",
+            get(assets::list_asset_drift_handler),
+        )
+        .route(
+            "/api/v1/assets/{id}/certificates",
+            get(assets::list_asset_certificates_handler),
+        )
+        .route(
+            "/api/v1/assets/{id}/sessions",
+            get(assets::list_asset_sessions_handler),
+        )
+        .route(
+            "/api/v1/assets/{id}/findings",
+            get(assets::list_asset_findings_handler),
+        )
+        .route(
+            "/api/v1/assets/{id}/intelligence",
+            get(assets::get_asset_intelligence_handler),
+        )
+        .route(
+            "/api/v1/assets/{id}/baseline",
+            get(baselines::get_asset_baseline_handler),
+        )
+        .route(
+            "/api/v1/assets/{id}/anomalies",
+            get(baselines::list_asset_anomalies_handler),
+        )
+        // Active probe routes
+        .route(
+            "/api/v1/assets/{id}/probe",
+            post(probes::trigger_probe_handler),
+        )
+        .route(
+            "/api/v1/assets/{id}/probes",
+            get(probes::list_probes_for_asset_handler),
+        )
+        .route("/api/v1/probes", get(probes::list_recent_probes_handler))
+        .route("/api/v1/probes/{id}", get(probes::get_probe_handler))
+        .route("/api/v1/anomalies", get(baselines::list_anomalies_handler))
+        .route("/api/v1/drift", get(assets::list_drift_events_handler))
+        .route(
+            "/api/v1/certificates",
+            get(certificates::list_certificates_handler),
+        )
+        .route(
+            "/api/v1/certificates/{fingerprint}",
+            get(certificates::get_certificate_handler),
+        )
+        .route("/api/v1/sensors", get(sensors::list_sensors_handler))
+        .route(
+            "/api/v1/sensors/heartbeat",
+            post(sensors::record_heartbeat_handler),
+        )
+        .route(
+            "/api/v1/intelligence/{domain}",
+            get(intelligence::get_domain_intelligence_handler),
+        )
+        .route(
+            "/api/v1/intelligence/{domain}/refresh",
+            post(intelligence::refresh_domain_intelligence_handler),
+        )
+        .route(
+            "/api/v1/tls-rpt/reports",
+            post(intelligence::import_tls_rpt_report_handler),
+        )
+        .route(
+            "/api/v1/investigations",
+            get(investigations::list_investigations_handler),
+        )
+        .route(
+            "/api/v1/investigations/{id}",
+            get(investigations::get_investigation_handler),
+        )
+        .route(
+            "/api/v1/investigations/{id}/status",
+            patch(investigations::update_investigation_status_handler),
+        )
+        .route(
+            "/api/v1/decisions",
+            get(investigations::list_decisions_handler),
+        )
+        .route(
+            "/api/v1/metrics/coverage",
+            get(metrics::get_coverage_metrics_handler),
+        )
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
+}
