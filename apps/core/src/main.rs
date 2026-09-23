@@ -53,8 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Ok(directory) = std::env::var("MAILENT_WEB_DIR") {
         use tower_http::services::{ServeDir, ServeFile};
         app = app.fallback_service(
-            ServeDir::new(&directory)
-                .fallback(ServeFile::new(format!("{directory}/index.html"))),
+            ServeDir::new(&directory).fallback(ServeFile::new(format!("{directory}/index.html"))),
         );
     }
     let listener = TcpListener::bind(&addr).await?;

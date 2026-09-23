@@ -410,7 +410,7 @@ function Workspace() {
   const id = segments[1] ? decodeURIComponent(segments[1]) : null;
   const activeTab =
     page?.key ??
-    (location.pathname === "/workspace/tools/evaluator"
+    (import.meta.env.DEV && location.pathname === "/workspace/tools/evaluator"
       ? "evaluator"
       : "missing");
   const readinessQuery = useQuery({

@@ -5,6 +5,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/web/package.json apps/web/package.json
 RUN pnpm install --frozen-lockfile
 COPY apps/web apps/web
+COPY fixtures/synthetic fixtures/synthetic
 RUN pnpm --filter @mailent/web build
 
 FROM rust:1.94-bookworm AS rust
