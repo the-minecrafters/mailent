@@ -518,7 +518,7 @@ impl DomainScanner {
         let mut posture_grade = posture.grade.to_string();
 
         let ai_risk_classification = if all_endpoints_failed {
-            posture_grade = "Inconclusive".to_string();
+            posture_grade = "N/A".to_string();
             "INCONCLUSIVE".to_string()
         } else {
             match posture.grade {

@@ -107,7 +107,10 @@ export function AssessmentWorkspace({
   });
 
   const assessment = assessmentQuery.data;
-  const scoreAvailable = assessment?.posture_grade.toLowerCase() !== "inconclusive";
+  const scoreAvailable =
+    assessment?.posture_grade !== "N/A" &&
+    assessment?.posture_grade.toLowerCase() !== "inconclusive" &&
+    assessment?.ai_risk_classification !== "INCONCLUSIVE";
   const scoreLabel = scoreAvailable && assessment ? `${Math.round(assessment.posture_score)}/100 (${assessment.posture_grade})` : "Not scored — connection check incomplete";
   const isInfra =
     assessment?.source?.type === "infrastructure" ||

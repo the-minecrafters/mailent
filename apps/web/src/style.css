@@ -621,6 +621,13 @@ button:disabled,
   border-color: #fecaca;
 }
 
+.grade-badge.NA,
+.grade-badge[class*="N/A"] {
+  background: var(--surface-secondary, #f3f4f6);
+  color: var(--text-muted, #6b7280);
+  border-color: var(--hairline, #e5e7eb);
+}
+
 /* Evidence Gap Indicators */
 .evidence-state {
   display: inline-flex;
