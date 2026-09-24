@@ -458,12 +458,39 @@ impl DomainScanner {
             sessions.push(session);
         }
 
+        let scan_end = OffsetDateTime::now_utc();
+
+        let all_endpoints_failed = endpoints_succeeded == 0 && !discovered_endpoints.is_empty();
+        if all_endpoints_failed {
+            let unreachable_finding = Finding {
+                id: Uuid::new_v5(&Uuid::NAMESPACE_OID, format!("unreachable:{domain}").as_bytes()),
+                rule_id: "ENDPOINTS_UNREACHABLE".to_string(),
+                policy_name: self.config.policy_pack.name.clone(),
+                policy_version: self.config.policy_pack.version.clone(),
+                reference: "network-probe".to_string(),
+                severity: FindingSeverity::High,
+                category: FindingCategory::PolicyViolation,
+                title: "Mail Servers Unreachable on Port 25".to_string(),
+                description: format!(
+                    "All {} mail servers discovered for {} could not be reached on port 25 (outbound port 25 is filtered by cloud hosting or network firewall). Live TLS encryption and certificate validation could not be performed.",
+                    discovered_endpoints.len(),
+                    domain
+                ),
+                remediation: "To verify live transport encryption, run Mailent in an environment where outbound port 25 is open, or capture live email traffic into a PCAP file and upload it for full inspection.".to_string(),
+                affected_count: discovered_endpoints.len() as u64,
+                first_seen: scan_start,
+                last_seen: scan_end,
+                evidence: vec![],
+                organization_id: None,
+            };
+            all_findings.push(unreachable_finding);
+        }
+
         // Deduplicate findings by rule_id and title
         all_findings.sort_by(|a, b| (&a.rule_id, &a.title).cmp(&(&b.rule_id, &b.title)));
         all_findings.dedup_by(|a, b| a.rule_id == b.rule_id && a.title == b.title);
 
         // 5. Posture Calculation
-        let scan_end = OffsetDateTime::now_utc();
         let posture_input = PostureInput {
             findings: &all_findings,
             anomalies: &[],
@@ -476,25 +503,49 @@ impl DomainScanner {
         let posture = compute_posture(PostureSubjectKind::Asset, asset_id, &posture_input);
         let guidance = build_guidance(asset_id, &all_findings, None, &sessions, &[], scan_end);
 
-        let posture_score = posture.score;
-        let posture_grade = posture.grade.to_string();
+        let mut posture_score = posture.score;
+        let mut posture_grade = posture.grade.to_string();
 
-        let ai_risk_classification = match posture.grade {
-            PostureGrade::Strong | PostureGrade::Good => "LOW".to_string(),
-            PostureGrade::Moderate => "MEDIUM".to_string(),
-            PostureGrade::Weak => "HIGH".to_string(),
-            PostureGrade::Critical => "CRITICAL".to_string(),
+        let ai_risk_classification = if all_endpoints_failed {
+            posture_grade = "Inconclusive".to_string();
+            posture_score = posture_score.min(50.0);
+            "INCONCLUSIVE".to_string()
+        } else {
+            match posture.grade {
+                PostureGrade::Strong | PostureGrade::Good => "LOW".to_string(),
+                PostureGrade::Moderate => "MEDIUM".to_string(),
+                PostureGrade::Weak => "HIGH".to_string(),
+                PostureGrade::Critical => "CRITICAL".to_string(),
+            }
         };
 
-        let ai_risk_rationale = format!(
-            "Infrastructure posture score is {:.1}/100 (Grade {}). Discovered {} endpoints ({} healthy, {} failed). {} findings identified across TLS, certificate, and external policy configurations.",
-            posture_score,
-            posture_grade,
-            discovered_endpoints.len(),
-            endpoints_succeeded,
-            endpoints_failed,
-            all_findings.len()
-        );
+        let ep_status = if endpoints_failed == 0 {
+            format!("All {} mail servers responded normally.", discovered_endpoints.len())
+        } else if endpoints_succeeded == 0 {
+            format!("Discovered {} mail servers, but all {} were unreachable over the network (port 25 was filtered or timed out).", discovered_endpoints.len(), endpoints_failed)
+        } else {
+            format!("Discovered {} mail servers ({} connected, {} unreachable).", discovered_endpoints.len(), endpoints_succeeded, endpoints_failed)
+        };
+
+        let finding_count_str = if all_findings.is_empty() {
+            "No security issues detected".to_string()
+        } else if all_findings.len() == 1 {
+            "1 security issue identified".to_string()
+        } else {
+            format!("{} security issues identified", all_findings.len())
+        };
+
+        let ai_risk_rationale = if all_endpoints_failed {
+            format!(
+                "Network verification incomplete. {ep_status} Live transport encryption, ciphers, and certificates could not be verified over the network. Only public DNS policies were evaluated. {finding_count_str}.",
+            )
+        } else {
+            format!(
+                "Security score: {:.1}/100 ({}). {ep_status} {finding_count_str} across encryption, certificates, and email policies.",
+                posture_score,
+                posture_grade,
+            )
+        };
 
         // 6. Build AssessmentRecord
         let infra_metadata = InfrastructureMetadata {

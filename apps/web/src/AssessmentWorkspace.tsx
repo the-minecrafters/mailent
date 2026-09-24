@@ -706,16 +706,18 @@ export function AssessmentWorkspace({
           onClick={() => setActiveTab("risk")}
         >
           <Icon name="security" size={16} />
-          <span>Risk &amp; anomalies</span>
+          <span>Risk &amp; warnings</span>
         </button>
-        <button
-          className={`tab-btn ${activeTab === "remediation" ? "active" : ""}`}
-          aria-current={activeTab === "remediation" ? "page" : undefined}
-          onClick={() => setActiveTab("remediation")}
-        >
-          <Icon name="build" size={16} />
-          <span>Remediation</span>
-        </button>
+        {assessmentFindings.length > 0 && (
+          <button
+            className={`tab-btn ${activeTab === "remediation" ? "active" : ""}`}
+            aria-current={activeTab === "remediation" ? "page" : undefined}
+            onClick={() => setActiveTab("remediation")}
+          >
+            <Icon name="build" size={16} />
+            <span>Fixes &amp; testing ({assessmentFindings.length})</span>
+          </button>
+        )}
         <button
           className={`tab-btn ${activeTab === "report" ? "active" : ""}`}
           aria-current={activeTab === "report" ? "page" : undefined}
@@ -731,7 +733,7 @@ export function AssessmentWorkspace({
             onClick={() => setActiveTab("history")}
           >
             <Icon name="history" size={16} />
-            <span>Monitoring &amp; Drift</span>
+            <span>Monitoring &amp; history</span>
           </button>
         )}
       </nav>
@@ -1763,45 +1765,146 @@ export function AssessmentWorkspace({
       )}
 
       {/* TAB 7: REMEDIATION & VERIFICATION */}
+      {/* TAB 7: FIXES & TESTING */}
       {activeTab === "remediation" && (
         <div
           style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}
         >
-          {primaryAsset && assetPostureQuery.data?.guidance ? (
-            <div>
-              <div
-                className="card"
-                style={{ padding: "1.25rem 1.5rem", marginBottom: "1.25rem" }}
-              >
-                <h3 className="card-title" style={{ margin: "0 0 0.5rem 0" }}>
-                  Interactive Remediation &amp; Active Verification Cycle
-                </h3>
-                <p
-                  className="secondary-text"
-                  style={{ margin: 0, fontSize: "0.875rem" }}
-                >
-                  Apply configuration mitigations to eliminate legacy protocols,
-                  disable static RSA, or renew expired certificates, then run an
-                  active TLS verification probe to prove the fix.
-                </p>
-              </div>
+          {primaryAsset && assetPostureQuery.data ? (() => {
+            const allGuidance = assetPostureQuery.data.guidance ?? [];
+            const remediableGuidance = allGuidance.filter(
+              (g) => g.kind === "remediation" && Boolean(g.finding_id),
+            );
+            const bestPractices = allGuidance.filter(
+              (g) => g.kind === "best_practice",
+            );
+            const isClean = assessmentFindings.length === 0 || remediableGuidance.length === 0;
 
-              {assetPostureQuery.data.guidance.map((g, idx) => (
-                <RemediationWorkflow
-                  key={idx}
-                  assetId={primaryAsset.id}
-                  guidance={g}
-                  sessionId={selectedSessionId || undefined}
-                />
-              ))}
-            </div>
-          ) : (
+            return (
+              <div>
+                {isClean ? (
+                  <div
+                    className="card"
+                    style={{
+                      padding: "2rem",
+                      textAlign: "center",
+                      border: "1px solid #10b981",
+                      background: "rgba(16, 185, 129, 0.04)",
+                      marginBottom: "1.25rem",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: "48px",
+                        height: "48px",
+                        borderRadius: "50%",
+                        background: "rgba(16, 185, 129, 0.15)",
+                        color: "#059669",
+                        marginBottom: "0.75rem",
+                      }}
+                    >
+                      <Icon name="verified" size={28} />
+                    </div>
+                    <h3 style={{ margin: "0 0 0.5rem 0", color: "#065f46" }}>
+                      All security checks passed! (100/100)
+                    </h3>
+                    <p
+                      className="secondary-text"
+                      style={{ maxWidth: "560px", margin: "0 auto", fontSize: "0.9375rem" }}
+                    >
+                      Your mail server has a clean security posture with zero vulnerabilities.
+                      There are no issues that need to be fixed or tested.
+                    </p>
+                  </div>
+                ) : (
+                  <div>
+                    <div
+                      className="card"
+                      style={{ padding: "1.25rem 1.5rem", marginBottom: "1.25rem" }}
+                    >
+                      <h3 className="card-title" style={{ margin: "0 0 0.5rem 0" }}>
+                        Fix &amp; Test Security Issues
+                      </h3>
+                      <p
+                        className="secondary-text"
+                        style={{ margin: 0, fontSize: "0.875rem" }}
+                      >
+                        Apply configuration changes to fix security issues on your mail server, then run a live test to verify the fix works.
+                      </p>
+                    </div>
+
+                    {remediableGuidance.map((g, idx) => (
+                      <RemediationWorkflow
+                        key={idx}
+                        assetId={primaryAsset.id}
+                        guidance={g}
+                        initial={assetPostureQuery.data?.remediations?.find(
+                          (r) => r.finding?.id === g.finding_id,
+                        )}
+                        sessionId={selectedSessionId || undefined}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                {bestPractices.length > 0 && (
+                  <div style={{ marginTop: "1.5rem" }}>
+                    <div className="card" style={{ padding: "1.25rem 1.5rem" }}>
+                      <h4 style={{ margin: "0 0 0.4rem 0", fontSize: "1rem" }}>
+                        Helpful Security Tips (Optional)
+                      </h4>
+                      <p
+                        className="secondary-text"
+                        style={{ fontSize: "0.875rem", margin: "0 0 1rem 0" }}
+                      >
+                        These are optional suggestions to make your mail server even more secure. They don't affect your score and don't require active testing.
+                      </p>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+                        {bestPractices.map((bp) => (
+                          <div
+                            key={bp.id}
+                            style={{
+                              padding: "1rem",
+                              borderRadius: "6px",
+                              border: "1px solid var(--hairline)",
+                              background: "var(--surface-subtle)",
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                                marginBottom: "0.35rem",
+                              }}
+                            >
+                              <strong>{bp.title}</strong>
+                              <span className="badge">Optional tip</span>
+                            </div>
+                            <p className="secondary-text" style={{ fontSize: "0.875rem", margin: "0 0 0.5rem 0" }}>
+                              {bp.recommendation}
+                            </p>
+                            <div style={{ fontSize: "0.8125rem", color: "var(--ink-secondary)" }}>
+                              <strong>Why it helps:</strong> {bp.why_it_matters}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })() : (
             <div
               className="card"
               style={{ padding: "2rem", textAlign: "center" }}
             >
               <p className="secondary-text">
-                No active remediation guidance found for this capture's assets.
+                No active security issues found for this capture's mail servers.
               </p>
             </div>
           )}
@@ -1829,7 +1932,7 @@ export function AssessmentWorkspace({
               >
                 <div>
                   <span className="badge" style={{ marginBottom: "0.5rem" }}>
-                    CONFIDENTIAL FORENSIC AUDIT REPORT
+                    Security Assessment Report
                   </span>
                   <h1
                     style={{
@@ -1870,13 +1973,13 @@ export function AssessmentWorkspace({
                     className="secondary-text"
                     style={{ fontSize: "0.75rem" }}
                   >
-                    Posture Rating
+                    Security Score
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Forensic Traceability Section */}
+            {/* Scan Details Section */}
             <div style={{ marginBottom: "1.5rem" }}>
               <h3
                 style={{
@@ -1885,7 +1988,7 @@ export function AssessmentWorkspace({
                   paddingBottom: "0.35rem",
                 }}
               >
-                1. Evidence Traceability &amp; Capture Hash
+                1. Scan &amp; Verification Details
               </h3>
               <table
                 style={{
@@ -1903,7 +2006,7 @@ export function AssessmentWorkspace({
                         fontWeight: 600,
                       }}
                     >
-                      Capture File:
+                      Target / Capture:
                     </td>
                     <td className="mono">{assessment.capture_name}</td>
                   </tr>
@@ -1925,7 +2028,7 @@ export function AssessmentWorkspace({
                   </tr>
                   <tr>
                     <td style={{ padding: "0.4rem 0", fontWeight: 600 }}>
-                      Assessment Timestamp:
+                      Scanned on:
                     </td>
                     <td>{new Date(assessment.created_at).toUTCString()}</td>
                   </tr>
@@ -1942,18 +2045,16 @@ export function AssessmentWorkspace({
                   paddingBottom: "0.35rem",
                 }}
               >
-                2. Executive Cryptographic Summary
+                2. Executive Summary
               </h3>
               <p style={{ fontSize: "0.875rem", lineHeight: 1.6 }}>
-                Passive packet inspection of email transport sessions revealed{" "}
-                {assessment.session_ids.length} flow(s) across{" "}
-                {assessment.asset_ids.length} target endpoint(s). The evaluated
-                traffic received a composite posture rating of{" "}
+                Analyzed {assessment.session_ids.length} email session(s) across{" "}
+                {assessment.asset_ids.length} mail server(s). Overall security score is{" "}
                 <strong>
-                  {Math.round(assessment.posture_score)}/100 (Grade{" "}
+                  {Math.round(assessment.posture_score)}/100 (
                   {assessment.posture_grade})
                 </strong>
-                , with a rule-based risk level of{" "}
+                , with an assessed risk level of{" "}
                 <strong>{assessment.ai_risk_classification}</strong>.
               </p>
               <div
@@ -1978,12 +2079,12 @@ export function AssessmentWorkspace({
                   paddingBottom: "0.35rem",
                 }}
               >
-                3. Observed Cryptographic Non-Compliances (
+                3. Security Issues Found (
                 {assessmentFindings.length})
               </h3>
               {assessmentFindings.length === 0 ? (
                 <p className="secondary-text" style={{ fontSize: "0.875rem" }}>
-                  No RFC policy non-compliances observed in analyzed traffic.
+                  No security issues or policy violations were found in this traffic. All checks passed!
                 </p>
               ) : (
                 assessmentFindings.map((f, i) => (
@@ -1999,13 +2100,13 @@ export function AssessmentWorkspace({
                       className="secondary-text"
                       style={{ margin: "0.2rem 0" }}
                     >
-                      Reference: {f.reference} · Category: {f.category}
+                      Standard: {f.reference} · Category: {f.category}
                     </div>
                     <div>{f.description}</div>
                     <div
                       style={{ marginTop: "0.25rem", color: "var(--accent)" }}
                     >
-                      <strong>Remediation:</strong> {f.remediation}
+                      <strong>How to fix:</strong> {f.remediation}
                     </div>
                   </div>
                 ))

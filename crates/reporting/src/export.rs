@@ -735,9 +735,31 @@ li { margin-bottom: 0.25rem; }
 }
 @media print {
   .no-print { display: none !important; }
-  body { background: #ffffff; color: #000000; padding: 0; font-size: 9pt; }
-  .report-container { max-width: 100%; }
-  section, article { page-break-inside: avoid; border-color: #d0d0d0; box-shadow: none; margin-bottom: 0.75rem; padding: 0.875rem; }
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    padding: 0 !important;
+    font-size: 10pt;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  .report-container { max-width: 100% !important; margin: 0 !important; }
+  section {
+    page-break-inside: avoid;
+    break-inside: avoid;
+    border: 1px solid #d1d5db !important;
+    box-shadow: none !important;
+    margin-bottom: 1rem !important;
+    padding: 1rem 1.25rem !important;
+    border-radius: 6px !important;
+  }
+  article {
+    page-break-inside: avoid;
+    break-inside: avoid;
+    border: 1px solid #e5e7eb !important;
+    margin-bottom: 0.75rem !important;
+    padding: 0.75rem !important;
+  }
   @page { margin: 12mm; size: A4 portrait; }
 }
 "#;

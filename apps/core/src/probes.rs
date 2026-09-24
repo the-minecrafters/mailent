@@ -79,16 +79,12 @@ async fn schedule(
     let protocol = req.protocol.unwrap_or(EmailProtocol::Smtp);
     let port = req.port.unwrap_or(match protocol {
         EmailProtocol::Smtp => 25,
-        EmailProtocol::Imap => 993,
-        EmailProtocol::Pop3 => 995,
+        EmailProtocol::Imap => 143,
+        EmailProtocol::Pop3 => 110,
         EmailProtocol::Unknown => 0,
     });
-    if port == 0
-        || protocol == EmailProtocol::Unknown
-        || (protocol == EmailProtocol::Imap && port == 143)
-        || (protocol == EmailProtocol::Pop3 && port == 110)
-    {
-        return Err((StatusCode::UNPROCESSABLE_ENTITY, "use SMTP STARTTLS or an implicit TLS endpoint (IMAPS/POP3S); plaintext IMAP/POP3 upgrade probes are not supported".into()));
+    if port == 0 || protocol == EmailProtocol::Unknown {
+        return Err((StatusCode::UNPROCESSABLE_ENTITY, "invalid probe protocol or port".into()));
     }
     if let Some(id) = req.investigation_id {
         let investigation = state
@@ -157,6 +153,12 @@ async fn execute(state: &AppState, mut run: ProbeRun) -> Result<(), StorageError
     let response = if run.protocol == EmailProtocol::Smtp && run.port != 465 {
         mailent_probe::probe_smtp_starttls(&run.target, run.port, "mailent-probe", &limits, &scope)
             .await
+    } else if run.protocol == EmailProtocol::Imap && (run.port == 143 || run.port != 993) {
+        mailent_probe::probe_imap_starttls(&run.target, run.port, &limits, &scope)
+            .await
+    } else if run.protocol == EmailProtocol::Pop3 && (run.port == 110 || run.port != 995) {
+        mailent_probe::probe_pop3_stls(&run.target, run.port, &limits, &scope)
+            .await
     } else {
         mailent_probe::smtp::probe_implicit_tls(&run.target, run.port, &limits, &scope).await
     };
@@ -198,6 +200,22 @@ async fn execute(state: &AppState, mut run: ProbeRun) -> Result<(), StorageError
                     &run.target,
                     run.port,
                     "mailent-probe",
+                    &challenge_limits,
+                    &scope,
+                )
+                .await
+            } else if run.protocol == EmailProtocol::Imap && (run.port == 143 || run.port != 993) {
+                mailent_probe::probe_imap_starttls(
+                    &run.target,
+                    run.port,
+                    &challenge_limits,
+                    &scope,
+                )
+                .await
+            } else if run.protocol == EmailProtocol::Pop3 && (run.port == 110 || run.port != 995) {
+                mailent_probe::probe_pop3_stls(
+                    &run.target,
+                    run.port,
                     &challenge_limits,
                     &scope,
                 )

@@ -1646,15 +1646,15 @@ function AssetDetailView({
         <div style={{ marginTop: "1.5rem" }}>
           <div className="card">
             <h3>
-              Remediation Guidance (
+              Fix Security Issues (
               {
-                postureData.guidance.filter((g) => g.kind === "remediation")
+                postureData.guidance.filter((g) => g.kind === "remediation" && Boolean(g.finding_id))
                   .length
               }
               )
             </h3>
             {postureData.guidance
-              .filter((g) => g.kind === "remediation")
+              .filter((g) => g.kind === "remediation" && Boolean(g.finding_id))
               .map((g) => (
                 <div
                   key={g.id}
@@ -1679,7 +1679,7 @@ function AssetDetailView({
                   {g.compatibility_caveats.length > 0 && (
                     <div style={{ marginTop: "0.5rem" }}>
                       <span style={{ fontSize: "0.8125rem", fontWeight: 600 }}>
-                        Observed compatibility caveats
+                        Things to check before changing
                       </span>
                       <ul
                         style={{ margin: "0.25rem 0", paddingLeft: "1.25rem" }}
@@ -1697,7 +1697,13 @@ function AssetDetailView({
                     </div>
                   )}
                   <div style={{ marginTop: "0.75rem" }}>
-                    <RemediationWorkflow assetId={assetId} guidance={g} />
+                    <RemediationWorkflow
+                      assetId={assetId}
+                      guidance={g}
+                      initial={postureData.remediations?.find(
+                        (r) => r.finding?.id === g.finding_id,
+                      )}
+                    />
                   </div>
                 </div>
               ))}
@@ -1705,7 +1711,7 @@ function AssetDetailView({
 
           <div className="card">
             <h3>
-              Best Practice Guidance (
+              Optional Security Tips (
               {
                 postureData.guidance.filter((g) => g.kind === "best_practice")
                   .length
@@ -1831,14 +1837,13 @@ function AssetDetailView({
         )}
       </div>
 
-      {/* Forensic Report Export & Freeze Surface */}
+      {/* Security Report Export & Archiving */}
       <div className="card" style={{ marginTop: "1.5rem" }}>
         <div className="card-header">
-          <h3 className="card-title">Forensic Report</h3>
+          <h3 className="card-title">Security Report</h3>
         </div>
         <p className="secondary-text">
-          Export a report with an integrity hash, or freeze the state into an
-          immutable archived record.
+          Download your security assessment report as JSON or HTML/PDF, or save a locked copy for your records.
         </p>
 
         <div
@@ -2788,7 +2793,7 @@ function RemediationsTab() {
 
       {selectedAssetId && (
         <div style={{ marginTop: "1.5rem" }}>
-          <h2>Available Remediation Workflows</h2>
+          <h2>Fixes &amp; Verification</h2>
           {postureQuery.isPending ? (
             <LoadingState label="Loading recommended fixes…" />
           ) : postureQuery.isError ? (
@@ -2799,7 +2804,7 @@ function RemediationsTab() {
           ) : guidanceList.length === 0 ? (
             <div className="card">
               <p className="secondary-text">
-                No active remediation workflows required for this asset.
+                All security checks passed! No fixes needed for this mail server.
               </p>
             </div>
           ) : (
@@ -2810,6 +2815,9 @@ function RemediationsTab() {
                 <RemediationWorkflow
                   assetId={selectedAssetId}
                   guidance={guidance}
+                  initial={postureQuery.data?.remediations?.find(
+                    (r) => r.finding?.id === guidance.finding_id,
+                  )}
                 />
               </div>
             ))

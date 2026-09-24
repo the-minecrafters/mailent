@@ -176,12 +176,17 @@ async function request(
     ...init,
     signal: AbortSignal.timeout(timeoutMs),
   });
+  const text = await response.text();
   if (!response.ok)
     throw new Error(
-      `Request failed (${response.status}): ${(await response.text()).slice(0, 500)}`,
+      `Request failed (${response.status}): ${text.slice(0, 500)}`,
     );
-  if (response.status === 204) return null;
-  return response.json();
+  if (response.status === 204 || !text.trim()) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
 }
 
 export const protocolEvidenceSchema = z.object({
@@ -654,6 +659,9 @@ export function startRemediation(
   findingId: string,
   sessionId?: string,
 ) {
+  if (!assetId || !findingId) {
+    throw new Error("Cannot start fix without a valid mail server and security issue ID.");
+  }
   return remediationPost(`/api/v1/assets/${assetId}/remediations`, {
     finding_id: findingId,
     session_id: sessionId,
@@ -700,11 +708,50 @@ export async function fetchSessionPosture(
 
 export type ReportFormat = "json" | "html" | "pdf";
 
-/** Generate and download a forensic report for an asset in the chosen format. */
+/** Generate and download a report for an asset in the chosen format. */
 export async function downloadAssetReport(
   id: string,
   format: ReportFormat,
 ): Promise<void> {
+  if (format === "pdf") {
+    // ALWAYS export the HTML as PDF using browser printing so it renders with full styling
+    const url = `/api/v1/assets/${id}/report?format=html&print=true#print`;
+    const printWindow = window.open(url, "_blank");
+    if (printWindow) {
+      return;
+    }
+    const response = await authenticatedFetch(
+      `/api/v1/assets/${id}/report?format=html`,
+      { signal: AbortSignal.timeout(15000) },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `Report generation failed (${response.status}): ${(await response.text()).slice(0, 300)}`,
+      );
+    }
+    const html = await response.text();
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed";
+    iframe.style.right = "0";
+    iframe.style.bottom = "0";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    iframe.style.border = "0";
+    document.body.appendChild(iframe);
+    const doc = iframe.contentDocument || iframe.contentWindow?.document;
+    if (doc) {
+      doc.open();
+      doc.write(html);
+      doc.close();
+      setTimeout(() => {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+        setTimeout(() => iframe.remove(), 60000);
+      }, 400);
+      return;
+    }
+  }
+
   const response = await authenticatedFetch(
     `/api/v1/assets/${id}/report?format=${format}`,
     {

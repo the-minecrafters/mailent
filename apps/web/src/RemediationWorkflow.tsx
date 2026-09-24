@@ -76,9 +76,25 @@ export function RemediationWorkflow({
           ? "aging"
           : "low";
 
+  const isAdvisoryOnly = !guidance.finding_id || guidance.kind === "best_practice";
+
+  const statusLabel = !record
+    ? "Ready to fix"
+    : record.state === "verified_fixed"
+      ? "Verified fixed!"
+      : record.state === "still_present"
+        ? "Issue still detected"
+        : record.state === "applied"
+          ? "Marked as fixed (ready to test)"
+          : record.state === "verifying"
+            ? "Testing live server…"
+            : record.state === "inconclusive"
+              ? "Test inconclusive"
+              : record.state.replaceAll("_", " ");
+
   return (
     <section
-      aria-label={`Remediation workflow ${guidance.rule_id}`}
+      aria-label={`Fix workflow for ${guidance.title || guidance.rule_id}`}
       className="remediation-workflow-card"
       style={{
         marginTop: "1rem",
@@ -97,13 +113,11 @@ export function RemediationWorkflow({
         }}
       >
         <p style={{ margin: 0 }}>
-          <strong>
-            Remediation: {record?.state.replaceAll("_", " ") ?? "not started"}
-          </strong>
+          <strong>Status: {statusLabel}</strong>
         </p>
         {record && (
           <span className={`badge ${stateClass}`}>
-            {record.state.replaceAll("_", " ").toUpperCase()}
+            {statusLabel}
           </span>
         )}
       </div>
@@ -111,14 +125,28 @@ export function RemediationWorkflow({
         className="secondary-text"
         style={{ fontSize: "0.8125rem", margin: "0 0 1rem" }}
       >
-        Verification applies to the affected endpoint at the probe time.
-        Original findings and historical posture remain visible; investigation
-        status stays analyst controlled.
+        When you test your fix, Mailent connects to your live mail server to confirm
+        the issue is solved. Your test history is saved for your records.
       </p>
-      {!record && sessions.length > 1 && (
+      {isAdvisoryOnly && (
+        <div
+          style={{
+            padding: "0.75rem 1rem",
+            background: "var(--surface-card-solid)",
+            borderRadius: "6px",
+            border: "1px solid var(--hairline)",
+            fontSize: "0.875rem",
+          }}
+        >
+          <p style={{ margin: 0 }}>
+            <strong>Optional Security Tip:</strong> This recommendation does not require an active test. Update your server settings and Mailent will detect the improvement on the next scan.
+          </p>
+        </div>
+      )}
+      {!record && !isAdvisoryOnly && sessions.length > 1 && (
         <div className="form-group" style={{ marginBottom: "1rem" }}>
           <label className="form-label">
-            Affected session
+            Affected mail session
             <select
               value={selectedSession}
               onChange={(e) => setSelectedSession(e.target.value)}
@@ -134,7 +162,7 @@ export function RemediationWorkflow({
           </label>
         </div>
       )}
-      {!record ? (
+      {!record && !isAdvisoryOnly && (
         <button
           type="button"
           className="btn-primary"
@@ -143,9 +171,10 @@ export function RemediationWorkflow({
           }
           onClick={() => mutation.mutate("start")}
         >
-          {mutation.isPending ? "Starting…" : "Start remediation"}
+          {mutation.isPending ? "Starting…" : "Start fix workflow"}
         </button>
-      ) : (
+      )}
+      {record && (
         <>
           {record.state !== "verifying" && (
             <div
@@ -166,13 +195,13 @@ export function RemediationWorkflow({
                   className="form-label"
                   style={{ marginBottom: "0.35rem" }}
                 >
-                  Change note
+                  What changes did you make?
                 </label>
                 <input
                   value={note}
                   maxLength={4096}
                   onChange={(e) => setNote(e.target.value)}
-                  placeholder="Describe the applied configuration change"
+                  placeholder="e.g. Disabled TLS 1.0/1.1 or renewed the SSL certificate"
                   style={{ width: "100%" }}
                 />
               </div>
@@ -183,7 +212,7 @@ export function RemediationWorkflow({
                   disabled={mutation.isPending}
                   onClick={() => mutation.mutate("apply")}
                 >
-                  Mark change applied
+                  Mark as fixed
                 </button>
                 {record.applied_at && (
                   <button
@@ -192,7 +221,7 @@ export function RemediationWorkflow({
                     disabled={mutation.isPending}
                     onClick={() => mutation.mutate("verify")}
                   >
-                    Verify fix
+                    Test fix now
                   </button>
                 )}
               </div>
@@ -214,7 +243,7 @@ export function RemediationWorkflow({
                 fontSize: "0.8125rem",
               }}
             >
-              Original policy and passive evidence
+              View original issue and evidence
             </summary>
             <div style={{ marginTop: "0.75rem", fontSize: "0.8125rem" }}>
               <p style={{ margin: "0.25rem 0" }}>
@@ -257,14 +286,20 @@ export function RemediationWorkflow({
                   margin: "0 0 0.25rem",
                 }}
               >
-                {attempt.outcome?.replaceAll("_", " ") ?? "verifying"}:{" "}
-                {attempt.explanation}
+                {attempt.outcome === "verified_fixed"
+                  ? "Verified fixed!"
+                  : attempt.outcome === "still_present"
+                    ? "Issue still detected"
+                    : attempt.outcome === "inconclusive"
+                      ? "Test inconclusive"
+                      : (attempt.outcome?.replaceAll("_", " ") ?? "Testing…")}:{" "}
+                {attempt.explanation.replace(/use SMTP STARTTLS or an implicit TLS endpoint.*; /i, "")}
               </p>
               <p
                 className="mono secondary-text"
                 style={{ fontSize: "0.75rem", margin: "0 0 0.5rem" }}
               >
-                Verified at {attempt.completed_at ?? "Pending"}
+                Tested at: {attempt.completed_at ? new Date(attempt.completed_at).toLocaleString() : "In progress"}
               </p>
               {attempt.after && (
                 <details style={{ marginTop: "0.5rem" }}>
@@ -275,7 +310,7 @@ export function RemediationWorkflow({
                       fontWeight: 600,
                     }}
                   >
-                    Active verification evidence
+                    Live test details and evidence
                   </summary>
                   <div style={{ marginTop: "0.5rem" }}>
                     <ProbeEvidence run={attempt.after} />
