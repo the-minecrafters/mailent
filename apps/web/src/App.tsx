@@ -1,4 +1,4 @@
-import { reviewSummary, reviewTitle, reportTitle } from "./display-copy";
+import { reviewSummary, reviewTitle, reportTitle, workspaceName } from "./display-copy";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
@@ -426,7 +426,7 @@ function Workspace() {
     enabled: !!user,
     retry: false,
   });
-  const orgName = orgQuery.data?.name ?? "Workspace";
+  const orgName = workspaceName(user ? orgQuery.data : undefined);
 
   const segments = location.pathname.split("/").filter(Boolean).slice(1);
   const page = pages.find((p) => p.path === `/workspace/${segments[0]}`);

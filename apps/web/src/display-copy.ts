@@ -1,5 +1,16 @@
 // Older saved records retain their original text for exports and audit history.
 // Present known generated labels consistently with the current workspace.
+export function workspaceName(org?: { id: string; name: string }): string {
+  if (
+    !org ||
+    (org.id === "00000000-0000-0000-0000-000000000001" &&
+      org.name === "Acme Inc")
+  ) {
+    return "Workspace";
+  }
+  return org.name;
+}
+
 const summaries: Record<string, string> = {
   "Critical cryptographic non-compliances detected (deprecated protocol version, weak cipher or expired certificate) that expose mail transport to downgrade and interception.":
     "Critical issues were found in this traffic. Review the findings and recommended fixes.",

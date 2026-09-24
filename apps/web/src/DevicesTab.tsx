@@ -1,4 +1,6 @@
 import { InstallCommand } from "./components/InstallCommand";
+import { useAuth } from "./auth";
+import { workspaceName } from "./display-copy";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -19,6 +21,7 @@ import {
 } from "./components/ui";
 
 export function DevicesTab() {
+  const { user } = useAuth();
   const [params, setParams] = useSearchParams();
   const queryClient = useQueryClient();
   const urlCode = params.get("code") || "";
@@ -36,6 +39,7 @@ export function DevicesTab() {
   const orgQuery = useQuery({
     queryKey: ["organization", "current"],
     queryFn: fetchCurrentOrganization,
+    enabled: !!user,
   });
 
   const devicesQuery = useQuery({
@@ -99,13 +103,13 @@ export function DevicesTab() {
   };
 
   const devices = devicesQuery.data ?? [];
-  const org = orgQuery.data;
+  const orgName = user ? workspaceName(orgQuery.data) : "your workspace";
 
   return (
     <div className="tab-page">
       <PageHeader
         title="Devices"
-        description={`Manage devices connected to ${org?.name ?? "your workspace"}.`}
+        description={`Manage devices connected to ${orgName}.`}
       />
 
       {/* Authorize New Device Card */}

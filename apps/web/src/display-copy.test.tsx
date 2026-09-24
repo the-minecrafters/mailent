@@ -1,7 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { domainFromTitle, liveCheckMessage } from "./display-copy";
+import {
+  domainFromTitle,
+  liveCheckMessage,
+  workspaceName,
+} from "./display-copy";
 
 describe("saved results", () => {
+  it("replaces the legacy demo workspace name without hiding real organization names", () => {
+    const id = "00000000-0000-0000-0000-000000000001";
+    expect(workspaceName()).toBe("Workspace");
+    expect(workspaceName({ id, name: "Acme Inc" })).toBe("Workspace");
+    expect(workspaceName({ id, name: "Our team" })).toBe("Our team");
+    expect(workspaceName({ id: "another-org", name: "Acme Inc" })).toBe(
+      "Acme Inc",
+    );
+  });
   it("extracts the domain from old and new generated titles for scheduling", () => {
     expect(domainFromTitle("mail.company.test Infrastructure Assessment")).toBe(
       "mail.company.test",
