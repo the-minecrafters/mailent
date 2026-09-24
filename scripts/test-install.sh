@@ -6,9 +6,10 @@ trap 'rm -rf -- "$work"' EXIT
 cmp "$repo/scripts/install.sh" "$repo/apps/web/public/install.sh"
 bash -n "$repo/scripts/install.sh"
 mkdir -p "$work/mock" "$work/package" "$work/assets"
-cat > "$work/package/mailent" <<'BIN'
+version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$repo/Cargo.toml" | head -n 1)
+cat > "$work/package/mailent" <<BIN
 #!/usr/bin/env bash
-printf 'mailent 0.1.0\n'
+printf 'mailent %s\n' "$version"
 BIN
 cp "$repo/scripts/mailent-zeek" "$work/package/mailent-zeek"
 chmod +x "$work/package/mailent"
@@ -44,8 +45,8 @@ ZEEK
 chmod +x "$work/mock/"*
 export PATH="$work/mock:$PATH" MOCK_ASSETS="$work/assets" MAILENT_INSTALL_DIR="$work/install path/bin"
 bash "$repo/scripts/install.sh" > "$work/success.log"
-[[ "$("$MAILENT_INSTALL_DIR/mailent" --version)" == 'mailent 0.1.0' ]]
-MAILENT_VERSION=v0.1.0 bash "$repo/scripts/install.sh" > "$work/pinned.log"
+[[ "$("$MAILENT_INSTALL_DIR/mailent" --version)" == "mailent $version" ]]
+MAILENT_VERSION="v$version" bash "$repo/scripts/install.sh" > "$work/pinned.log"
 printf 'previous binary\n' > "$MAILENT_INSTALL_DIR/mailent"
 assert_failure() {
   if "$@" > "$work/error.log" 2>&1; then
