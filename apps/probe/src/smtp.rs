@@ -326,8 +326,7 @@ pub async fn probe_imap_starttls(
         })?;
         result.resolved_ip = Some(stream.peer_addr()?.ip().to_string());
         let mut reader = BufReader::new(stream);
-        let mut greeting = String::new();
-        reader.read_line(&mut greeting).await?;
+        let greeting = read_bounded_single_line(&mut reader, limits.max_line_bytes).await?;
         if !greeting.starts_with("* OK") && !greeting.starts_with("* PREAUTH") {
             return Err(SmtpProbeError::Protocol(format!(
                 "invalid IMAP greeting: {}",
@@ -337,8 +336,7 @@ pub async fn probe_imap_starttls(
         result.smtp_greeting = Some(greeting.trim().to_string());
 
         reader.get_mut().write_all(b"a001 STARTTLS\r\n").await?;
-        let mut reply = String::new();
-        reader.read_line(&mut reply).await?;
+        let reply = read_bounded_single_line(&mut reader, limits.max_line_bytes).await?;
         if !reply.starts_with("a001 OK") {
             result.starttls = ProbeStartTlsResult::AdvertisedAndRejected;
             result.error = Some(format!("IMAP STARTTLS rejected: {}", reply.trim()));
@@ -396,8 +394,7 @@ pub async fn probe_pop3_stls(
         })?;
         result.resolved_ip = Some(stream.peer_addr()?.ip().to_string());
         let mut reader = BufReader::new(stream);
-        let mut greeting = String::new();
-        reader.read_line(&mut greeting).await?;
+        let greeting = read_bounded_single_line(&mut reader, limits.max_line_bytes).await?;
         if !greeting.starts_with("+OK") {
             return Err(SmtpProbeError::Protocol(format!(
                 "invalid POP3 greeting: {}",
@@ -407,8 +404,7 @@ pub async fn probe_pop3_stls(
         result.smtp_greeting = Some(greeting.trim().to_string());
 
         reader.get_mut().write_all(b"STLS\r\n").await?;
-        let mut reply = String::new();
-        reader.read_line(&mut reply).await?;
+        let reply = read_bounded_single_line(&mut reader, limits.max_line_bytes).await?;
         if !reply.starts_with("+OK") {
             result.starttls = ProbeStartTlsResult::AdvertisedAndRejected;
             result.error = Some(format!("POP3 STLS rejected: {}", reply.trim()));
@@ -439,6 +435,23 @@ pub async fn probe_pop3_stls(
     }
     result.latency_ms = started.elapsed().as_millis() as u64;
     Ok(result)
+}
+
+async fn read_bounded_single_line<R: tokio::io::AsyncRead + Unpin>(
+    reader: &mut BufReader<R>,
+    max_bytes: usize,
+) -> Result<String, SmtpProbeError> {
+    let mut bytes = Vec::new();
+    reader
+        .take(max_bytes as u64 + 1)
+        .read_until(b'\n', &mut bytes)
+        .await?;
+    if bytes.len() > max_bytes || !bytes.ends_with(b"\n") {
+        return Err(SmtpProbeError::Protocol(
+            "oversized or truncated protocol response line".into(),
+        ));
+    }
+    String::from_utf8(bytes).map_err(|_| SmtpProbeError::Protocol("non-UTF8 protocol response".into()))
 }
 
 fn require_code(lines: &[String], code: &str) -> Result<(), SmtpProbeError> {

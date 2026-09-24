@@ -13,8 +13,8 @@ pub use builder::{ReportInput, build_report};
 pub use export::{ReportError, render_html, render_pdf, to_json};
 pub use model::{
     ActiveVerificationSection, AiAssessmentSection, CaseMetadata, CertificateSection,
-    ContextSection, FindingSection, ForensicReport, Maybe, ProvenanceClass, RiskPrioritization,
-    SessionRecord, TimelineEntry, UnavailableReason,
+    ContextSection, FindingSection, ForensicReport, InfrastructureSection, Maybe, ProvenanceClass,
+    RiskPrioritization, SessionRecord, TimelineEntry, UnavailableReason,
 };
 
 use mailent_domain::Finding;

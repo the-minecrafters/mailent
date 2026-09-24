@@ -57,6 +57,30 @@ export const captureEvidenceSchema = z.object({
 });
 export type CaptureEvidence = z.infer<typeof captureEvidenceSchema>;
 
+export const publicKeyDetailsSchema = z.object({
+  algorithm: z.string().nullable().optional(),
+  rsa_bits: z.number().nullable().optional(),
+  ec_curve: z.string().nullable().optional(),
+  spki_sha256: z.string().nullable().optional(),
+});
+
+export const certificateCryptoDetailsSchema = z.object({
+  signature_algorithm: z.string().nullable().optional(),
+  public_key: publicKeyDetailsSchema.optional(),
+  extensions: z
+    .object({
+      basic_constraints: z.string().nullable().optional(),
+      key_usage: z.array(z.string()).default([]),
+      extended_key_usage: z.array(z.string()).default([]),
+    })
+    .optional(),
+  is_ca: z.boolean().nullable().optional(),
+  chain_length: z.number().nullable().optional(),
+});
+export type CertificateCryptoDetails = z.infer<
+  typeof certificateCryptoDetailsSchema
+>;
+
 export const certificateObservationSchema = z.object({
   reference: z.object({
     sha256_fingerprint: z.string(),
@@ -69,6 +93,7 @@ export const certificateObservationSchema = z.object({
   }),
   is_self_signed: z.boolean().nullable().optional(),
   san: z.array(z.string()),
+  crypto_details: certificateCryptoDetailsSchema.nullable().optional(),
 });
 export type CertificateObservation = z.infer<
   typeof certificateObservationSchema
@@ -767,6 +792,39 @@ export async function downloadAssetReport(
   const match = disposition.match(/filename="?([^";]+)"?/);
   const filename = match?.[1] ?? `mailent-report-${id.slice(0, 8)}.${format}`;
   const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+/** Generate and download a forensic dossier for an assessment in the chosen format (json, html, pdf). */
+export async function downloadAssessmentReport(
+  id: string,
+  format: ReportFormat,
+  title?: string,
+): Promise<void> {
+  const response = await authenticatedFetch(
+    `/api/v1/assessments/${id}/report?format=${format}`,
+    {
+      signal: AbortSignal.timeout(20000),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(
+      `Forensic report generation failed (${response.status}): ${(await response.text()).slice(0, 300)}`,
+    );
+  }
+  const blob = await response.blob();
+  const disposition = response.headers.get("content-disposition") ?? "";
+  const match = disposition.match(/filename="?([^";]+)"?/);
+  const filename =
+    match?.[1] ||
+    `mailent-${(title || `assessment-${id}`).toLowerCase().replace(/[^a-z0-9_-]+/g, "-")}-report.${format}`;
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;

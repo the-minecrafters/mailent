@@ -4,6 +4,7 @@ repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 cmp "$repo/scripts/install.sh" "$repo/apps/web/public/install.sh"
+cmp "$repo/scripts/install.ps1" "$repo/apps/web/public/install.ps1"
 bash -n "$repo/scripts/install.sh"
 mkdir -p "$work/mock" "$work/package" "$work/assets"
 version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$repo/Cargo.toml" | head -n 1)

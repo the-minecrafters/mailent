@@ -24,3 +24,4 @@ thiserror = { workspace = true }
 uuid = { workspace = true }
 time = { workspace = true }
 sha2 = { workspace = true }
+idna = "1.0"

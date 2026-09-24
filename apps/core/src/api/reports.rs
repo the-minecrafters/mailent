@@ -228,3 +228,113 @@ pub async fn get_archived_report_handler(
     )
         .into_response())
 }
+
+pub async fn get_assessment_report_handler(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    Query(query): Query<ReportQuery>,
+) -> Result<axum::response::Response, (StatusCode, String)> {
+    let format = query.format.unwrap_or(ReportFormatQuery::Json);
+    let assessment = state
+        .assessments
+        .find_by_id(id)
+        .await
+        .map_err(storage_error)?
+        .ok_or((StatusCode::NOT_FOUND, format!("assessment {id} not found")))?;
+    let evidence = EvidenceSnapshot::assessment(&state, id)
+        .await
+        .map_err(storage_error)?
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            format!("assessment {id} evidence not found"),
+        ))?;
+
+    let (infra_domain, infra_meta) = match &assessment.source {
+        mailent_domain::AssessmentSource::Infrastructure(meta) => {
+            let mx_records: Vec<String> = meta
+                .discovered_endpoints
+                .iter()
+                .filter(|e| e.service.eq_ignore_ascii_case("mx"))
+                .map(|e| e.host.clone())
+                .collect();
+            let dnssec_status = meta
+                .discovery_evidence
+                .iter()
+                .find(|d| !d.dnssec_status.is_empty())
+                .map(|d| d.dnssec_status.clone())
+                .unwrap_or_else(|| "insecure".to_string());
+            let mta_sts_mode = assessment
+                .metadata
+                .get("mta_sts_mode")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let infra_data = mailent_reporting::InfrastructureSection {
+                domain: meta.target_domain.clone(),
+                mx_records,
+                discovered_endpoints: Vec::new(),
+                mta_sts_mode,
+                mta_sts_policy_details: None,
+                tls_rpt_destination: None,
+                dnssec_status,
+            };
+            (Some(meta.target_domain.clone()), Some(infra_data))
+        }
+        _ => (None, None),
+    };
+
+    let (posture, guidance) = evidence.posture(PostureSubjectKind::Asset, id);
+    let input = mailent_reporting::ReportInput {
+        investigation: evidence.investigation.as_ref(),
+        asset: evidence.asset.as_ref(),
+        sessions: &evidence.sessions,
+        findings: &evidence.findings,
+        anomalies: &evidence.anomalies,
+        drifts: &evidence.drifts,
+        probe_runs: &evidence.probes,
+        posture: Some(&posture),
+        guidance: &guidance,
+        remediation_records: &evidence.remediations,
+        policy_name: state.policy_pack.name.clone(),
+        policy_version: state.policy_pack.version.clone(),
+        assessment_source: Some(match &assessment.source {
+            mailent_domain::AssessmentSource::Capture(_) => "capture".to_string(),
+            mailent_domain::AssessmentSource::Infrastructure(_) => "infrastructure".to_string(),
+        }),
+        target_domain: infra_domain,
+        infrastructure: infra_meta,
+    };
+    let title = format!("Forensic Dossier: {}", assessment.title);
+    let report = mailent_reporting::build_report(
+        title,
+        env!("CARGO_PKG_VERSION"),
+        &input,
+        time::OffsetDateTime::now_utc(),
+    );
+    let (content_type, body) = render_report(&report, format)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let disposition_type = match format {
+        ReportFormatQuery::Html => "inline",
+        _ => "attachment",
+    };
+    let disposition = format!(
+        "{disposition_type}; filename=\"mailent-assessment-{}.{}\"",
+        id,
+        match format {
+            ReportFormatQuery::Json => "json",
+            ReportFormatQuery::Html => "html",
+            ReportFormatQuery::Pdf => "pdf",
+        }
+    );
+    Ok((
+        [
+            (header::CONTENT_TYPE, content_type),
+            (
+                header::CONTENT_DISPOSITION,
+                HeaderValue::from_str(&disposition)
+                    .unwrap_or(HeaderValue::from_static("attachment")),
+            ),
+        ],
+        body,
+    )
+        .into_response())
+}

@@ -128,6 +128,56 @@ impl EvidenceSnapshot {
             ..Default::default()
         }))
     }
+    pub async fn assessment(state: &AppState, id: Uuid) -> Result<Option<Self>, StorageError> {
+        let Some(assessment) = state.assessments.find_by_id(id).await? else {
+            return Ok(None);
+        };
+        let mut sessions = Vec::new();
+        for session_id in &assessment.session_ids {
+            if let Some(s) = state.sessions.find_by_id(*session_id).await? {
+                sessions.push(s);
+            }
+        }
+        let mut findings = Vec::new();
+        for finding_id in &assessment.finding_ids {
+            if let Some(f) = state.findings.find_by_id(*finding_id).await? {
+                findings.push(f);
+            }
+        }
+        let primary_asset = if let Some(asset_id) = assessment.asset_ids.first() {
+            state.assets.find_by_id(*asset_id).await?
+        } else {
+            None
+        };
+        let mut certificates = Vec::new();
+        for asset_id in &assessment.asset_ids {
+            certificates.extend(state.certificates.list_for_asset(*asset_id).await?);
+        }
+        let mut anomalies = Vec::new();
+        for asset_id in &assessment.asset_ids {
+            anomalies.extend(state.baselines.list_anomalies(Some(*asset_id), 50).await?);
+        }
+        let mut drifts = Vec::new();
+        for asset_id in &assessment.asset_ids {
+            drifts.extend(state.assets.list_drift_events(Some(*asset_id), 50).await?);
+        }
+        let mut probes = Vec::new();
+        for asset_id in &assessment.asset_ids {
+            probes.extend(state.probes.list_for_asset(*asset_id, 20).await?);
+        }
+
+        Ok(Some(Self {
+            asset: primary_asset,
+            investigation: None,
+            sessions,
+            findings,
+            anomalies,
+            drifts,
+            certificates,
+            probes,
+            remediations: Vec::new(),
+        }))
+    }
     pub fn posture(
         &self,
         kind: PostureSubjectKind,

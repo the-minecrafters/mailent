@@ -58,7 +58,19 @@ pub async fn run_live_listener_with_client(
     .await?;
 
     // Check Zeek version
-    let mut version_cmd = Command::new(&zeek_bin);
+    let is_script = cfg!(windows)
+        && zeek_bin
+            .extension()
+            .and_then(|s| s.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"));
+
+    let mut version_cmd = if is_script {
+        let mut c = Command::new("cmd.exe");
+        c.arg("/c").arg(&zeek_bin);
+        c
+    } else {
+        Command::new(&zeek_bin)
+    };
     version_cmd.arg("--version");
     version_cmd.current_dir(&work_path);
     let version_out = version_cmd.output().await.map_err(|e| {
@@ -78,7 +90,14 @@ pub async fn run_live_listener_with_client(
     info!(version = %zeek_version, "Zeek verified successfully");
 
     // Spawn Zeek process on the interface
-    let mut zeek_child = Command::new(&zeek_bin)
+    let mut zeek_child_cmd = if is_script {
+        let mut c = Command::new("cmd.exe");
+        c.arg("/c").arg(&zeek_bin);
+        c
+    } else {
+        Command::new(&zeek_bin)
+    };
+    let mut zeek_child = zeek_child_cmd
         .arg("-b")
         .arg("-i")
         .arg(&config.interface)

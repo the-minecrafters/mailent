@@ -195,7 +195,7 @@ impl LiveDomainIntelligenceResolver {
     pub fn new() -> Result<Self, IntegrationError> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
-            .redirect(reqwest::redirect::Policy::limited(3))
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|e| IntegrationError::Network(e.to_string()))?;
 
@@ -345,16 +345,25 @@ impl DomainIntelligenceResolver for LiveDomainIntelligenceResolver {
         }
 
         // Limit response size to 64KB (RFC 8461 Section 3.2 recommends max 64KB)
-        let body = res
-            .text()
+        // Stream chunks with immediate abort if exceeding 64KB to prevent memory exhaustion / DoS
+        let mut bytes = Vec::new();
+        let mut response = res;
+        while let Some(chunk) = response
+            .chunk()
             .await
-            .map_err(|e| IntegrationError::Network(e.to_string()))?;
-
-        if body.len() > 65536 {
-            return Err(IntegrationError::Format(
-                "MTA-STS policy exceeds maximum allowed size of 64KB".into(),
-            ));
+            .map_err(|e| IntegrationError::Network(e.to_string()))?
+        {
+            if bytes.len() + chunk.len() > 65536 {
+                return Err(IntegrationError::Format(
+                    "MTA-STS policy exceeds maximum allowed size of 64KB".into(),
+                ));
+            }
+            bytes.extend_from_slice(&chunk);
         }
+
+        let body = String::from_utf8(bytes).map_err(|e| {
+            IntegrationError::Format(format!("MTA-STS policy is not valid UTF-8: {e}"))
+        })?;
 
         let policy = parse_mta_sts_policy(&body, domain, DnssecState::Insecure)?;
         Ok(Some(policy))

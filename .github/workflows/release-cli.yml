@@ -10,11 +10,10 @@ on:
         type: string
 permissions:
   contents: read
+
 jobs:
-  release:
+  build-linux:
     runs-on: ubuntu-22.04
-    permissions:
-      contents: write
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
@@ -26,7 +25,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler pkg-config libssl-dev
           rustup toolchain install 1.94.0 --profile minimal
-          # Ubuntu 22.04 ships protoc 3.12, which gates proto3 optional fields.
           printf '#!/usr/bin/env bash\nexec /usr/bin/protoc --experimental_allow_proto3_optional "$@"\n' > "$RUNNER_TEMP/mailent-protoc"
           chmod +x "$RUNNER_TEMP/mailent-protoc"
           echo "PROTOC=$RUNNER_TEMP/mailent-protoc" >> "$GITHUB_ENV"
@@ -55,6 +53,71 @@ jobs:
           cp docs/cli.md release/README.md
           tar -C release -czf mailent-linux-x86_64.tar.gz mailent mailent-zeek LICENSE README.md
           sha256sum mailent-linux-x86_64.tar.gz > mailent-linux-x86_64.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: |
+            mailent-linux-x86_64.tar.gz
+            mailent-linux-x86_64.tar.gz.sha256
+
+  build-windows:
+    runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - name: Install Protoc
+        run: choco install protoc -y
+      - name: Install Rust toolchain
+        run: rustup toolchain install 1.94.0 --profile minimal
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cli-windows-x86_64-rust194-${{ hashFiles('Cargo.lock') }}
+      - name: Build Windows CLI
+        run: cargo +1.94.0 build --locked --release -p mailent
+      - name: Verify binary and package
+        shell: pwsh
+        run: |
+          & target/release/mailent.exe --version
+          & target/release/mailent.exe --help
+          New-Item -ItemType Directory -Path release-win -Force | Out-Null
+          Copy-Item target/release/mailent.exe release-win/mailent.exe
+          Copy-Item scripts/mailent-zeek.cmd release-win/mailent-zeek.cmd
+          Copy-Item LICENSE release-win/LICENSE
+          Copy-Item docs/cli.md release-win/README.md
+          Compress-Archive -Path release-win/* -DestinationPath mailent-windows-x86_64.zip -Force
+          $hash = (Get-FileHash mailent-windows-x86_64.zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  mailent-windows-x86_64.zip" | Out-File -Encoding ascii mailent-windows-x86_64.zip.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: |
+            mailent-windows-x86_64.zip
+            mailent-windows-x86_64.zip.sha256
+
+  publish:
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-linux
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-windows
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -63,4 +126,15 @@ jobs:
             mailent-linux-x86_64.tar.gz \
             mailent-linux-x86_64.tar.gz.sha256 \
             scripts/install.sh \
-            --verify-tag --title "Mailent CLI $RELEASE_TAG" --notes-file docs/cli-release-notes.md
+            mailent-windows-x86_64.zip \
+            mailent-windows-x86_64.zip.sha256 \
+            scripts/install.ps1 \
+            --verify-tag --title "Mailent CLI $RELEASE_TAG" --notes-file docs/cli-release-notes.md || \
+          gh release upload "$RELEASE_TAG" \
+            mailent-linux-x86_64.tar.gz \
+            mailent-linux-x86_64.tar.gz.sha256 \
+            scripts/install.sh \
+            mailent-windows-x86_64.zip \
+            mailent-windows-x86_64.zip.sha256 \
+            scripts/install.ps1 \
+            --clobber

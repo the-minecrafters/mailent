@@ -131,17 +131,27 @@ pub async fn analyze(
 }
 
 async fn run(zeek: &Path, args: &[&str], dir: &Path) -> Result<std::process::Output, SensorError> {
-    let result = tokio::time::timeout(
-        Duration::from_secs(120),
+    let is_script = cfg!(windows)
+        && zeek
+            .extension()
+            .and_then(|s| s.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"));
+
+    let mut cmd = if is_script {
+        let mut c = Command::new("cmd.exe");
+        c.arg("/c").arg(zeek);
+        c
+    } else {
         Command::new(zeek)
-            .args(args)
-            .current_dir(dir)
-            .env("ZEEK_DNS_FAKE", "1")
-            .kill_on_drop(true)
-            .output(),
-    )
-    .await
-    .map_err(|_| SensorError::Zeek("Zeek exceeded the 120 second local analysis limit".into()))?;
+    };
+    cmd.args(args)
+        .current_dir(dir)
+        .env("ZEEK_DNS_FAKE", "1")
+        .kill_on_drop(true);
+
+    let result = tokio::time::timeout(Duration::from_secs(120), cmd.output())
+        .await
+        .map_err(|_| SensorError::Zeek("Zeek exceeded the 120 second local analysis limit".into()))?;
     let output=result.map_err(|e|if e.kind()==std::io::ErrorKind::NotFound {SensorError::Zeek(format!("Zeek executable '{}' not found; install Zeek or pass --zeek scripts/zeek-container",zeek.display()))}else{SensorError::Io(e)})?;
     if !output.status.success() {
         return Err(SensorError::Zeek(format!(

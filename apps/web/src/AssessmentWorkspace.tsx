@@ -6,6 +6,7 @@ import {
   type AssessmentRecord,
   type Asset,
   archiveReport,
+  downloadAssessmentReport,
   type EmailSession,
   type Finding,
   fetchAssessment,
@@ -15,12 +16,14 @@ import {
   fetchDomainHistory,
   fetchFindings,
   fetchSessions,
+  type ReportFormat,
   runNowMonitor,
 } from "./api";
 import { Icon } from "./components/Icon";
 import { MailentLogo } from "./components/MailentLogo";
 import { ErrorState, LoadingState } from "./components/ui";
 import { ProbeEvidence } from "./ProbePanel";
+import { ProtocolLadder } from "./components/ProtocolLadder";
 import { RemediationWorkflow } from "./RemediationWorkflow";
 import { ScheduleMonitorModal } from "./ScheduleMonitorModal";
 
@@ -83,6 +86,7 @@ export function AssessmentWorkspace({
     null,
   );
   const [copiedHash, setCopiedHash] = useState(false);
+  const [copiedCmd, setCopiedCmd] = useState<string | null>(null);
   const [archiveSuccess, setArchiveSuccess] = useState<string | null>(null);
 
   // Queries
@@ -217,6 +221,39 @@ export function AssessmentWorkspace({
     URL.revokeObjectURL(url);
   };
 
+  const [exportingFormat, setExportingFormat] = useState<ReportFormat | null>(null);
+
+  const handleCopyCmd = async (cmd: string) => {
+    try {
+      await navigator.clipboard.writeText(cmd);
+      setCopiedCmd(cmd);
+      setTimeout(() => setCopiedCmd(null), 2000);
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleExport = async (format: ReportFormat) => {
+    if (!assessment || exportingFormat) return;
+    setExportingFormat(format);
+    setActionError(null);
+    try {
+      if (format === "json") {
+        try {
+          await downloadAssessmentReport(assessment.id, "json", assessment.title);
+        } catch {
+          handleDownloadJson();
+        }
+      } else {
+        await downloadAssessmentReport(assessment.id, format, assessment.title);
+      }
+    } catch (err: any) {
+      setActionError(`Export failed: ${err.message || err}`);
+    } finally {
+      setExportingFormat(null);
+    }
+  };
+
   const handleArchiveReport = async () => {
     if (!assessment || archiving) return;
     setActionError(null);
@@ -347,19 +384,38 @@ export function AssessmentWorkspace({
         <div style={{ display: "flex", gap: "0.5rem" }}>
           <button
             className="btn btn-secondary"
-            onClick={handleDownloadJson}
-            title="Export JSON"
+            onClick={() => handleExport("json")}
+            disabled={exportingFormat !== null}
+            title="Download structured JSON report"
           >
             <Icon name="download" size={16} />
-            <span>Export JSON</span>
+            <span>{exportingFormat === "json" ? "Exporting…" : "Export JSON"}</span>
+          </button>
+          <button
+            className="btn btn-secondary"
+            onClick={() => handleExport("html")}
+            disabled={exportingFormat !== null}
+            title="Download standalone HTML forensic dossier"
+          >
+            <Icon name="download" size={16} />
+            <span>{exportingFormat === "html" ? "Exporting…" : "Export HTML"}</span>
+          </button>
+          <button
+            className="btn btn-secondary"
+            onClick={() => handleExport("pdf")}
+            disabled={exportingFormat !== null}
+            title="Download official PDF forensic report"
+          >
+            <Icon name="download" size={16} />
+            <span>{exportingFormat === "pdf" ? "Exporting…" : "Export PDF"}</span>
           </button>
           <button
             className="btn btn-secondary"
             onClick={handlePrintReport}
-            title="Print or save as PDF"
+            title="Print or save via browser"
           >
             <Icon name="print" size={16} />
-            <span>Print / PDF</span>
+            <span>Print</span>
           </button>
           {isInfra && (
             <button
@@ -1095,6 +1151,7 @@ export function AssessmentWorkspace({
             <div style={{ padding: "1.25rem" }}>
               {selectedSession ? (
                 <>
+                  <ProtocolLadder session={selectedSession} />
                   <div style={{ marginBottom: "1rem", fontSize: "0.875rem" }}>
                     <strong>Session UID:</strong>{" "}
                     <span className="mono">{selectedSession.session_id}</span>
@@ -1665,116 +1722,323 @@ export function AssessmentWorkspace({
 
       {/* TAB 6: RISK & ANOMALIES */}
       {activeTab === "risk" && (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-            gap: "1.25rem",
-          }}
-        >
-          {/* Deterministic Violations */}
-          <div className="card">
-            <div className="card-header">
-              <h3 className="card-title">Policy findings</h3>
-              <span className="badge critical">
-                {assessmentFindings.length} Rules
-              </span>
-            </div>
-            <div style={{ padding: "1.25rem" }}>
-              <p
-                className="secondary-text"
-                style={{ fontSize: "0.875rem", marginTop: 0 }}
-              >
-                Issues found by checking traffic against the selected policy.
-              </p>
-              {assessmentFindings.map((f) => (
-                <div
-                  key={f.id}
-                  style={{
-                    padding: "0.6rem 0.85rem",
-                    border: "1px solid var(--border)",
-                    borderRadius: "6px",
-                    marginBottom: "0.5rem",
-                    background: "var(--canvas-sunken)",
-                  }}
-                >
-                  <div
-                    style={{ display: "flex", justifyContent: "space-between" }}
+        <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+          {/* JEV AI INTELLIGENCE BANNER */}
+          <div
+            className="card"
+            style={{
+              padding: "1.25rem 1.5rem",
+              background: "var(--canvas-sunken)",
+              border: "1px solid var(--border)",
+              borderLeft: `4px solid ${
+                assessment.ai_risk_classification === "CRITICAL"
+                  ? "var(--status-critical-border, #ef4444)"
+                  : assessment.ai_risk_classification === "HIGH"
+                    ? "var(--status-warning-border, #f59e0b)"
+                    : "var(--accent, #3b82f6)"
+              }`,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+                flexWrap: "wrap",
+                gap: "1rem",
+                marginBottom: "0.75rem",
+              }}
+            >
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "0.35rem",
+                      fontWeight: 700,
+                      fontSize: "0.9375rem",
+                      color: "var(--ink)",
+                    }}
                   >
-                    <span
-                      className="mono"
-                      style={{ fontWeight: 600, fontSize: "0.875rem" }}
-                    >
-                      {f.rule_id}
+                    <Icon name="psychology" size={20} />
+                    Jev AI Threat Prioritization & Risk Engine
+                  </span>
+                  <span
+                    className="badge"
+                    style={{
+                      background: "var(--accent-subtle)",
+                      color: "var(--accent)",
+                      fontSize: "0.75rem",
+                      fontWeight: 600,
+                    }}
+                  >
+                    {assessment.metadata?.ai_provider === "jev"
+                      ? "Jev Engine Online"
+                      : "Jev Deterministic Mode"}
+                  </span>
+                  {assessment.metadata?.jev_model && (
+                    <span className="mono" style={{ fontSize: "0.75rem", color: "var(--ink-secondary)" }}>
+                      model: {assessment.metadata.jev_model}
                     </span>
-                    <span
-                      className={`badge ${
-                        f.severity === "critical"
-                          ? "critical"
-                          : f.severity === "high"
-                            ? "high"
-                            : ""
-                      }`}
-                      style={{ fontSize: "0.875rem" }}
-                    >
-                      {f.severity}
-                    </span>
+                  )}
+                </div>
+                <p
+                  className="secondary-text"
+                  style={{ fontSize: "0.875rem", margin: "0.35rem 0 0 0" }}
+                >
+                  Evaluates cryptographic handshakes, cipher negotiation, and protocol transition boundaries using evidence-grounded reasoning.
+                </p>
+              </div>
+
+              <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: "0.75rem", color: "var(--ink-secondary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                    AI Confidence
                   </div>
-                  <div style={{ fontSize: "0.875rem", marginTop: "0.25rem" }}>
-                    {f.title}
+                  <div className="mono" style={{ fontWeight: 700, fontSize: "1.125rem", color: "var(--ink)" }}>
+                    {Math.round((assessment.ai_confidence ?? 0) * 100)}%
                   </div>
                 </div>
-              ))}
+                <span
+                  className={`badge ${
+                    assessment.ai_risk_classification === "CRITICAL"
+                      ? "critical"
+                      : assessment.ai_risk_classification === "HIGH"
+                        ? "high"
+                        : ""
+                  }`}
+                  style={{ fontSize: "0.9375rem", padding: "0.4rem 0.8rem", fontWeight: 700 }}
+                >
+                  {assessment.ai_risk_classification} RISK
+                </span>
+              </div>
+            </div>
+
+            <div
+              style={{
+                padding: "0.85rem 1rem",
+                borderRadius: "6px",
+                background: "var(--surface)",
+                border: "1px solid var(--border)",
+                fontSize: "0.875rem",
+                lineHeight: "1.5",
+              }}
+            >
+              <div style={{ fontWeight: 600, marginBottom: "0.25rem", color: "var(--ink)" }}>
+                Analysis & Decision Rationale:
+              </div>
+              <div className="mono" style={{ color: "var(--ink-secondary)", fontSize: "0.85rem", whiteSpace: "pre-wrap" }}>
+                {assessment.ai_risk_rationale || "No security risks identified in evaluated connections."}
+              </div>
             </div>
           </div>
 
-          {/* Behavioral / Baseline Anomalies */}
-          <div className="card">
-            <div className="card-header">
-              <h3 className="card-title">Unusual changes</h3>
-              <span className="badge">
-                {assetAnomaliesQuery.data?.length ?? 0} Detected
-              </span>
-            </div>
-            <div style={{ padding: "1.25rem" }}>
-              <p
-                className="secondary-text"
-                style={{ fontSize: "0.875rem", marginTop: 0 }}
-              >
-                Changes from this server’s previous activity, such as different encryption or unexpected ports.
-              </p>
-              {(assetAnomaliesQuery.data ?? []).length === 0 ? (
-                <div
-                  className="secondary-text"
-                  style={{ textAlign: "center", padding: "1.5rem" }}
-                >
-                  No unusual changes found in the available history.
-                </div>
-              ) : (
-                assetAnomaliesQuery.data?.map((anom, idx) => (
-                  <div
-                    key={idx}
-                    style={{
-                      padding: "0.6rem 0.85rem",
-                      border: "1px solid var(--border)",
-                      borderRadius: "6px",
-                      marginBottom: "0.5rem",
-                      background: "var(--canvas-sunken)",
-                    }}
-                  >
-                    <div style={{ fontWeight: 600, fontSize: "0.875rem" }}>
-                      {anom.title}
-                    </div>
+          {/* THREAT PRIORITIZATION MATRIX */}
+          {Array.isArray(assessment.metadata?.threat_matrix) && assessment.metadata.threat_matrix.length > 0 && (
+            <div className="card">
+              <div className="card-header">
+                <h3 className="card-title">Threat Prioritization Matrix</h3>
+                <span className="badge critical">
+                  {assessment.metadata.threat_matrix.length} Prioritized Threats
+                </span>
+              </div>
+              <div style={{ padding: "1.25rem" }}>
+                <p className="secondary-text" style={{ fontSize: "0.875rem", marginTop: 0, marginBottom: "1rem" }}>
+                  Adversarial exploitability analysis mapping identified cryptographic flaws to active attacker attack vectors.
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+                  {assessment.metadata.threat_matrix.map((item: any, idx: number) => (
                     <div
-                      className="secondary-text"
-                      style={{ fontSize: "0.875rem", marginTop: "0.2rem" }}
+                      key={idx}
+                      style={{
+                        padding: "1rem",
+                        borderRadius: "6px",
+                        border: "1px solid var(--border)",
+                        background: "var(--canvas-sunken)",
+                      }}
                     >
-                      Signal: {anom.signal} · Current: {anom.current_value}{" "}
-                      (Baseline: {anom.baseline_value}) · {anom.evidence}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+                          <span
+                            className="badge"
+                            style={{
+                              fontWeight: 700,
+                              fontSize: "0.8rem",
+                              background: item.priority_tier?.startsWith("P1")
+                                ? "var(--status-critical-bg, #fee2e2)"
+                                : item.priority_tier?.startsWith("P2")
+                                  ? "var(--status-warning-bg, #fef3c7)"
+                                  : "var(--surface-subtle)",
+                              color: item.priority_tier?.startsWith("P1")
+                                ? "var(--status-critical-ink, #991b1b)"
+                                : item.priority_tier?.startsWith("P2")
+                                  ? "var(--status-warning-ink, #92400e)"
+                                  : "var(--ink)",
+                              border: "1px solid currentColor",
+                            }}
+                          >
+                            {item.priority_tier}
+                          </span>
+                          <span className="mono" style={{ fontWeight: 600, fontSize: "0.875rem" }}>
+                            {item.rule_id}
+                          </span>
+                          <span style={{ fontSize: "0.875rem", color: "var(--ink-secondary)" }}>
+                            — {item.title}
+                          </span>
+                        </div>
+                        <span
+                          className={`badge ${item.severity === "critical" ? "critical" : item.severity === "high" ? "high" : ""}`}
+                          style={{ fontSize: "0.75rem" }}
+                        >
+                          {item.severity}
+                        </span>
+                      </div>
+                      <div
+                        style={{
+                          fontSize: "0.875rem",
+                          lineHeight: "1.45",
+                          color: "var(--ink)",
+                          background: "var(--surface)",
+                          padding: "0.65rem 0.85rem",
+                          borderRadius: "4px",
+                          border: "1px solid var(--border)",
+                        }}
+                      >
+                        <strong style={{ color: "var(--ink-primary)" }}>Exploitability / Attack Vector: </strong>
+                        {item.threat_vector}
+                      </div>
                     </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TWO COLUMN: POLICY FINDINGS & BASELINE ANOMALIES */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+              gap: "1.25rem",
+            }}
+          >
+            {/* Deterministic Violations */}
+            <div className="card">
+              <div className="card-header">
+                <h3 className="card-title">Policy findings</h3>
+                <span className="badge critical">
+                  {assessmentFindings.length} Rules
+                </span>
+              </div>
+              <div style={{ padding: "1.25rem" }}>
+                <p
+                  className="secondary-text"
+                  style={{ fontSize: "0.875rem", marginTop: 0 }}
+                >
+                  Issues found by checking traffic against policy {assessment.metadata?.policy_name || "BCP 195"}.
+                </p>
+                {assessmentFindings.length === 0 ? (
+                  <div className="secondary-text" style={{ textAlign: "center", padding: "1.5rem" }}>
+                    No policy violations detected.
                   </div>
-                ))
-              )}
+                ) : (
+                  assessmentFindings.map((f) => (
+                    <div
+                      key={f.id}
+                      style={{
+                        padding: "0.6rem 0.85rem",
+                        border: "1px solid var(--border)",
+                        borderRadius: "6px",
+                        marginBottom: "0.5rem",
+                        background: "var(--canvas-sunken)",
+                      }}
+                    >
+                      <div
+                        style={{ display: "flex", justifyContent: "space-between" }}
+                      >
+                        <span
+                          className="mono"
+                          style={{ fontWeight: 600, fontSize: "0.875rem" }}
+                        >
+                          {f.rule_id}
+                        </span>
+                        <span
+                          className={`badge ${
+                            f.severity === "critical"
+                              ? "critical"
+                              : f.severity === "high"
+                                ? "high"
+                                : ""
+                          }`}
+                          style={{ fontSize: "0.875rem" }}
+                        >
+                          {f.severity}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: "0.875rem", marginTop: "0.25rem" }}>
+                        {f.title}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Behavioral / Baseline Anomalies */}
+            <div className="card">
+              <div className="card-header">
+                <h3 className="card-title">Unusual changes & Drifts</h3>
+                <span className="badge">
+                  {((assessment.metadata?.anomalies as any[])?.length ?? assetAnomaliesQuery.data?.length ?? 0)} Detected
+                </span>
+              </div>
+              <div style={{ padding: "1.25rem" }}>
+                <p
+                  className="secondary-text"
+                  style={{ fontSize: "0.875rem", marginTop: 0 }}
+                >
+                  Cryptographic drift and anomalies detected across observation captures.
+                </p>
+                {(() => {
+                  const items = (Array.isArray(assessment.metadata?.anomalies) && assessment.metadata.anomalies.length > 0)
+                    ? assessment.metadata.anomalies
+                    : (assetAnomaliesQuery.data ?? []);
+                  if (items.length === 0) {
+                    return (
+                      <div
+                        className="secondary-text"
+                        style={{ textAlign: "center", padding: "1.5rem" }}
+                      >
+                        No unusual changes or drifts found in the available history.
+                      </div>
+                    );
+                  }
+                  return items.map((anom: any, idx: number) => (
+                    <div
+                      key={idx}
+                      style={{
+                        padding: "0.6rem 0.85rem",
+                        border: "1px solid var(--border)",
+                        borderRadius: "6px",
+                        marginBottom: "0.5rem",
+                        background: "var(--canvas-sunken)",
+                      }}
+                    >
+                      <div style={{ fontWeight: 600, fontSize: "0.875rem" }}>
+                        {anom.title}
+                      </div>
+                      <div
+                        className="secondary-text"
+                        style={{ fontSize: "0.875rem", marginTop: "0.2rem" }}
+                      >
+                        Signal: {anom.signal} · Current: {anom.current_value}{" "}
+                        (Baseline: {anom.baseline_value}) {anom.evidence ? `· ${anom.evidence}` : ""}
+                      </div>
+                    </div>
+                  ));
+                })()}
+              </div>
             </div>
           </div>
         </div>
@@ -1786,6 +2050,195 @@ export function AssessmentWorkspace({
         <div
           style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}
         >
+          {/* Actionable MTA Hardening Recipes */}
+          {Array.isArray(assessment.metadata?.remediation_roadmap) && assessment.metadata.remediation_roadmap.length > 0 && (
+            <div className="card">
+              <div className="card-header">
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <Icon name="build" size={18} />
+                  <h3 className="card-title">Actionable MTA Hardening Recipes</h3>
+                </div>
+                <span className="badge">
+                  {assessment.metadata.remediation_roadmap.length} Hardening Plans
+                </span>
+              </div>
+              <div style={{ padding: "1.25rem" }}>
+                <p className="secondary-text" style={{ fontSize: "0.875rem", marginTop: 0, marginBottom: "1.25rem" }}>
+                  Copy-pasteable configuration directives and shell commands to remediate identified cryptographic flaws on Postfix, Dovecot, and TLS listeners.
+                </p>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+                  {assessment.metadata.remediation_roadmap.map((plan: any, idx: number) => {
+                    const recipe = plan.recipe || {};
+                    const commands: string[] = recipe.commands || [];
+                    const dovecotDirectives: string[] = recipe.dovecot || [];
+
+                    return (
+                      <div
+                        key={idx}
+                        style={{
+                          border: "1px solid var(--border)",
+                          borderRadius: "8px",
+                          overflow: "hidden",
+                          background: "var(--canvas-sunken)",
+                        }}
+                      >
+                        <div
+                          style={{
+                            padding: "0.85rem 1rem",
+                            background: "var(--surface)",
+                            borderBottom: "1px solid var(--border)",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                          }}
+                        >
+                          <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+                            <span
+                              className="badge"
+                              style={{
+                                fontWeight: 700,
+                                fontSize: "0.8rem",
+                                background: plan.priority?.startsWith("P1")
+                                  ? "var(--status-critical-bg, #fee2e2)"
+                                  : "var(--status-warning-bg, #fef3c7)",
+                                color: plan.priority?.startsWith("P1")
+                                  ? "var(--status-critical-ink, #991b1b)"
+                                  : "var(--status-warning-ink, #92400e)",
+                              }}
+                            >
+                              {plan.priority}
+                            </span>
+                            <span className="mono" style={{ fontWeight: 600, fontSize: "0.875rem" }}>
+                              {plan.rule_id}
+                            </span>
+                            <span style={{ fontSize: "0.875rem", color: "var(--ink-secondary)" }}>
+                              — {plan.title}
+                            </span>
+                          </div>
+                          <span className="badge" style={{ textTransform: "capitalize", fontSize: "0.75rem" }}>
+                            {recipe.service || "MTA"}
+                          </span>
+                        </div>
+
+                        <div style={{ padding: "1rem" }}>
+                          {recipe.action && (
+                            <div style={{ fontSize: "0.875rem", fontWeight: 600, marginBottom: "0.75rem", color: "var(--ink)" }}>
+                              {recipe.action}
+                            </div>
+                          )}
+
+                          {commands.length > 0 && (
+                            <div style={{ marginBottom: dovecotDirectives.length > 0 ? "1rem" : 0 }}>
+                              <div style={{ fontSize: "0.8125rem", color: "var(--ink-secondary)", marginBottom: "0.35rem", fontWeight: 600 }}>
+                                Terminal / Shell Execution ({recipe.service || "postfix"}):
+                              </div>
+                              <div
+                                style={{
+                                  background: "#0d1117",
+                                  color: "#e6edf3",
+                                  padding: "0.75rem 1rem",
+                                  borderRadius: "6px",
+                                  fontFamily: "monospace",
+                                  fontSize: "0.8125rem",
+                                  lineHeight: "1.6",
+                                  position: "relative",
+                                }}
+                              >
+                                {commands.map((cmd, cIdx) => (
+                                  <div
+                                    key={cIdx}
+                                    style={{
+                                      display: "flex",
+                                      justifyContent: "space-between",
+                                      alignItems: "center",
+                                      padding: "0.2rem 0",
+                                      borderBottom: cIdx < commands.length - 1 ? "1px solid #21262d" : "none",
+                                    }}
+                                  >
+                                    <span style={{ wordBreak: "break-all" }}>{cmd}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleCopyCmd(cmd)}
+                                      className="button button-sm"
+                                      style={{
+                                        marginLeft: "1rem",
+                                        padding: "0.15rem 0.5rem",
+                                        fontSize: "0.75rem",
+                                        background: copiedCmd === cmd ? "var(--accent)" : "#21262d",
+                                        color: "#ffffff",
+                                        border: "none",
+                                        borderRadius: "4px",
+                                        cursor: "pointer",
+                                        flexShrink: 0,
+                                      }}
+                                    >
+                                      {copiedCmd === cmd ? "Copied!" : "Copy"}
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {dovecotDirectives.length > 0 && (
+                            <div>
+                              <div style={{ fontSize: "0.8125rem", color: "var(--ink-secondary)", marginBottom: "0.35rem", fontWeight: 600 }}>
+                                Dovecot Configuration (/etc/dovecot/conf.d/10-ssl.conf):
+                              </div>
+                              <div
+                                style={{
+                                  background: "#0d1117",
+                                  color: "#e6edf3",
+                                  padding: "0.75rem 1rem",
+                                  borderRadius: "6px",
+                                  fontFamily: "monospace",
+                                  fontSize: "0.8125rem",
+                                  lineHeight: "1.6",
+                                }}
+                              >
+                                {dovecotDirectives.map((d, dIdx) => (
+                                  <div
+                                    key={dIdx}
+                                    style={{
+                                      display: "flex",
+                                      justifyContent: "space-between",
+                                      alignItems: "center",
+                                    }}
+                                  >
+                                    <span style={{ wordBreak: "break-all" }}>{d}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleCopyCmd(d)}
+                                      className="button button-sm"
+                                      style={{
+                                        marginLeft: "1rem",
+                                        padding: "0.15rem 0.5rem",
+                                        fontSize: "0.75rem",
+                                        background: copiedCmd === d ? "var(--accent)" : "#21262d",
+                                        color: "#ffffff",
+                                        border: "none",
+                                        borderRadius: "4px",
+                                        cursor: "pointer",
+                                        flexShrink: 0,
+                                      }}
+                                    >
+                                      {copiedCmd === d ? "Copied!" : "Copy"}
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
           {primaryAsset && assetPostureQuery.data ? (() => {
             const allGuidance = assetPostureQuery.data.guidance ?? [];
             const remediableGuidance = allGuidance.filter(

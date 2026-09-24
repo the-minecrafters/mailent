@@ -236,6 +236,8 @@ pub async fn analyze_capture_handler(
     let mut protocols_set = std::collections::HashSet::new();
     let mut protocol_evidence = Vec::new();
     let mut evidence_gaps = analysis.warnings.clone();
+    let mut all_anomalies = Vec::new();
+    let mut all_drifts = Vec::new();
 
     for obs in analysis.observations {
         let proto_name = match obs.protocol {
@@ -339,23 +341,21 @@ pub async fn analyze_capture_handler(
                 finding_ids.push(f.id);
             }
         }
+        all_anomalies.extend(proc_res.anomalies);
+        all_drifts.extend(proc_res.drift_events);
     }
 
     // Determine posture score and grade
     let mut total_score = 100.0f32;
-    let mut has_critical = false;
-    let mut has_high = false;
 
     for f_id in &finding_ids {
         if let Ok(Some(f)) = state.findings.find_by_id(*f_id).await {
             match f.severity {
                 mailent_domain::FindingSeverity::Critical => {
                     total_score -= 25.0;
-                    has_critical = true;
                 }
                 mailent_domain::FindingSeverity::High => {
                     total_score -= 15.0;
-                    has_high = true;
                 }
                 mailent_domain::FindingSeverity::Medium => {
                     total_score -= 8.0;
@@ -382,35 +382,211 @@ pub async fn analyze_capture_handler(
         "F"
     };
 
-    let (ai_risk_classification, ai_risk_rationale) = if session_ids.is_empty() {
+    let mut finding_candidates = Vec::new();
+    let mut resolved_findings = Vec::new();
+    for f_id in &finding_ids {
+        if let Ok(Some(f)) = state.findings.find_by_id(*f_id).await {
+            resolved_findings.push(f.clone());
+            finding_candidates.push(mailent_domain::FindingCandidate {
+                rule_id: f.rule_id.clone(),
+                policy_name: f.policy_name.clone(),
+                policy_version: f.policy_version.clone(),
+                reference: f.reference.clone(),
+                severity: f.severity,
+                category: f.category,
+                title: f.title.clone(),
+                description: f.description.clone(),
+                remediation: f.remediation.clone(),
+                evidence: f.evidence.clone(),
+            });
+        }
+    }
+
+    let assessment_id = Uuid::new_v4();
+    let now = OffsetDateTime::now_utc();
+
+    let decision_ctx = mailent_domain::DecisionContext {
+        session_id: session_ids.first().copied().unwrap_or_else(Uuid::new_v4),
+        findings: finding_candidates,
+        metadata: serde_json::json!({
+            "assessment_id": assessment_id,
+            "capture_name": capture_name,
+            "session_count": session_ids.len(),
+            "asset_count": asset_ids.len(),
+            "anomalies_count": all_anomalies.len(),
+            "drifts_count": all_drifts.len(),
+            "posture_score": total_score,
+            "posture_grade": grade,
+        }),
+    };
+
+    let (decision_result, provider_name) = if session_ids.is_empty() {
         (
-            "INCONCLUSIVE".to_string(),
-            "No email traffic was identified in this capture to evaluate.".to_string(),
-        )
-    } else if has_critical {
-        (
-            "CRITICAL".to_string(),
-            "Critical issues were found in this traffic. Review the findings and recommended fixes."
-                .to_string(),
-        )
-    } else if has_high {
-        (
-            "HIGH".to_string(),
-            "High-priority issues were found. Review the affected connections and update the server settings."
-                .to_string(),
-        )
-    } else if finding_ids.is_empty() {
-        (
-            "LOW".to_string(),
-            "No policy issues were found in the available traffic.".to_string(),
+            mailent_domain::DecisionResult {
+                risk: mailent_domain::RiskLevel::Low,
+                anomalous: false,
+                human_review: false,
+                priority: mailent_domain::PriorityLevel::Low,
+                confidence: 0.0,
+                provider_info: "empty".to_string(),
+                reasons: vec!["No email connections were found in this capture to evaluate.".to_string()],
+            },
+            "none",
         )
     } else {
-        (
-            "MEDIUM".to_string(),
-            "Some settings need attention. Review the findings for recommended changes."
-                .to_string(),
+        match state.decision_provider.assess(decision_ctx.clone()).await {
+            Ok(r) => {
+                let p = if r.provider_info.starts_with("jev:") {
+                    "jev"
+                } else {
+                    "jev-fallback"
+                };
+                (r, p)
+            }
+            Err(e) => {
+                tracing::warn!("Jev assessment failed: {e}; applying deterministic fallback");
+                (
+                    mailent_decision::JevProvider::deterministic_fallback(&decision_ctx),
+                    "jev-fallback",
+                )
+            }
+        }
+    };
+
+    // Log decision record into audit store
+    let decision_record = mailent_domain::DecisionRecord {
+        id: Uuid::new_v4(),
+        session_id: session_ids.first().copied(),
+        asset_id: asset_ids.first().copied(),
+        provider: provider_name.to_string(),
+        model: decision_result.provider_info.clone(),
+        decision: decision_result.clone(),
+        latency_ms: 0,
+        created_at: now,
+    };
+    let _ = state.decisions.save_record(&decision_record).await;
+
+    let ai_risk_classification = match decision_result.risk {
+        mailent_domain::RiskLevel::Critical => "CRITICAL".to_string(),
+        mailent_domain::RiskLevel::High => "HIGH".to_string(),
+        mailent_domain::RiskLevel::Medium => "MEDIUM".to_string(),
+        mailent_domain::RiskLevel::Low => {
+            if session_ids.is_empty() {
+                "INCONCLUSIVE".to_string()
+            } else {
+                "LOW".to_string()
+            }
+        }
+    };
+    let ai_confidence = decision_result.confidence;
+    let ai_risk_rationale = if decision_result.reasons.is_empty() {
+        "No cryptographic policy violations were observed in the parsed email traffic.".to_string()
+    } else {
+        format!(
+            "{} [Handling: {:?}, Human review: {}]",
+            decision_result.reasons.join("; "),
+            decision_result.priority,
+            if decision_result.human_review { "recommended" } else { "not required" }
         )
     };
+
+    // Synthesize Threat Prioritization Matrix and Actionable Remediation Roadmap
+    let mut threat_matrix = Vec::new();
+    let mut remediation_roadmap = Vec::new();
+
+    for f in &resolved_findings {
+        let (priority_tier, threat_vector, remediation_recipe) = match f.rule_id.as_str() {
+            "TLS_LEGACY_VERSION" => (
+                "P1 - Immediate",
+                "Downgrade & Cipher Interception: Attackers capable of passive or active interception can force legacy SSLv3/TLS 1.0 negotiations to exploit protocol weaknesses (e.g. POODLE, BEAST).",
+                serde_json::json!({
+                    "service": "postfix",
+                    "action": "Enforce minimum TLS 1.2 on outbound and inbound listeners",
+                    "commands": [
+                        "postconf -e 'smtpd_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1'",
+                        "postconf -e 'smtpd_tls_mandatory_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1'",
+                        "postconf -e 'smtp_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1'",
+                        "postfix reload"
+                    ],
+                    "dovecot": [
+                        "ssl_min_protocol = TLSv1.2"
+                    ]
+                })
+            ),
+            "NO_FORWARD_SECRECY" => (
+                "P2 - High",
+                "Retrospective Decryption (Harvest Now, Decrypt Later): Static RSA key exchange allows any adversary that records ciphertexts today to decrypt all past email contents if the server's private RSA key is compromised.",
+                serde_json::json!({
+                    "service": "postfix",
+                    "action": "Require Ephemeral Diffie-Hellman (ECDHE/DHE) or TLS 1.3",
+                    "commands": [
+                        "postconf -e 'smtpd_tls_ciphers = high'",
+                        "postconf -e 'smtpd_tls_exclude_ciphers = aNULL, eNULL, EXPORT, DES, RC4, MD5, PSK, aECDH, EDH-DSS-DES-CBC3-SHA, EDH-RSA-DES-CBC3-SHA, KRB5-DES, CBC3-SHA'",
+                        "postfix reload"
+                    ],
+                    "dovecot": [
+                        "ssl_cipher_list = ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384"
+                    ]
+                })
+            ),
+            "CERTIFICATE_EXPIRED" => (
+                "P2 - High",
+                "Trust Breakdown & Delivery Failure: Remote sending MTAs enforcing MTA-STS or DANE will refuse to route incoming messages, causing delivery bounced errors and exposing users to impersonation warnings.",
+                serde_json::json!({
+                    "service": "certbot",
+                    "action": "Renew X.509 certificate immediately via ACME/Certbot",
+                    "commands": [
+                        "certbot renew --post-hook 'postfix reload && dovecot reload'",
+                        "certbot certificates"
+                    ],
+                    "dovecot": []
+                })
+            ),
+            "STARTTLS_MISSING" => (
+                "P1 - Immediate",
+                "Plaintext Eavesdropping: Authentication credentials (SASL PLAIN/LOGIN) and confidential email content transit untrusted intermediate networks completely unencrypted.",
+                serde_json::json!({
+                    "service": "postfix",
+                    "action": "Enable STARTTLS on SMTP port 25 and 587",
+                    "commands": [
+                        "postconf -e 'smtpd_tls_security_level = may'",
+                        "postconf -e 'smtpd_tls_auth_only = yes'",
+                        "postfix reload"
+                    ],
+                    "dovecot": [
+                        "ssl = yes",
+                        "disable_plaintext_auth = yes"
+                    ]
+                })
+            ),
+            _ => (
+                "P3 - Medium",
+                "General Cryptographic Misconfiguration: Deviates from RFC 8461/BCP 195 compliance recommendations.",
+                serde_json::json!({
+                    "service": "general",
+                    "action": f.remediation.clone(),
+                    "commands": [],
+                    "dovecot": []
+                })
+            ),
+        };
+
+        threat_matrix.push(serde_json::json!({
+            "rule_id": f.rule_id,
+            "title": f.title,
+            "severity": f.severity.to_string(),
+            "priority_tier": priority_tier,
+            "threat_vector": threat_vector,
+            "reference": f.reference,
+        }));
+
+        remediation_roadmap.push(serde_json::json!({
+            "rule_id": f.rule_id,
+            "title": f.title,
+            "priority": priority_tier,
+            "recipe": remediation_recipe,
+        }));
+    }
 
     let title = req
         .title
@@ -427,10 +603,10 @@ pub async fn analyze_capture_handler(
     };
 
     let mut assessment = AssessmentRecord::new_capture(
-        Uuid::new_v4(),
+        assessment_id,
         title,
         capture_metadata,
-        OffsetDateTime::now_utc(),
+        now,
         protocols_set.into_iter().collect(),
         protocol_evidence,
         session_ids,
@@ -441,11 +617,26 @@ pub async fn analyze_capture_handler(
         evidence_gaps,
         ai_risk_classification,
         ai_risk_rationale,
-        0.0,
+        ai_confidence,
         serde_json::json!({
-            "risk_method": "policy_rules",
+            "risk_method": "jev",
+            "ai_provider": provider_name,
+            "jev_model": decision_result.provider_info,
+            "jev_priority": format!("{:?}", decision_result.priority),
+            "jev_human_review": decision_result.human_review,
             "policy_name": state.policy_pack.name,
             "policy_version": state.policy_pack.version,
+            "anomalies": all_anomalies.iter().map(|a| serde_json::json!({
+                "signal": a.signal,
+                "title": a.title,
+                "current_value": a.current_value,
+                "baseline_value": a.baseline_value,
+                "deviation": a.deviation,
+                "confidence": a.confidence,
+                "evidence": a.evidence,
+            })).collect::<Vec<_>>(),
+            "threat_matrix": threat_matrix,
+            "remediation_roadmap": remediation_roadmap,
         }),
     );
 

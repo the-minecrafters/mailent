@@ -59,6 +59,42 @@ async fn test_scanner_invalid_domains() {
         scanner.scan_domain(&long_label).await,
         Err(ScannerError::InvalidDomain(_))
     ));
+    // IP addresses must be rejected
+    assert!(matches!(
+        scanner.scan_domain("127.0.0.1").await,
+        Err(ScannerError::InvalidDomain(_))
+    ));
+    assert!(matches!(
+        scanner.scan_domain("::1").await,
+        Err(ScannerError::InvalidDomain(_))
+    ));
+    assert!(matches!(
+        scanner.scan_domain("[2001:db8::1]").await,
+        Err(ScannerError::InvalidDomain(_))
+    ));
+    // Numeric TLD must be rejected
+    assert!(matches!(
+        scanner.scan_domain("test.123").await,
+        Err(ScannerError::InvalidDomain(_))
+    ));
+    // Reserved non-routable TLDs must be rejected
+    assert!(matches!(
+        scanner.scan_domain("internal.local").await,
+        Err(ScannerError::InvalidDomain(_))
+    ));
+    assert!(matches!(
+        scanner.scan_domain("server.lan").await,
+        Err(ScannerError::InvalidDomain(_))
+    ));
+    assert!(matches!(
+        scanner.scan_domain("hidden.onion").await,
+        Err(ScannerError::InvalidDomain(_))
+    ));
+    // Control characters must be rejected
+    assert!(matches!(
+        scanner.scan_domain("test\x00domain.com").await,
+        Err(ScannerError::InvalidDomain(_))
+    ));
 }
 
 #[tokio::test]
@@ -333,4 +369,75 @@ async fn explicitly_disabled_port_is_missing_evidence_not_a_server_vulnerability
             .all(|f| f.rule_id != "ENDPOINTS_UNREACHABLE")
     );
     assert!(result.report.posture.is_none());
+}
+
+#[tokio::test]
+async fn test_scanner_ssrf_and_capping() {
+    let resolver = Arc::new(MockDomainIntelligenceResolver::new());
+    let now = OffsetDateTime::now_utc();
+
+    // 15 endpoints to test capping (max 10)
+    let mut mx_list = Vec::new();
+    for i in 1..=15 {
+        mx_list.push(MxRecord {
+            domain: "ssrf-test.com".to_string(),
+            hostname: format!("mail{i}.ssrf-test.com"),
+            priority: i * 10,
+            resolved_ips: if i == 1 {
+                // Point first MX to private loopback 127.0.0.1
+                vec!["127.0.0.1".to_string()]
+            } else {
+                vec!["93.184.216.34".to_string()]
+            },
+            dnssec: DnssecState::Insecure,
+            first_seen: now,
+            last_checked: now,
+        });
+    }
+
+    resolver.add_mx("ssrf-test.com", mx_list).await;
+
+    let scanner = DomainScanner::new(
+        resolver,
+        DomainScannerConfig {
+            allow_private_ips: false,
+            max_endpoints: 10,
+            ..Default::default()
+        },
+    );
+
+    let result = scanner.scan_domain("ssrf-test.com").await.unwrap();
+
+    // Endpoints must be capped to 10
+    assert_eq!(result.endpoints_checked, 10);
+    assert!(
+        result
+            .assessment
+            .evidence_gaps
+            .iter()
+            .any(|g| g.contains("capped to top 10") || g.contains("resource exhaustion"))
+    );
+
+    // SSRF target (127.0.0.1) must be blocked
+    let first_ep = &result.report.infrastructure.unwrap().discovered_endpoints[0];
+    assert!(first_ep.starttls_status.contains("Blocked"));
+}
+
+#[tokio::test]
+async fn test_scanner_progress_events() {
+    let resolver = Arc::new(MockDomainIntelligenceResolver::new());
+    let scanner = DomainScanner::new(resolver, DomainScannerConfig::default());
+
+    let mut events = Vec::new();
+    let result = scanner
+        .scan_domain_with_progress("example.test", |event| {
+            events.push(event);
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(result.endpoints_checked, 1);
+    assert!(!events.is_empty());
+    assert!(events.iter().any(|e| matches!(e, mailent_scanner::ScanProgressEvent::DiscoveringDns { .. })));
+    assert!(events.iter().any(|e| matches!(e, mailent_scanner::ScanProgressEvent::Complete)));
 }

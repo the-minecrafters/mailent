@@ -213,17 +213,22 @@ async fn run_analyze(
     server_override: Option<String>,
 ) -> Result<(), String> {
     // 1. Validate capture file header and size
-    let (file_size, capture_hash) = validate_pcap(&capture_path)?;
     let capture_name = capture_path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("capture.pcap")
         .to_string();
+    eprintln!("  [1/4] Validating capture file: {}", capture_name);
+    let (file_size, capture_hash) = validate_pcap(&capture_path)?;
 
     // 2. Locate and verify Zeek
     let zeek_bin = locate_zeek(zeek_override.as_deref())?;
 
     // 3. Execute analysis library
+    eprintln!(
+        "  [2/4] Parsing network flows with Zeek engine ({})...",
+        zeek_bin.display()
+    );
     let analysis = mailent_sensor::analyze::analyze(
         &capture_path,
         &zeek_bin,
@@ -239,6 +244,11 @@ async fn run_analyze(
             "No email connections were found in this capture. Choose traffic containing SMTP, IMAP or POP3.".to_string(),
         );
     }
+
+    eprintln!(
+        "  [3/4] Correlating {} email observation(s) against policy baseline...",
+        analysis.observations.len()
+    );
 
     let policy_pack = PolicyPack::modern();
     let mut sessions = Vec::new();
@@ -380,6 +390,8 @@ async fn run_analyze(
             .to_string()
     };
 
+    eprintln!("  [4/4] Computing posture score and exporting security reports...");
+
     // 6. Build Assessment Record
     let time_range_start = analysis.observations.iter().map(|o| o.timestamp).min();
     let time_range_end = analysis.observations.iter().map(|o| o.timestamp).max();
@@ -483,6 +495,8 @@ async fn run_analyze(
         written_reports.push(pdf_path);
     }
 
+    eprintln!("  ✔ Analysis complete.\n");
+
     // 9. Output formatted result
     if format == "json" {
         let output = serde_json::json!({
@@ -555,7 +569,33 @@ async fn run_scan(
 
     // 3. Execute domain scan
     let scan_result = scanner
-        .scan_domain(&domain)
+        .scan_domain_with_progress(&domain, |event| match event {
+            mailent_scanner::ScanProgressEvent::DiscoveringDns { domain } => {
+                eprintln!("  [1/4] Discovering DNS records & mail servers for {domain}...");
+            }
+            mailent_scanner::ScanProgressEvent::DnsDiscovered { endpoints_count } => {
+                eprintln!("        Discovered {endpoints_count} mail endpoint(s)");
+            }
+            mailent_scanner::ScanProgressEvent::FetchingPolicies => {
+                eprintln!("  [2/4] Fetching MTA-STS and TLS-RPT policies...");
+            }
+            mailent_scanner::ScanProgressEvent::ProbingEndpoint {
+                current,
+                total,
+                endpoint,
+                service,
+            } => {
+                eprintln!(
+                    "  [3/4] Probing endpoint [{current}/{total}] ({service} {endpoint})..."
+                );
+            }
+            mailent_scanner::ScanProgressEvent::AnalyzingPosture => {
+                eprintln!("  [4/4] Computing cryptographic posture and generating reports...");
+            }
+            mailent_scanner::ScanProgressEvent::Complete => {
+                eprintln!("  ✔ Scan completed successfully.\n");
+            }
+        })
         .await
         .map_err(|e| format!("Domain infrastructure scan failed: {e}"))?;
 
@@ -976,7 +1016,21 @@ fn validate_pcap(path: &Path) -> Result<(u64, String), String> {
 
 fn locate_zeek(user_path: Option<&Path>) -> Result<PathBuf, String> {
     fn verified(path: PathBuf) -> Result<PathBuf, String> {
-        let output = std::process::Command::new(&path)
+        let is_script = cfg!(windows)
+            && path
+                .extension()
+                .and_then(|s| s.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"));
+
+        let mut cmd = if is_script {
+            let mut c = std::process::Command::new("cmd.exe");
+            c.arg("/c").arg(&path);
+            c
+        } else {
+            std::process::Command::new(&path)
+        };
+
+        let output = cmd
             .arg("--version")
             .output()
             .map_err(|e| format!("Cannot start required Zeek at {}: {e}", path.display()))?;
@@ -1001,7 +1055,7 @@ fn locate_zeek(user_path: Option<&Path>) -> Result<PathBuf, String> {
             ));
         }
         Ok(if path.is_relative() && path.components().count() > 1 {
-            std::fs::canonicalize(&path).map_err(|e| e.to_string())?
+            std::fs::canonicalize(&path).unwrap_or(path)
         } else {
             path
         })
@@ -1015,18 +1069,34 @@ fn locate_zeek(user_path: Option<&Path>) -> Result<PathBuf, String> {
     if let Ok(path) = verified(PathBuf::from("zeek")) {
         return Ok(path);
     }
+    #[cfg(windows)]
+    if let Ok(path) = verified(PathBuf::from("zeek.exe")) {
+        return Ok(path);
+    }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            let adjacent = dir.join("mailent-zeek");
-            if adjacent.exists() {
-                return verified(adjacent);
+            for name in [
+                "mailent-zeek",
+                "mailent-zeek.cmd",
+                "mailent-zeek.bat",
+                "zeek.exe",
+            ] {
+                let adjacent = dir.join(name);
+                if adjacent.exists() {
+                    if let Ok(verified_path) = verified(adjacent) {
+                        return Ok(verified_path);
+                    }
+                }
             }
         }
     }
     for candidate in [
         "scripts/mailent-zeek",
+        "scripts/mailent-zeek.cmd",
         "../scripts/mailent-zeek",
+        "../scripts/mailent-zeek.cmd",
         "../../scripts/mailent-zeek",
+        "../../scripts/mailent-zeek.cmd",
     ] {
         let p = PathBuf::from(candidate);
         if p.exists() {

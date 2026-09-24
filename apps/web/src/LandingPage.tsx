@@ -506,12 +506,15 @@ export function LandingPage() {
           </div>
           <InstallCommand />
           <div className="install-details">
-            <span>Linux x86_64 · Ubuntu 22.04+, Debian 12+, or compatible</span>
+            <span>Linux x86_64 & Windows x64</span>
             <a href={CLI_RELEASE_URL}>
               GitHub release <ArrowUpRight size={17} />
             </a>
             <a href="/install.sh" download>
-              View installer <ArrowDown size={16} />
+              Linux script <ArrowDown size={16} />
+            </a>
+            <a href="/install.ps1" download>
+              PowerShell script <ArrowDown size={16} />
             </a>
           </div>
           <div className="install-next">
@@ -519,7 +522,7 @@ export function LandingPage() {
             <code>mailent login --server https://mailent.onrender.com</code>
           </div>
           <p className="install-note">
-            Installs to ~/.local/bin and verifies required Zeek 8+. Uses your Zeek installation or sets it up with Podman or Docker.
+            Installs Mailent CLI and verifies required Zeek 8+. Uses your native Zeek or sets up the container runner with Docker or Podman.
           </p>
         </section>
 

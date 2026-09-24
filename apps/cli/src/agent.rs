@@ -86,7 +86,17 @@ fn get_unit_path(system: bool) -> Result<PathBuf, String> {
     }
 }
 
+fn require_systemd() -> Result<(), String> {
+    if !cfg!(target_os = "linux") {
+        return Err(
+            "Service management via systemd is only supported on Linux.\nTo run the agent worker on Windows or macOS, run directly in foreground or via Task Scheduler:\n  mailent agent run".to_string()
+        );
+    }
+    Ok(())
+}
+
 fn run_install(system: bool) -> Result<(), String> {
+    require_systemd()?;
     let zeek_path = crate::locate_zeek(None)?;
     let creds = load_credentials().ok_or_else(|| {
         "This device is not linked to a Mailent workspace yet.\nPlease run 'mailent login' first before installing the agent service.".to_string()
@@ -175,6 +185,7 @@ WantedBy=default.target
 }
 
 fn run_start(system: bool) -> Result<(), String> {
+    require_systemd()?;
     crate::locate_zeek(None)?;
     let mut cmd = Command::new("systemctl");
     if !system {
@@ -193,6 +204,7 @@ fn run_start(system: bool) -> Result<(), String> {
 }
 
 fn run_stop(system: bool) -> Result<(), String> {
+    require_systemd()?;
     let mut cmd = Command::new("systemctl");
     if !system {
         cmd.arg("--user");
@@ -210,6 +222,7 @@ fn run_stop(system: bool) -> Result<(), String> {
 }
 
 fn run_restart(system: bool) -> Result<(), String> {
+    require_systemd()?;
     crate::locate_zeek(None)?;
     let mut cmd = Command::new("systemctl");
     if !system {
@@ -228,6 +241,7 @@ fn run_restart(system: bool) -> Result<(), String> {
 }
 
 fn run_uninstall(system: bool) -> Result<(), String> {
+    require_systemd()?;
     let _ = run_stop(system);
 
     let mut disable_cmd = Command::new("systemctl");

@@ -7,6 +7,6 @@
 pub mod scanner;
 
 pub use scanner::{
-    DomainScanner, DomainScannerConfig, InfrastructureScanResult, ScannerError, blocked_mail_ports,
-    normalize_scan_domain,
+    DomainScanner, DomainScannerConfig, InfrastructureScanResult, ScanProgressEvent, ScannerError,
+    blocked_mail_ports, is_restricted_ip, is_restricted_ip_str, normalize_scan_domain,
 };

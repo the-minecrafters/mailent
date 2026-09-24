@@ -18,6 +18,18 @@ pub fn credentials_path() -> PathBuf {
     if let Ok(custom) = std::env::var("MAILENT_CREDENTIALS_PATH") {
         return PathBuf::from(custom);
     }
+    #[cfg(windows)]
+    {
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            return PathBuf::from(appdata).join("mailent").join("credentials.json");
+        }
+        if let Ok(profile) = std::env::var("USERPROFILE") {
+            return PathBuf::from(profile)
+                .join(".config")
+                .join("mailent")
+                .join("credentials.json");
+        }
+    }
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
     PathBuf::from(home)
         .join(".config")

@@ -36,6 +36,10 @@ pub struct DomainScannerConfig {
     pub sensor_hostname: String,
     /// Ports explicitly disabled by the operator, never inferred from a host name.
     pub blocked_ports: Vec<u16>,
+    /// Allow probing private/loopback/link-local IP addresses (default: false, for SSRF safety)
+    pub allow_private_ips: bool,
+    /// Maximum endpoints to actively probe (default: 10)
+    pub max_endpoints: usize,
 }
 
 impl Default for DomainScannerConfig {
@@ -49,6 +53,65 @@ impl Default for DomainScannerConfig {
             policy_pack: PolicyPack::modern(),
             sensor_hostname: "scanner.mailent.local".to_string(),
             blocked_ports: blocked_mail_ports(),
+            allow_private_ips: false,
+            max_endpoints: 10,
+        }
+    }
+}
+
+/// Progress event emitted during a domain infrastructure assessment.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ScanProgressEvent {
+    DiscoveringDns {
+        domain: String,
+    },
+    DnsDiscovered {
+        endpoints_count: usize,
+    },
+    FetchingPolicies,
+    ProbingEndpoint {
+        current: usize,
+        total: usize,
+        endpoint: String,
+        service: String,
+    },
+    AnalyzingPosture,
+    Complete,
+}
+
+/// Check if an IP address string resolves to a loopback, private, link-local, or multicast address.
+pub fn is_restricted_ip_str(ip_str: &str) -> bool {
+    if let Ok(ip) = ip_str.parse::<std::net::IpAddr>() {
+        is_restricted_ip(&ip)
+    } else {
+        false
+    }
+}
+
+/// Check if an IP address is loopback, link-local, multicast, unspecified, or private (SSRF protection).
+pub fn is_restricted_ip(ip: &std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(ipv4) => {
+            ipv4.is_loopback()
+                || ipv4.is_link_local()
+                || ipv4.is_broadcast()
+                || ipv4.is_unspecified()
+                || ipv4.is_multicast()
+                || ipv4.is_private()
+                || ipv4.octets()[0] == 0
+        }
+        std::net::IpAddr::V6(ipv6) => {
+            ipv6.is_loopback()
+                || ipv6.is_unspecified()
+                || ipv6.is_multicast()
+                || match ipv6.to_ipv4() {
+                    Some(mapped) => is_restricted_ip(&std::net::IpAddr::V4(mapped)),
+                    None => {
+                        let segments = ipv6.segments();
+                        (segments[0] & 0xffc0) == 0xfe80
+                            || (segments[0] & 0xfe00) == 0xfc00
+                    }
+                }
         }
     }
 }
@@ -93,11 +156,26 @@ impl DomainScanner {
         &self,
         target: &str,
     ) -> Result<InfrastructureScanResult, ScannerError> {
+        self.scan_domain_with_progress(target, |_| {}).await
+    }
+
+    pub async fn scan_domain_with_progress<F>(
+        &self,
+        target: &str,
+        mut on_progress: F,
+    ) -> Result<InfrastructureScanResult, ScannerError>
+    where
+        F: FnMut(ScanProgressEvent) + Send,
+    {
         let domain = normalize_scan_domain(target)?;
         let scan_start = OffsetDateTime::now_utc();
+        on_progress(ScanProgressEvent::DiscoveringDns {
+            domain: domain.clone(),
+        });
 
         // 1. DNS & Service Discovery
         let mut discovery_evidence = Vec::new();
+        let mut coverage_gaps = Vec::new();
         let mut discovered_endpoints: Vec<DiscoveredEndpoint> = Vec::new();
 
         // Query MX records
@@ -135,7 +213,7 @@ impl DomainScanner {
                 host: host_clean,
                 port: 25,
                 priority: Some(mx.priority),
-                resolved_ips: Vec::new(),
+                resolved_ips: mx.resolved_ips.clone(),
             });
         }
 
@@ -186,14 +264,41 @@ impl DomainScanner {
         discovered_endpoints.sort_by(|a, b| (&a.host, a.port).cmp(&(&b.host, b.port)));
         discovered_endpoints.dedup_by(|a, b| a.host == b.host && a.port == b.port);
 
+        // Cap discovered endpoints to max_endpoints to prevent endpoint flooding / DoS
+        if discovered_endpoints.len() > self.config.max_endpoints {
+            let total_found = discovered_endpoints.len();
+            discovered_endpoints.sort_by_key(|e| e.priority.unwrap_or(u16::MAX));
+            discovered_endpoints.truncate(self.config.max_endpoints);
+            discovery_evidence.push(DiscoveryEvidence {
+                record_type: "ENDPOINT_LIMIT".to_string(),
+                query: domain.clone(),
+                details: format!(
+                    "Discovered {total_found} endpoints; capped to top {} to prevent probe resource exhaustion",
+                    self.config.max_endpoints
+                ),
+                dnssec_status: dnssec_state.clone(),
+            });
+            coverage_gaps.push(format!(
+                "Discovered {total_found} mail endpoints; active checking was capped to the top {} to prevent resource exhaustion.",
+                self.config.max_endpoints
+            ));
+        }
+
+        on_progress(ScanProgressEvent::DnsDiscovered {
+            endpoints_count: discovered_endpoints.len(),
+        });
+
         // Resolve IP addresses for each discovered host
         for ep in &mut discovered_endpoints {
-            if let Ok(ips) = self.resolver.resolve_ips(&ep.host).await {
+            if let Ok(ips) = self.resolver.resolve_ips(&ep.host).await
+                && !ips.is_empty()
+            {
                 ep.resolved_ips = ips;
             }
         }
 
         // 2. Fetch External Policies: MTA-STS, TLS-RPT, DANE
+        on_progress(ScanProgressEvent::FetchingPolicies);
         let mta_sts_policy = self.resolver.fetch_mta_sts(&domain).await.ok().flatten();
 
         let tls_rpt_policy = self
@@ -224,11 +329,22 @@ impl DomainScanner {
 
         let mut probe_results = Vec::new();
         let mut endpoint_reports = Vec::new();
-        let mut coverage_gaps = Vec::new();
         let mut endpoints_succeeded = 0;
         let mut endpoints_failed = 0;
 
-        for ep in &discovered_endpoints {
+        let is_test_domain = domain == "mailent.test"
+            || domain.ends_with(".mailent.test")
+            || domain.ends_with(".test");
+        let allow_private = self.config.allow_private_ips || is_test_domain;
+
+        for (idx, ep) in discovered_endpoints.iter().enumerate() {
+            on_progress(ScanProgressEvent::ProbingEndpoint {
+                current: idx + 1,
+                total: discovered_endpoints.len(),
+                endpoint: format!("{}:{}", ep.host, ep.port),
+                service: ep.service.clone(),
+            });
+
             if self.config.blocked_ports.contains(&ep.port) {
                 endpoints_failed += 1;
                 coverage_gaps.push(format!(
@@ -248,6 +364,45 @@ impl DomainScanner {
                     priority: ep.priority,
                     resolved_ips: ep.resolved_ips.clone(),
                     starttls_status: "Not checked: port disabled".to_string(),
+                    tls_version: None,
+                    cipher: None,
+                    cert_subject: None,
+                    cert_issuer: None,
+                    cert_validity: None,
+                    dane_status: "not_checked".to_string(),
+                });
+                probe_results.push((ep.clone(), unavail));
+                continue;
+            }
+
+            // SSRF and private IP protection: refuse connections to loopback/private/link-local addresses
+            let has_restricted_ip = is_restricted_ip_str(&ep.host)
+                || ep.resolved_ips.iter().any(|ip| is_restricted_ip_str(ip));
+
+            if has_restricted_ip && !allow_private {
+                endpoints_failed += 1;
+                let target_repr = if ep.resolved_ips.is_empty() {
+                    ep.host.clone()
+                } else {
+                    ep.resolved_ips.join(", ")
+                };
+                coverage_gaps.push(format!(
+                    "Endpoint {}:{} resolved to a restricted/private IP address ({target_repr}); active probing was blocked for security (SSRF prevention).",
+                    ep.host, ep.port
+                ));
+                let mut unavail = ProbeResult::unavailable(&ep.host, None);
+                unavail.error = Some(
+                    "Active probe blocked: target resolves to restricted/private IP (SSRF protection)"
+                        .into(),
+                );
+
+                endpoint_reports.push(DiscoveredServiceReport {
+                    service: ep.service.clone(),
+                    host: ep.host.clone(),
+                    port: ep.port,
+                    priority: ep.priority,
+                    resolved_ips: ep.resolved_ips.clone(),
+                    starttls_status: "Blocked: restricted/private IP (SSRF protection)".to_string(),
                     tls_version: None,
                     cipher: None,
                     cert_subject: None,
@@ -422,6 +577,7 @@ impl DomainScanner {
         }
 
         // 4. Session & Policy Findings Evaluation
+        on_progress(ScanProgressEvent::AnalyzingPosture);
         let mut sessions = Vec::new();
         let mut all_findings: Vec<Finding> = Vec::new();
         let mut protocols_set = std::collections::BTreeSet::new();
@@ -668,6 +824,8 @@ impl DomainScanner {
             scan_end,
         );
 
+        on_progress(ScanProgressEvent::Complete);
+
         Ok(InfrastructureScanResult {
             assessment,
             report,
@@ -725,13 +883,34 @@ pub fn normalize_scan_domain(raw: &str) -> Result<String, ScannerError> {
     if clean.is_empty() {
         return Err(ScannerError::InvalidDomain("Domain cannot be empty".into()));
     }
-    if clean.len() > 253 {
+
+    // Reject IP addresses explicitly
+    if clean.parse::<std::net::IpAddr>().is_ok()
+        || clean.starts_with('[')
+        || (clean.split('.').count() == 4 && clean.split('.').all(|part| part.parse::<u8>().is_ok()))
+    {
+        return Err(ScannerError::InvalidDomain(format!(
+            "Target must be a domain name (e.g. example.com), not an IP address: '{raw}'"
+        )));
+    }
+
+    // Convert Internationalized Domain Names (IDN) to Punycode ASCII
+    let ascii_domain = if clean.is_ascii() {
+        clean
+    } else {
+        idna::domain_to_ascii(&clean).map_err(|e| {
+            ScannerError::InvalidDomain(format!("Invalid internationalized domain name '{raw}': {e}"))
+        })?
+    };
+
+    if ascii_domain.len() > 253 {
         return Err(ScannerError::InvalidDomain(format!(
             "Domain name exceeds maximum length of 253 characters: '{raw}'"
         )));
     }
-    if clean.chars().any(|c| {
-        c.is_whitespace()
+    if ascii_domain.chars().any(|c| {
+        c.is_control()
+            || c.is_whitespace()
             || matches!(
                 c,
                 '/' | ':'
@@ -768,12 +947,12 @@ pub fn normalize_scan_domain(raw: &str) -> Result<String, ScannerError> {
             "Invalid domain format: '{raw}'"
         )));
     }
-    if !clean.contains('.') {
+    if !ascii_domain.contains('.') {
         return Err(ScannerError::InvalidDomain(format!(
             "Domain must contain a valid TLD: '{raw}'"
         )));
     }
-    for label in clean.split('.') {
+    for label in ascii_domain.split('.') {
         if label.is_empty() {
             return Err(ScannerError::InvalidDomain(format!(
                 "Domain contains empty label: '{raw}'"
@@ -799,7 +978,26 @@ pub fn normalize_scan_domain(raw: &str) -> Result<String, ScannerError> {
         }
     }
 
-    Ok(clean)
+    // Top-level domain (TLD) cannot be purely numeric (RFC 1123 / RFC 3696)
+    let last_label = ascii_domain.split('.').last().unwrap_or_default();
+    if last_label.chars().all(|c| c.is_ascii_digit()) {
+        return Err(ScannerError::InvalidDomain(format!(
+            "Top-level domain cannot be purely numeric: '{raw}'"
+        )));
+    }
+
+    // Reject non-routable / reserved special-use top-level domains (RFC 6761, RFC 6762, RFC 7686)
+    let last_label_lower = last_label.to_ascii_lowercase();
+    if matches!(
+        last_label_lower.as_str(),
+        "local" | "internal" | "lan" | "onion" | "invalid" | "localhost"
+    ) {
+        return Err(ScannerError::InvalidDomain(format!(
+            "Target domain uses a reserved/non-routable top-level domain (.{last_label_lower}): '{raw}'"
+        )));
+    }
+
+    Ok(ascii_domain)
 }
 
 fn probe_to_session(

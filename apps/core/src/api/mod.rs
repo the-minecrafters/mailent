@@ -63,6 +63,10 @@ pub fn create_router(state: AppState) -> Router {
             get(assessments::get_assessment_handler),
         )
         .route(
+            "/api/v1/assessments/{id}/report",
+            get(reports::get_assessment_report_handler),
+        )
+        .route(
             "/api/v1/observations",
             post(observations::submit_observation_handler),
         )

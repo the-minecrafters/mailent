@@ -373,25 +373,88 @@ pub fn normalize(
                     .text("fingerprint")?
                     .or_else(|| file_hashes.get(key).copied());
                 if let Some(fingerprint) = fingerprint {
+                    let subject = cert.required("certificate.subject")?.to_string();
+                    let issuer = cert.required("certificate.issuer")?.to_string();
+                    let is_self_signed = Some(subject == issuer);
+
+                    // Extract X.509 PKI crypto details from Zeek's x509.log
+                    let sig_alg = cert.text("certificate.sig_alg")?.map(str::to_string);
+                    let key_type = cert.text("certificate.key_type")?;
+                    let key_alg = cert.text("certificate.key_alg")?;
+                    let key_length = cert.number("certificate.key_length")?.map(|n| n as u16);
+
+                    let is_rsa = key_type.is_some_and(|t| t.eq_ignore_ascii_case("rsa"))
+                        || key_alg.is_some_and(|a| a.to_ascii_lowercase().contains("rsa"));
+                    let is_ec = key_type.is_some_and(|t| t.eq_ignore_ascii_case("ecdsa") || t.eq_ignore_ascii_case("ec"))
+                        || key_alg.is_some_and(|a| a.to_ascii_lowercase().contains("ec"));
+                    let is_ed25519 = key_type.is_some_and(|t| t.eq_ignore_ascii_case("ed25519"))
+                        || key_alg.is_some_and(|a| a.to_ascii_lowercase().contains("25519"));
+
+                    let (pub_alg, rsa_bits, ec_curve) = if is_rsa {
+                        (Some("RSA".to_string()), key_length, None)
+                    } else if is_ec {
+                        let curve = cert.text("certificate.curve")?.map(str::to_string);
+                        (Some("EC".to_string()), None, curve)
+                    } else if is_ed25519 {
+                        (Some("Ed25519".to_string()), None, None)
+                    } else {
+                        (
+                            key_type.or(key_alg).map(|s| s.to_ascii_uppercase()),
+                            None,
+                            None,
+                        )
+                    };
+
+                    let basic_constraints = cert.boolean("basic_constraints.ca")?.map(|is_ca| {
+                        if is_ca {
+                            "CA:TRUE".to_string()
+                        } else {
+                            "CA:FALSE".to_string()
+                        }
+                    });
+
+                    let chain_len = if !fps.is_empty() {
+                        Some(fps.len() as u8)
+                    } else if !fuids.is_empty() {
+                        Some(fuids.len() as u8)
+                    } else {
+                        None
+                    };
+
+                    let crypto_details = Some(CertificateCryptoDetails {
+                        signature_algorithm: sig_alg,
+                        public_key: PublicKeyDetails {
+                            algorithm: pub_alg,
+                            rsa_bits,
+                            ec_curve,
+                            spki_sha256: None,
+                        },
+                        chain_validation: ChainValidation::NotVerified,
+                        chain_length: chain_len,
+                        extensions: CertificateExtensions {
+                            basic_constraints,
+                            key_usage: Vec::new(),
+                            extended_key_usage: Vec::new(),
+                        },
+                    });
+
                     certificate = Some(CertificateObservation {
                         reference: CertificateReference {
                             sha256_fingerprint: fingerprint.into(),
-                            subject: cert.required("certificate.subject")?.into(),
-                            issuer: cert.required("certificate.issuer")?.into(),
+                            subject,
+                            issuer,
                         },
                         validity: ValidityPeriod {
                             not_before: cert.time("certificate.not_valid_before")?,
                             not_after: cert.time("certificate.not_valid_after")?,
                         },
-                        is_self_signed: None,
+                        is_self_signed,
                         san: cert
                             .strings("san.dns")?
                             .iter()
                             .map(|s| (*s).into())
                             .collect(),
-                        // Zeek's ssl.log does not expose PKI details; left None
-                        // so reports honestly mark these fields unavailable.
-                        crypto_details: None,
+                        crypto_details,
                     });
                     sources.push(cert.source.clone());
                 } else {
