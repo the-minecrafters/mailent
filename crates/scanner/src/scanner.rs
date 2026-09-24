@@ -142,10 +142,10 @@ impl DomainScanner {
         // If no MX records found and not an explicit Null MX, fall back to domain on port 25
         if discovered_endpoints.is_empty() && !has_null_mx {
             discovered_endpoints.push(DiscoveredEndpoint {
-                service: "SMTP".to_string(),
+                service: "SMTP (RFC 5321 fallback)".to_string(),
                 host: domain.clone(),
                 port: 25,
-                priority: Some(10),
+                priority: None,
                 resolved_ips: Vec::new(),
             });
         }
@@ -260,7 +260,7 @@ impl DomainScanner {
             }
 
             let res = match ep.service.as_str() {
-                "SMTP" | "SUBMISSION" => {
+                s if s.starts_with("SMTP") || s == "SUBMISSION" => {
                     mailent_probe::probe_smtp_starttls(
                         &ep.host,
                         ep.port,
@@ -535,10 +535,16 @@ impl DomainScanner {
                 discovered_endpoints.len()
             )
         } else if endpoints_succeeded == 0 {
-            format!(
-                "Discovered {} mail services, but none could be checked from this network. See connection details for the individual errors.",
-                discovered_endpoints.len()
-            )
+            if mx_records.is_empty() && !has_null_mx {
+                format!(
+                    "No MX records published for {domain}. Fallback check to {domain}:25 (RFC 5321) did not connect or timed out. This domain does not appear to receive email.",
+                )
+            } else {
+                format!(
+                    "Discovered {} mail services, but none could be checked from this network. See connection details for the individual errors.",
+                    discovered_endpoints.len()
+                )
+            }
         } else {
             format!(
                 "Discovered {} mail servers ({} connected, {} unreachable).",
@@ -557,9 +563,15 @@ impl DomainScanner {
         };
 
         let ai_risk_rationale = if all_endpoints_failed {
-            format!(
-                "Network verification incomplete. {ep_status} Live transport encryption, ciphers, and certificates could not be verified over the network. Only public DNS policies were evaluated. {finding_count_str}.",
-            )
+            if mx_records.is_empty() && !has_null_mx {
+                format!(
+                    "{ep_status} Live transport encryption could not be evaluated because no active mail servers were found. Only DNS policies were evaluated. {finding_count_str}.",
+                )
+            } else {
+                format!(
+                    "Network verification incomplete. {ep_status} Live transport encryption, ciphers, and certificates could not be verified over the network. Only public DNS policies were evaluated. {finding_count_str}.",
+                )
+            }
         } else {
             format!(
                 "Security score: {:.1}/100 ({}). {ep_status} {finding_count_str} across encryption, certificates, and email policies.",
