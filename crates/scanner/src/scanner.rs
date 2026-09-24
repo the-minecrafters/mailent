@@ -223,7 +223,38 @@ impl DomainScanner {
         let mut endpoints_succeeded = 0;
         let mut endpoints_failed = 0;
 
+        let is_port25_blocked_env = std::env::var("RENDER").is_ok()
+            || std::env::var("PORT25_BLOCKED").as_deref() == Ok("1")
+            || std::env::var("PORT25_BLOCKED").as_deref() == Ok("true");
+
         for ep in &discovered_endpoints {
+            if ep.port == 25 && is_port25_blocked_env {
+                endpoints_failed += 1;
+                coverage_gaps.push(format!(
+                    "Endpoint {}:{} check skipped: Outbound port 25 is blocked by cloud provider (Render).",
+                    ep.host, ep.port
+                ));
+                let mut unavail = ProbeResult::unavailable(&ep.host, None);
+                unavail.error = Some("Outbound port 25 blocked by cloud provider firewall (Render)".to_string());
+
+                endpoint_reports.push(DiscoveredServiceReport {
+                    service: ep.service.clone(),
+                    host: ep.host.clone(),
+                    port: ep.port,
+                    priority: ep.priority,
+                    resolved_ips: ep.resolved_ips.clone(),
+                    starttls_status: "Port 25 blocked by cloud host".to_string(),
+                    tls_version: None,
+                    cipher: None,
+                    cert_subject: None,
+                    cert_issuer: None,
+                    cert_validity: None,
+                    dane_status: "not_checked".to_string(),
+                });
+                probe_results.push((ep.clone(), unavail));
+                continue;
+            }
+
             let res = match ep.service.as_str() {
                 "SMTP" | "SUBMISSION" => {
                     mailent_probe::probe_smtp_starttls(

@@ -84,6 +84,24 @@ export function ScanInfrastructureModal({
           <form onSubmit={handleScan} className="modal-body">
             {error && <ErrorState title="Scan failed" description={error} />}
 
+            <div
+              style={{
+                background: "rgba(245, 158, 11, 0.08)",
+                border: "1px solid rgba(245, 158, 11, 0.3)",
+                borderRadius: "6px",
+                padding: "0.75rem 1rem",
+                marginBottom: "1rem",
+                fontSize: "0.8125rem",
+                lineHeight: 1.45,
+                color: "#92400e",
+              }}
+            >
+              <strong>Cloud Hosting Notice (Port 25):</strong>
+              <p style={{ margin: "0.25rem 0 0 0" }}>
+                Cloud hosting platforms (including Render) block outbound port 25 to prevent spam. Direct MX server probing on port 25 cannot connect from this instance and will report as unreachable. To evaluate live mail traffic, upload a PCAP capture or run Mailent on a private server or dedicated VPS where port 25 is open.
+              </p>
+            </div>
+
             <div className="form-group" style={{ marginBottom: "1rem" }}>
               <label htmlFor="scan-domain-input" className="form-label">
                 Target Domain
