@@ -335,7 +335,7 @@ async fn authorize(
 
         return Err((
             StatusCode::UNAUTHORIZED,
-            "Sign in to access this workspace, or continue in non-persistent guest mode",
+            "Sign in to access this workspace, or continue as a guest.",
         ));
     }
 

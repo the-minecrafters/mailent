@@ -64,11 +64,10 @@ export function ScanInfrastructureModal({
             <div className="modal-header-content">
               <Dialog.Title className="modal-title">
                 <Icon name="search" size={20} />
-                <span>Scan Mail Infrastructure</span>
+                <span>Check a domain</span>
               </Dialog.Title>
               <Dialog.Description className="modal-description">
-                Actively discover mail servers, verify MX/DANE/MTA-STS policies,
-                and probe TLS &amp; STARTTLS posture.
+                Find mail servers and check their encryption, certificates, and email security settings.
               </Dialog.Description>
             </div>
             <Dialog.Close asChild disabled={scanning}>
@@ -86,31 +85,31 @@ export function ScanInfrastructureModal({
 
             <div
               style={{
-                background: "rgba(245, 158, 11, 0.08)",
-                border: "1px solid rgba(245, 158, 11, 0.3)",
+                background: "var(--status-warning-bg)",
+                border: "1px solid var(--status-warning-border)",
                 borderRadius: "6px",
                 padding: "0.75rem 1rem",
                 marginBottom: "1rem",
-                fontSize: "0.8125rem",
+                fontSize: "0.875rem",
                 lineHeight: 1.45,
-                color: "#92400e",
+                color: "var(--status-warning-ink)",
               }}
             >
-              <strong>Cloud Hosting Notice (Port 25):</strong>
+              <strong>Some connections may be unavailable</strong>
               <p style={{ margin: "0.25rem 0 0 0" }}>
-                Cloud hosting platforms (including Render) block outbound port 25 to prevent spam. Direct MX server probing on port 25 cannot connect from this instance and will report as unreachable. To evaluate live mail traffic, upload a PCAP capture or run Mailent on a private server or dedicated VPS where port 25 is open.
+                This hosted workspace cannot connect on port 25. Those results will be marked unavailable. Upload a capture to review traffic from those servers.
               </p>
             </div>
 
             <div className="form-group" style={{ marginBottom: "1rem" }}>
               <label htmlFor="scan-domain-input" className="form-label">
-                Target Domain
+                Domain
               </label>
               <input
                 id="scan-domain-input"
                 type="text"
                 className="input text-input"
-                placeholder="e.g. example.com or mail.domain.org"
+                placeholder="company.com"
                 value={domain}
                 onChange={(e) => setDomain(e.target.value)}
                 disabled={scanning}
@@ -120,13 +119,12 @@ export function ScanInfrastructureModal({
               <span
                 className="secondary-text"
                 style={{
-                  fontSize: "0.8125rem",
+                  fontSize: "0.875rem",
                   marginTop: "0.35rem",
                   display: "block",
                 }}
               >
-                Mailent will query DNS MX, SRV records, active TLS banners, and
-                external security policies.
+                Use a domain you own or have permission to check.
               </span>
             </div>
 
@@ -137,25 +135,24 @@ export function ScanInfrastructureModal({
                 borderRadius: "6px",
                 padding: "0.85rem 1rem",
                 marginBottom: "1.25rem",
-                fontSize: "0.8125rem",
+                fontSize: "0.875rem",
                 lineHeight: 1.5,
               }}
             >
               <strong style={{ display: "block", marginBottom: "0.25rem" }}>
-                What this scan checks:
+                Included in this check
               </strong>
               <ul style={{ margin: 0, paddingLeft: "1.2rem" }}>
-                <li>MX records, DNSSEC validation, and host IP resolution</li>
+                <li>Mail server records and DNS security</li>
                 <li>
                   SMTP STARTTLS (port 25 &amp; 587) and IMAP/POP3 (port 993,
                   143, 995)
                 </li>
                 <li>
-                  X.509 certificate chains, SAN names, expiry, and self-signed
-                  alerts
+                  Certificate names, expiry, and trust
                 </li>
                 <li>
-                  MTA-STS (RFC 8461), TLS-RPT (RFC 8460), and DANE TLSA records
+                  MTA-STS, TLS reporting, and DANE policies
                 </li>
               </ul>
             </div>
@@ -184,12 +181,12 @@ export function ScanInfrastructureModal({
                 {scanning ? (
                   <>
                     <Icon name="refresh" className="spin" size={16} />
-                    <span>Scanning ({seconds}s)…</span>
+                    <span>Checking ({seconds}s)…</span>
                   </>
                 ) : (
                   <>
                     <Icon name="search" size={16} />
-                    <span>Start scan</span>
+                    <span>Run check</span>
                   </>
                 )}
               </Button>

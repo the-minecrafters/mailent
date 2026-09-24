@@ -1,3 +1,4 @@
+import { reviewSummary, reviewTitle, reportTitle } from "./display-copy";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
@@ -27,7 +28,6 @@ import {
   type AssetVerificationState,
   archiveReport,
   type CertificateRecord,
-  checkDecisionProvider,
   createIntegration,
   type DriftEvent,
   deleteIntegration,
@@ -91,6 +91,7 @@ import {
 } from "./components/ui";
 import { DevicesTab } from "./DevicesTab";
 import { LandingPage } from "./LandingPage";
+import { PrivacyPage } from "./PrivacyPage";
 import { NewAssessmentModal } from "./NewAssessmentModal";
 import { ProbePanel } from "./ProbePanel";
 import { RemediationWorkflow } from "./RemediationWorkflow";
@@ -109,12 +110,12 @@ export function VerificationFreshnessBadge({
   const f = (freshness || "never_verified").toLowerCase();
   const label =
     f === "fresh"
-      ? "Fresh (<24h)"
+      ? "Checked today"
       : f === "aging"
-        ? "Aging (24h-7d)"
+        ? "Checked this week"
         : f === "stale"
-          ? "Stale (>7d / Drift)"
-          : "Never Verified";
+          ? "Check again"
+          : "Not checked yet";
   return <span className={`badge ${f}`}>{label}</span>;
 }
 
@@ -126,10 +127,10 @@ export function EvidenceGapBadge({ state }: { state: string }) {
 
 export function PosturePanel({ posture }: { posture: SecurityPosture }) {
   return (
-    <section className="card" aria-label="Security Posture">
+    <section className="card" aria-label="Security score">
       <div className="card-header">
         <h3 className="card-title">
-          Security Posture (model v{posture.score_version})
+          Security score
         </h3>
         <PostureGradeBadge grade={posture.grade} />
       </div>
@@ -153,13 +154,13 @@ export function PosturePanel({ posture }: { posture: SecurityPosture }) {
         </div>
 
         <div className="metric-tile">
-          <div className="metric-tile-label">Findings Considered</div>
+          <div className="metric-tile-label">Findings included</div>
           <div className="metric-tile-value">{posture.findings_considered}</div>
         </div>
       </div>
 
       <h4 style={{ margin: "1.25rem 0 0.5rem", fontSize: "0.9375rem" }}>
-        Category Breakdown
+        Score breakdown
       </h4>
       <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
         {posture.categories.map((cat) => (
@@ -187,7 +188,7 @@ export function PosturePanel({ posture }: { posture: SecurityPosture }) {
             <div
               style={{
                 height: "6px",
-                background: "#e5e7eb",
+                background: "var(--hairline)",
                 borderRadius: "3px",
                 overflow: "hidden",
               }}
@@ -198,17 +199,17 @@ export function PosturePanel({ posture }: { posture: SecurityPosture }) {
                   width: `${Math.max(0, Math.min(100, cat.score))}%`,
                   background:
                     cat.score >= 85
-                      ? "#10b981"
+                      ? "var(--brand-mint)"
                       : cat.score >= 70
-                        ? "#f59e0b"
-                        : "#ef4444",
+                        ? "var(--status-warning-ink)"
+                        : "var(--status-danger-ink)",
                 }}
               />
             </div>
             {cat.finding_rule_ids.length > 0 && (
               <p
                 className="mono secondary-text"
-                style={{ margin: "0.4rem 0 0", fontSize: "0.75rem" }}
+                style={{ margin: "0.4rem 0 0", fontSize: "0.875rem" }}
               >
                 {cat.finding_rule_ids.join(", ")}
               </p>
@@ -220,7 +221,7 @@ export function PosturePanel({ posture }: { posture: SecurityPosture }) {
       {posture.deductions.length > 0 && (
         <details style={{ marginTop: "1rem" }}>
           <summary style={{ cursor: "pointer", fontSize: "0.875rem" }}>
-            View {posture.deductions.length} deduction(s)
+            View {posture.deductions.length} score changes
           </summary>
           <div style={{ marginTop: "0.5rem" }}>
             {posture.deductions.map((d, i) => (
@@ -229,7 +230,7 @@ export function PosturePanel({ posture }: { posture: SecurityPosture }) {
                 style={{
                   padding: "0.5rem",
                   borderBottom: "1px solid var(--hairline)",
-                  fontSize: "0.8125rem",
+                  fontSize: "0.875rem",
                 }}
               >
                 <div
@@ -240,7 +241,7 @@ export function PosturePanel({ posture }: { posture: SecurityPosture }) {
                     -{d.points} pts
                   </span>
                 </div>
-                <div className="secondary-text" style={{ fontSize: "0.75rem" }}>
+                <div className="secondary-text" style={{ fontSize: "0.875rem" }}>
                   {d.evidence_description}
                 </div>
               </div>
@@ -310,8 +311,8 @@ const navigation = [
       },
       {
         key: "investigations",
-        path: "/workspace/investigations",
-        label: "Investigations",
+        path: "/workspace/reviews",
+        label: "Reviews",
         icon: "search",
       },
       {
@@ -392,6 +393,7 @@ export function App({
 function SiteRoutes() {
   const location = useLocation();
   if (location.pathname === "/") return <LandingPage />;
+  if (location.pathname === "/privacy") return <PrivacyPage />;
   if (!location.pathname.startsWith("/workspace"))
     return (
       <Navigate
@@ -424,7 +426,7 @@ function Workspace() {
     enabled: !!user,
     retry: false,
   });
-  const orgName = orgQuery.data?.name ?? "Acme Inc";
+  const orgName = orgQuery.data?.name ?? "Workspace";
 
   const segments = location.pathname.split("/").filter(Boolean).slice(1);
   const page = pages.find((p) => p.path === `/workspace/${segments[0]}`);
@@ -442,19 +444,26 @@ function Workspace() {
   });
   const connected = readinessQuery.isSuccess && readinessQuery.data.ready;
 
-  if (
-    location.pathname === "/settings" ||
-    location.pathname.startsWith("/settings")
-  ) {
-    return <Navigate to={`/workspace/devices${location.search}`} replace />;
-  }
-
   useEffect(() => {
     document.title = `${page?.label ?? "Mailent"} · Mailent`;
     setMenuOpen(false);
     mainRef.current?.focus({ preventScroll: true });
     window.scrollTo({ top: 0, behavior: "instant" });
   }, [location.pathname, page?.label]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const start = params.get("start");
+    if (start !== "domain" && start !== "capture") return;
+    if (start === "domain") setScanOpen(true);
+    else setUploadOpen(true);
+    params.delete("start");
+    navigate({ pathname: location.pathname, search: params.toString() }, { replace: true });
+  }, [location.pathname, location.search, navigate]);
+
+  if (location.pathname.startsWith("/settings")) {
+    return <Navigate to={`/workspace/devices${location.search}`} replace />;
+  }
 
   const open = (path: string, entityId?: string) =>
     navigate(`${path}${entityId ? `/${encodeURIComponent(entityId)}` : ""}`);
@@ -498,14 +507,9 @@ function Workspace() {
         ))}
       </nav>
       <div className="sidebar-footer">
-        <span className="workspace-avatar">
-          <Icon name="computer" size={19} />
-        </span>
-        <div>
-          <strong>{user?.email ?? "Guest workspace"}</strong>
-          <span>
-            {user ? `${orgName} (Persistent)` : "In-memory (non-persistent)"}
-          </span>
+        <div className="sidebar-account">
+          <strong title={user?.email}>{user?.email ?? "Guest session"}</strong>
+          {user && <span>{orgName}</span>}
         </div>
         {user && signOut ? (
           <Button
@@ -520,7 +524,7 @@ function Workspace() {
           <Button
             variant="secondary"
             aria-label="Sign in"
-            title="Sign in for persistent storage"
+            title="Sign in to your workspace"
             onClick={() => openSignIn()}
           >
             <Icon name="login" size={18} />
@@ -536,6 +540,7 @@ function Workspace() {
   )
     return <Navigate to="/workspace/overview" replace />;
   const legacy = {
+    "/investigations": "/workspace/reviews",
     "/assessments": "/workspace/captures",
     "/assets": "/workspace/servers",
     "/sensors": "/workspace/collectors",
@@ -590,44 +595,6 @@ function Workspace() {
             {id && <span className="breadcrumb-detail">/ Details</span>}
           </div>
           <div className="topbar-actions">
-            {user ? (
-              <span
-                className="badge fresh"
-                title={`Signed in as ${user.email}. Captures persist to database.`}
-                style={{ fontSize: "0.75rem" }}
-              >
-                Persisted
-              </span>
-            ) : (
-              <button
-                type="button"
-                onClick={openSignIn}
-                className="btn-link"
-                title="Non-persistent mode. Click to sign in for PostgreSQL persistence."
-                style={{
-                  background: "var(--surface-subtle)",
-                  border: "1px solid var(--hairline)",
-                  padding: "0.2rem 0.5rem",
-                  borderRadius: "2px",
-                  fontSize: "0.75rem",
-                  color: "var(--ink-secondary)",
-                  cursor: "pointer",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "0.3rem",
-                }}
-              >
-                <span>Guest (In-Memory)</span>
-                <span
-                  style={{
-                    textDecoration: "underline",
-                    color: "var(--ink-primary)",
-                  }}
-                >
-                  Sign in
-                </span>
-              </button>
-            )}
             <span
               role={readinessQuery.isPending ? "status" : undefined}
               className={`connection-status ${connected ? "online" : "offline"}`}
@@ -655,7 +622,7 @@ function Workspace() {
             </Button>
             <Button variant="secondary" onClick={() => setScanOpen(true)}>
               <Icon name="search" size={17} />
-              <span>Scan infrastructure</span>
+              <span>Check domain</span>
             </Button>
             <Button
               ref={captureButtonRef}
@@ -680,12 +647,11 @@ function Workspace() {
               onRetry={() => void readinessQuery.refetch()}
             />
           )}
-          {readinessQuery.data?.storage === "in_memory" && (
+          {isGuest && (
             <div className="storage-notice">
               <Icon name="info" size={16} />
               <span>
-                Temporary storage is active. Connect persistent storage to keep
-                your work after a service restart.
+                Guest results are temporary and are not saved to your account.
               </span>
             </div>
           )}
@@ -726,8 +692,8 @@ function Workspace() {
             {activeTab === "investigations" && (
               <InvestigationsTab
                 selectedId={id}
-                onSelect={(id) => open("/workspace/investigations", id)}
-                onBack={() => open("/workspace/investigations")}
+                onSelect={(id) => open("/workspace/reviews", id)}
+                onBack={() => open("/workspace/reviews")}
               />
             )}
             {activeTab === "remediations" && <RemediationsTab />}
@@ -752,12 +718,7 @@ function Workspace() {
             )}
           </div>
           <footer className="workspace-footnote">
-            <Icon name="lock" size={13} />
-            <span>
-              {readinessQuery.data?.decision_provider === "jev"
-                ? "Jev reviews transport findings. Email content is not sent."
-                : "Mail transport analysis · Evidence-based security checks"}
-            </span>
+            <Link to="/privacy">Privacy</Link>
           </footer>
         </main>
       </div>
@@ -862,7 +823,7 @@ function AssessmentsTab({
               marginBottom: "1rem",
             }}
           />
-          <p className="secondary-text">Loading assessments...</p>
+          <p className="secondary-text">Loading captures…</p>
         </div>
       ) : assessmentsQuery.isError ? null : assessments.length === 0 ? (
         <div className="card">
@@ -898,7 +859,7 @@ function AssessmentsTab({
                       <div style={{ fontWeight: 600 }}>{a.title}</div>
                       <div
                         className="mono secondary-text"
-                        style={{ fontSize: "0.75rem", marginTop: "0.15rem" }}
+                        style={{ fontSize: "0.875rem", marginTop: "0.15rem" }}
                       >
                         {a.capture_name} · SHA-256:{" "}
                         {a.capture_hash.slice(0, 12)}…
@@ -964,7 +925,7 @@ function AssessmentsTab({
                     </td>
                     <td
                       className="secondary-text"
-                      style={{ fontSize: "0.8125rem", whiteSpace: "nowrap" }}
+                      style={{ fontSize: "0.875rem", whiteSpace: "nowrap" }}
                     >
                       {new Date(a.created_at).toLocaleString()}
                     </td>
@@ -973,7 +934,7 @@ function AssessmentsTab({
                         className="btn btn-primary"
                         style={{
                           padding: "0.3rem 0.75rem",
-                          fontSize: "0.8125rem",
+                          fontSize: "0.875rem",
                         }}
                         onClick={() => onSelectAssessment(a.id)}
                       >
@@ -1093,7 +1054,7 @@ function OverviewTab({
             to: "/workspace/captures",
           },
           {
-            label: "Open investigations",
+            label: "Open reviews",
             value: count(
               investigationsQuery,
               (investigationsQuery.data ?? []).filter(
@@ -1102,7 +1063,7 @@ function OverviewTab({
             ),
             detail: "Related events to review",
             icon: "search",
-            to: "/workspace/investigations",
+            to: "/workspace/reviews",
           },
         ].map((metric) => (
           <Link className="overview-metric" to={metric.to} key={metric.label}>
@@ -1339,10 +1300,10 @@ function AssetsTab({
         </p>
       </div>
 
-      {assetsQuery.isPending && <p role="status">Loading assets…</p>}
+      {assetsQuery.isPending && <p role="status">Loading mail servers…</p>}
       {assetsQuery.isError && (
         <p role="alert" className="error">
-          Failed to load assets: {assetsQuery.error.message}
+          Could not load mail servers: {assetsQuery.error.message}
         </p>
       )}
 
@@ -1359,11 +1320,11 @@ function AssetsTab({
         <table className="data-table">
           <thead>
             <tr>
-              <th>Asset Target</th>
+              <th>Mail server</th>
               <th>IP Addresses</th>
               <th>Endpoints</th>
               <th>Findings</th>
-              <th>Probe Allowlist</th>
+              <th>Live checks</th>
               <th>Last Seen</th>
               <th>Actions</th>
             </tr>
@@ -1396,7 +1357,7 @@ function AssetsTab({
                       asset.hostnames.join(", ") !== asset.primary_name && (
                         <div
                           className="mono secondary-text"
-                          style={{ fontSize: "0.75rem" }}
+                          style={{ fontSize: "0.875rem" }}
                         >
                           {asset.hostnames.join(", ")}
                         </div>
@@ -1432,7 +1393,7 @@ function AssetsTab({
                   </td>
                   <td
                     className="mono secondary-text"
-                    style={{ fontSize: "0.8125rem" }}
+                    style={{ fontSize: "0.875rem" }}
                   >
                     {new Date(asset.last_seen).toLocaleString()}
                   </td>
@@ -1495,7 +1456,10 @@ function AssetDetailView({
   });
 
   const probeMutation = useMutation({
-    mutationFn: () => triggerAssetProbe(assetId, 25, "smtp"),
+    mutationFn: () => {
+      const endpoint = assetQuery.data?.endpoints[0];
+      return triggerAssetProbe(assetId, endpoint?.port ?? 25, endpoint?.protocol ?? "smtp");
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: ["asset-verification", assetId],
@@ -1520,12 +1484,12 @@ function AssetDetailView({
         archived_by: "analyst",
       });
       setArchiveStatus(
-        `Report archived successfully! Fingerprint: ${record.fingerprint.slice(0, 16)}...`,
+        `Report saved: ${record.fingerprint.slice(0, 16)}`,
       );
       setArchiveNotes("");
       void queryClient.invalidateQueries({ queryKey: ["archived-reports"] });
     } catch (e: any) {
-      setArchiveStatus(`Archive failed: ${e.message}`);
+      setArchiveStatus(`Could not save report: ${e.message}`);
     } finally {
       setIsArchiving(false);
     }
@@ -1572,7 +1536,7 @@ function AssetDetailView({
 
         <div className="metrics-grid">
           <div className="metric-tile">
-            <div className="metric-tile-label">Freshness State</div>
+            <div className="metric-tile-label">Check status</div>
             <div className="metric-tile-value">
               <VerificationFreshnessBadge freshness={verification?.freshness} />
             </div>
@@ -1583,7 +1547,7 @@ function AssetDetailView({
           </div>
 
           <div className="metric-tile">
-            <div className="metric-tile-label">Last Active Verification</div>
+            <div className="metric-tile-label">Last checked</div>
             <div className="metric-tile-value" style={{ fontSize: "1.2rem" }}>
               {verification?.last_verified_at
                 ? new Date(verification.last_verified_at).toLocaleDateString()
@@ -1595,15 +1559,15 @@ function AssetDetailView({
           </div>
 
           <div className="metric-tile">
-            <div className="metric-tile-label">Consecutive Failures</div>
+            <div className="metric-tile-label">Failed checks in a row</div>
             <div className="metric-tile-value">
               {verification?.consecutive_failures ?? 0}
             </div>
             <div className="metric-tile-sub">
               {verification?.consecutive_failures &&
               verification.consecutive_failures >= 3
-                ? "Backoff enabled (avoiding target spam)"
-                : "Normal recheck frequency"}
+                ? "Checks are spaced out after repeated failures"
+                : "Normal check schedule"}
             </div>
           </div>
         </div>
@@ -1622,17 +1586,17 @@ function AssetDetailView({
             disabled={probeMutation.isPending || !asset?.probe_authorized}
           >
             {probeMutation.isPending
-              ? "Running Verification..."
-              : "Run Verification Probe Now"}
+              ? "Checking…"
+              : "Run check"}
           </button>
           {!asset?.probe_authorized && (
-            <span className="secondary-text" style={{ fontSize: "0.8125rem" }}>
-              (Target not in probe allowlist scope)
+            <span className="secondary-text" style={{ fontSize: "0.875rem" }}>
+              Live checks are not enabled for this server.
             </span>
           )}
           {verification?.drift_detected_since_verification && (
             <span className="badge stale">
-              Drift detected since last verification!
+              Settings have changed since the last check.
             </span>
           )}
         </div>
@@ -1647,7 +1611,7 @@ function AssetDetailView({
           {postureData.guidance.filter((g) => g.kind === "remediation" && Boolean(g.finding_id)).length > 0 ? (
             <div className="card">
               <h3>
-                Fix Security Issues (
+                Recommended fixes (
                 {
                   postureData.guidance.filter((g) => g.kind === "remediation" && Boolean(g.finding_id))
                     .length
@@ -1679,7 +1643,7 @@ function AssetDetailView({
                   <p className="secondary-text">{g.recommendation}</p>
                   {g.compatibility_caveats.length > 0 && (
                     <div style={{ marginTop: "0.5rem" }}>
-                      <span style={{ fontSize: "0.8125rem", fontWeight: 600 }}>
+                      <span style={{ fontSize: "0.875rem", fontWeight: 600 }}>
                         Things to check before changing
                       </span>
                       <ul
@@ -1689,7 +1653,7 @@ function AssetDetailView({
                           <li
                             key={idx}
                             className="secondary-text"
-                            style={{ fontSize: "0.8125rem" }}
+                            style={{ fontSize: "0.875rem" }}
                           >
                             {c}
                           </li>
@@ -1714,23 +1678,23 @@ function AssetDetailView({
               className="card"
               style={{
                 padding: "1.25rem 1.5rem",
-                border: "1px solid #10b981",
-                background: "rgba(16, 185, 129, 0.04)",
+                border: "1px solid var(--status-success-border)",
+                background: "var(--status-success-bg)",
                 marginBottom: "1rem",
               }}
             >
-              <h3 style={{ margin: "0 0 0.5rem 0", color: "#065f46" }}>
-                All security checks passed! (100/100)
+              <h3 style={{ margin: "0 0 0.5rem 0", color: "var(--status-success-ink)" }}>
+                No recommended fixes
               </h3>
               <p className="secondary-text" style={{ margin: 0 }}>
-                This mail server has zero vulnerabilities or compliance issues to fix.
+                No fixes are currently recommended for this server.
               </p>
             </div>
           )}
 
           <div className="card">
             <h3>
-              Optional Security Tips (
+              Recommendations (
               {
                 postureData.guidance.filter((g) => g.kind === "best_practice")
                   .length
@@ -1757,7 +1721,7 @@ function AssetDetailView({
                     }}
                   >
                     <strong>{g.title}</strong>
-                    <span className="badge">Best Practice</span>
+                    <span className="badge">Recommendation</span>
                   </div>
                   <p className="secondary-text">{g.recommendation}</p>
                 </div>
@@ -1771,7 +1735,7 @@ function AssetDetailView({
         <h3>Certificate history ({certs.length})</h3>
         {certs.length === 0 ? (
           <p className="secondary-text">
-            No certificates recorded for this asset.
+            No certificates recorded for this server.
           </p>
         ) : (
           certs.map((c) => (
@@ -1812,7 +1776,7 @@ function AssetDetailView({
         <h3>Configuration changes ({driftEvents.length})</h3>
         {driftEvents.length === 0 ? (
           <p className="secondary-text">
-            No drift events recorded for this asset.
+            No changes recorded for this server.
           </p>
         ) : (
           driftEvents.map((d) => (
@@ -1835,7 +1799,7 @@ function AssetDetailView({
                 <strong>{d.title}</strong>
                 <span
                   className="mono secondary-text"
-                  style={{ fontSize: "0.75rem" }}
+                  style={{ fontSize: "0.875rem" }}
                 >
                   {new Date(d.observed_at).toLocaleString()}
                 </span>
@@ -1846,7 +1810,7 @@ function AssetDetailView({
               {d.previous_value && (
                 <div
                   className="mono secondary-text"
-                  style={{ fontSize: "0.75rem" }}
+                  style={{ fontSize: "0.875rem" }}
                 >
                   Previous: {d.previous_value} → New: {d.new_value}
                 </div>
@@ -1856,13 +1820,13 @@ function AssetDetailView({
         )}
       </div>
 
-      {/* Security Report Export & Archiving */}
+      {/* Security report Export & Archiving */}
       <div className="card" style={{ marginTop: "1.5rem" }}>
         <div className="card-header">
-          <h3 className="card-title">Security Report</h3>
+          <h3 className="card-title">Security report</h3>
         </div>
         <p className="secondary-text">
-          Download your security assessment report as JSON or HTML/PDF, or save a locked copy for your records.
+          Download this report or save a copy of the current results.
         </p>
 
         <div
@@ -1901,17 +1865,15 @@ function AssetDetailView({
           }}
         >
           <h4 style={{ margin: "0 0 0.5rem" }}>Save report snapshot</h4>
-          <p className="secondary-text" style={{ fontSize: "0.8125rem" }}>
-            Archives the exact report with a SHA-256 fingerprint for evidentiary
-            integrity. Subsequent policy changes will never alter archived
-            records.
+          <p className="secondary-text" style={{ fontSize: "0.875rem" }}>
+            Keep a copy of the results as they are now, even if the server or policy changes later.
           </p>
           <div
             style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}
           >
             <input
               type="text"
-              placeholder="Optional analyst investigation notes..."
+              placeholder="Add notes to this report…"
               value={archiveNotes}
               onChange={(e) => setArchiveNotes(e.target.value)}
               style={{ flex: 1 }}
@@ -1921,13 +1883,13 @@ function AssetDetailView({
               onClick={handleArchiveReport}
               disabled={isArchiving}
             >
-              {isArchiving ? "Archiving..." : "Archive Report"}
+              {isArchiving ? "Archiving..." : "Save report"}
             </button>
           </div>
           {archiveStatus && (
             <div
               className="secondary-text"
-              style={{ marginTop: "0.5rem", fontSize: "0.8125rem" }}
+              style={{ marginTop: "0.5rem", fontSize: "0.875rem" }}
             >
               {archiveStatus}
             </div>
@@ -1997,8 +1959,8 @@ function SessionsTab({
         <table className="data-table">
           <thead>
             <tr>
-              <th>Client Flow</th>
-              <th>Server Flow</th>
+              <th>Client</th>
+              <th>Server</th>
               <th>Protocol</th>
               <th>STARTTLS</th>
               <th>TLS Version</th>
@@ -2034,7 +1996,7 @@ function SessionsTab({
                   <td>{s.tls_version || "Plaintext"}</td>
                   <td
                     className="mono secondary-text"
-                    style={{ fontSize: "0.75rem" }}
+                    style={{ fontSize: "0.875rem" }}
                   >
                     {s.cipher_suite || "None"}
                   </td>
@@ -2081,7 +2043,7 @@ function SessionDetailView({
   if (!detail) {
     return (
       <div>
-        <button onClick={onBack}>← Back to Sessions</button>
+        <button onClick={onBack}>← Back to sessions</button>
         <div style={{ padding: "2rem", textAlign: "center" }}>
           Loading session evidence...
         </div>
@@ -2102,7 +2064,7 @@ function SessionDetailView({
           marginBottom: "1.5rem",
         }}
       >
-        <button onClick={onBack}>← Back to Sessions</button>
+        <button onClick={onBack}>← Back to sessions</button>
         <div>
           <h2>SESSION DETAILS</h2>
           <div className="mono secondary-text">Session ID: {sessionId}</div>
@@ -2113,11 +2075,11 @@ function SessionDetailView({
         {/* Left Column: Metadata & Explicit Evidence Gaps */}
         <div>
           <div className="card">
-            <h3>Connection Flow & Provenance</h3>
+            <h3>Connection details</h3>
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "1fr 1fr",
+                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
                 gap: "0.75rem",
                 fontSize: "0.875rem",
               }}
@@ -2146,10 +2108,9 @@ function SessionDetailView({
           </div>
 
           <div className="card">
-            <h3>Explicit Cryptographic Facts & Evidence Gaps</h3>
-            <p className="secondary-text" style={{ fontSize: "0.8125rem" }}>
-              Every cryptographic state is evaluated strictly as observed facts.
-              Absence of evidence is never equated with security.
+            <h3>Encryption details</h3>
+            <p className="secondary-text" style={{ fontSize: "0.875rem" }}>
+              These details come from the recorded connection. Missing data is marked as unavailable.
             </p>
 
             <div
@@ -2226,7 +2187,7 @@ function SessionDetailView({
                   borderBottom: "1px solid var(--hairline)",
                 }}
               >
-                <span>Certificate Leaf</span>
+                <span>Server certificate</span>
                 <div>
                   {s.certificate ? (
                     <EvidenceGapBadge state="Observed" />
@@ -2241,7 +2202,7 @@ function SessionDetailView({
           {/* Certificate observation */}
           {s.certificate && (
             <div className="card">
-              <h3>Presented Leaf Certificate</h3>
+              <h3>Server certificate</h3>
               <div style={{ fontSize: "0.875rem" }}>
                 <div>
                   <span className="secondary-text">Subject:</span>{" "}
@@ -2253,13 +2214,13 @@ function SessionDetailView({
                 </div>
                 <div
                   className="mono secondary-text"
-                  style={{ fontSize: "0.75rem", margin: "0.35rem 0" }}
+                  style={{ fontSize: "0.875rem", margin: "0.35rem 0" }}
                 >
                   Fingerprint: {s.certificate.reference.sha256_fingerprint}
                 </div>
                 <div
                   className="secondary-text"
-                  style={{ fontSize: "0.8125rem" }}
+                  style={{ fontSize: "0.875rem" }}
                 >
                   Valid: {s.certificate.validity.not_before} to{" "}
                   {s.certificate.validity.not_after}
@@ -2270,7 +2231,7 @@ function SessionDetailView({
 
           {/* Associated Findings */}
           <div className="card">
-            <h3>Associated Security Findings ({detail.findings.length})</h3>
+            <h3>Findings ({detail.findings.length})</h3>
             {detail.findings.length === 0 ? (
               <p className="secondary-text">
                 No policy violations identified on this session.
@@ -2298,13 +2259,13 @@ function SessionDetailView({
                   </div>
                   <div
                     className="mono secondary-text"
-                    style={{ fontSize: "0.75rem" }}
+                    style={{ fontSize: "0.875rem" }}
                   >
                     {f.rule_id}
                   </div>
                   <p
                     className="secondary-text"
-                    style={{ fontSize: "0.8125rem" }}
+                    style={{ fontSize: "0.875rem" }}
                   >
                     {f.description}
                   </p>
@@ -2318,7 +2279,7 @@ function SessionDetailView({
         <div className="card">
           <div className="card-header">
             <h3 className="card-title">Session Timeline</h3>
-            <span className="badge">Connection Progression</span>
+            <span className="badge">Events</span>
           </div>
 
           {timeline.length === 0 ? (
@@ -2337,7 +2298,7 @@ function SessionDetailView({
                       <div className="timeline-title">{title}</div>
                       <div
                         className="mono secondary-text"
-                        style={{ fontSize: "0.75rem" }}
+                        style={{ fontSize: "0.875rem" }}
                       >
                         {event.source}
                       </div>
@@ -2448,7 +2409,7 @@ function FindingsTab({
               key={sev}
               aria-pressed={severityFilter === sev}
               className={severityFilter === sev ? "btn-primary" : "btn"}
-              style={{ padding: "0.35rem 0.75rem", fontSize: "0.75rem" }}
+              style={{ padding: "0.35rem 0.75rem", fontSize: "0.875rem" }}
               onClick={() => setSeverityFilter(sev)}
             >
               {sev.toUpperCase()}
@@ -2506,7 +2467,7 @@ function FindingsTab({
                   <h3 style={{ margin: "0 0 0.25rem" }}>{finding.title}</h3>
                   <div
                     className="secondary-text"
-                    style={{ fontSize: "0.8125rem" }}
+                    style={{ fontSize: "0.875rem" }}
                   >
                     <span className="mono">{finding.rule_id}</span> · Policy:{" "}
                     {finding.policy_name} v{finding.policy_version}
@@ -2530,12 +2491,12 @@ function FindingsTab({
               >
                 <div
                   style={{
-                    fontSize: "0.8125rem",
+                    fontSize: "0.875rem",
                     fontWeight: 600,
                     marginBottom: "0.25rem",
                   }}
                 >
-                  Recommended Remediation:
+                  Recommended fix:
                 </div>
                 <div
                   className="secondary-text"
@@ -2553,7 +2514,7 @@ function FindingsTab({
                   marginTop: "1rem",
                   paddingTop: "0.75rem",
                   borderTop: "1px solid var(--hairline)",
-                  fontSize: "0.8125rem",
+                  fontSize: "0.875rem",
                 }}
               >
                 <span className="secondary-text">
@@ -2569,7 +2530,7 @@ function FindingsTab({
                   }
                   onClick={() => resolveServer.mutate(finding)}
                 >
-                  Investigate & Fix
+                  Review fix
                 </button>
               </div>
             </div>
@@ -2605,10 +2566,9 @@ function InvestigationsTab({
   return (
     <div>
       <div style={{ marginBottom: "1.5rem" }}>
-        <h1>Security Incident Investigations</h1>
+        <h1>Reviews</h1>
         <p className="secondary-text">
-          Correlated case files uniting findings, anomalies, intelligence, and
-          active verification runs.
+          Related findings and checks, grouped by mail server.
         </p>
       </div>
 
@@ -2616,11 +2576,11 @@ function InvestigationsTab({
         <table className="data-table">
           <thead>
             <tr>
-              <th>Investigation Title</th>
+              <th>Review</th>
               <th>Status</th>
               <th>Risk Level</th>
-              <th>Anomalies</th>
-              <th>Remediations</th>
+              <th>Unusual changes</th>
+              <th>Fixes</th>
               <th>Action</th>
             </tr>
           </thead>
@@ -2632,7 +2592,7 @@ function InvestigationsTab({
                   style={{ textAlign: "center", padding: "2rem" }}
                 >
                   <span className="secondary-text">
-                    No active incident investigations currently opened.
+                    No open reviews. New reviews appear when related issues need attention.
                   </span>
                 </td>
               </tr>
@@ -2640,12 +2600,12 @@ function InvestigationsTab({
               investigations.map((inv) => (
                 <tr key={inv.id}>
                   <td>
-                    <strong>{inv.title}</strong>
+                    <strong>{reviewTitle(inv.title)}</strong>
                     <div
                       className="secondary-text"
-                      style={{ fontSize: "0.8125rem" }}
+                      style={{ fontSize: "0.875rem" }}
                     >
-                      {inv.summary}
+                      {reviewSummary(inv.summary)}
                     </div>
                   </td>
                   <td>
@@ -2658,7 +2618,7 @@ function InvestigationsTab({
                   <td>{inv.remediations.length}</td>
                   <td>
                     <button className="btn" onClick={() => onSelect(inv.id)}>
-                      Open Case
+                      Open review
                     </button>
                   </td>
                 </tr>
@@ -2684,12 +2644,13 @@ function InvestigationDetailView({
   });
   const inv = query.data;
 
+  if (query.isError) return <ErrorState description={query.error.message} onRetry={() => void query.refetch()} />;
   if (!inv) {
     return (
       <div>
-        <button onClick={onBack}>← Back to Investigations</button>
+        <button onClick={onBack}>← Back to reviews</button>
         <div style={{ padding: "2rem", textAlign: "center" }}>
-          Loading investigation case file...
+          Loading review…
         </div>
       </div>
     );
@@ -2705,29 +2666,29 @@ function InvestigationDetailView({
           marginBottom: "1.5rem",
         }}
       >
-        <button onClick={onBack}>← Back to Investigations</button>
+        <button onClick={onBack}>← Back to reviews</button>
         <div>
-          <h2>CASE FILE: {inv.title}</h2>
+          <h2>{reviewTitle(inv.title)}</h2>
           <div className="mono secondary-text">ID: {inv.id}</div>
         </div>
       </div>
 
       <div className="card">
         <div className="card-header">
-          <h3 className="card-title">Incident Summary</h3>
+          <h3 className="card-title">Summary</h3>
           <span className={`badge ${inv.risk}`}>{inv.risk} Risk</span>
         </div>
-        <p>{inv.summary}</p>
-        <div className="secondary-text" style={{ fontSize: "0.8125rem" }}>
+        <p>{reviewSummary(inv.summary)}</p>
+        <div className="secondary-text" style={{ fontSize: "0.875rem" }}>
           Status: <strong>{inv.status}</strong> · Asset ID:{" "}
           <span className="mono">{inv.asset_id}</span>
         </div>
       </div>
 
       <div className="card">
-        <h3>Correlated Anomalies ({inv.anomaly_ids.length})</h3>
+        <h3>Related changes ({inv.anomaly_ids.length})</h3>
         {inv.anomaly_ids.length === 0 ? (
-          <p className="secondary-text">No behavioral anomalies correlated.</p>
+          <p className="secondary-text">No unusual changes recorded.</p>
         ) : (
           <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
             {inv.anomaly_ids.map((aid) => (
@@ -2740,7 +2701,7 @@ function InvestigationDetailView({
       </div>
 
       <div className="card">
-        <h3>Export Forensic Case Report</h3>
+        <h3>Export report</h3>
         <div style={{ display: "flex", gap: "0.75rem" }}>
           {(["json", "html", "pdf"] as const).map((format) => (
             <ReportDownload
@@ -2803,7 +2764,7 @@ function RemediationsTab() {
           value={selectedAssetId}
           onChange={(e) => setSelectedAssetId(e.target.value)}
         >
-          <option value="">Select an asset...</option>
+          <option value="">Choose a mail server…</option>
           {assets.map((a) => (
             <option key={a.id} value={a.id}>
               {a.primary_name || a.addresses[0]} ({a.addresses.join(", ")})
@@ -2814,7 +2775,7 @@ function RemediationsTab() {
 
       {selectedAssetId && (
         <div style={{ marginTop: "1.5rem" }}>
-          <h2>Fixes &amp; Verification</h2>
+          <h2>Fixes &amp; verification</h2>
           {postureQuery.isPending ? (
             <LoadingState label="Loading recommended fixes…" />
           ) : postureQuery.isError ? (
@@ -2825,7 +2786,7 @@ function RemediationsTab() {
           ) : guidanceList.length === 0 ? (
             <div className="card">
               <p className="secondary-text">
-                All security checks passed! No fixes needed for this mail server.
+                No fixes are currently recommended for this server.
               </p>
             </div>
           ) : (
@@ -2887,8 +2848,8 @@ function SimulationTab() {
 
       <div className="card">
         <div className="card-header">
-          <h3 className="card-title">Select Proposed Policy Pack</h3>
-          <span className="badge">Read-Only Simulation</span>
+          <h3 className="card-title">Choose a policy</h3>
+          <span className="badge">Preview only</span>
         </div>
 
         <div style={{ display: "flex", gap: "1rem", alignItems: "flex-end" }}>
@@ -2921,25 +2882,25 @@ function SimulationTab() {
             }
           >
             {simulationMutation.isPending
-              ? "Replaying Observations..."
-              : "Run Policy Simulation"}
+              ? "Checking recorded traffic…"
+              : "Check policy"}
           </button>
         </div>
 
         {simulationMutation.isError && (
           <div className="alert-banner danger" style={{ marginTop: "1rem" }}>
-            Simulation failed: {(simulationMutation.error as any).message}
+            Policy check failed: {(simulationMutation.error as any).message}
           </div>
         )}
       </div>
 
       {result && (
         <div style={{ marginTop: "1.5rem" }}>
-          <h2>Simulation Results: {result.policy_name}</h2>
+          <h2>Policy results: {result.policy_name}</h2>
 
           <div className="metrics-grid">
             <div className="metric-tile">
-              <div className="metric-tile-label">Total Assets Evaluated</div>
+              <div className="metric-tile-label">Servers checked</div>
               <div className="metric-tile-value">
                 {result.total_assets_evaluated}
               </div>
@@ -2947,7 +2908,7 @@ function SimulationTab() {
             </div>
 
             <div className="metric-tile">
-              <div className="metric-tile-label">Compatible Assets</div>
+              <div className="metric-tile-label">Meets policy</div>
               <div
                 className="metric-tile-value"
                 style={{ color: "var(--status-success-ink)" }}
@@ -2961,7 +2922,7 @@ function SimulationTab() {
 
             <div className="metric-tile">
               <div className="metric-tile-label">
-                Would Break (Incompatible)
+                Does not meet policy
               </div>
               <div
                 className="metric-tile-value"
@@ -2973,7 +2934,7 @@ function SimulationTab() {
             </div>
 
             <div className="metric-tile">
-              <div className="metric-tile-label">Insufficient Evidence</div>
+              <div className="metric-tile-label">Not enough data</div>
               <div
                 className="metric-tile-value"
                 style={{ color: "var(--ink-secondary)" }}
@@ -2988,7 +2949,7 @@ function SimulationTab() {
           {result.breakages_by_rule.length > 0 && (
             <div className="card">
               <div className="card-header">
-                <h3 className="card-title">Enforcement Breakages by Rule</h3>
+                <h3 className="card-title">Issues by rule</h3>
                 <span className="badge critical">Policy Violations</span>
               </div>
               <div className="table-container">
@@ -2997,8 +2958,8 @@ function SimulationTab() {
                     <tr>
                       <th>Rule ID</th>
                       <th>Rule Title</th>
-                      <th>Affected Assets</th>
-                      <th>Sample Reason</th>
+                      <th>Affected servers</th>
+                      <th>Reason</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -3023,17 +2984,17 @@ function SimulationTab() {
           {/* Asset-by-Asset Breakdown */}
           <div className="card">
             <div className="card-header">
-              <h3 className="card-title">Asset Compatibility Breakdown</h3>
-              <span className="badge">Detailed Forensic Replay</span>
+              <h3 className="card-title">Results by server</h3>
+              <span className="badge">Saved report</span>
             </div>
             <div className="table-container">
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>Asset ID / Name</th>
-                    <th>Compatibility Outcome</th>
+                    <th>Server</th>
+                    <th>Result</th>
                     <th>Sessions Checked</th>
-                    <th>Breakages / Reasons</th>
+                    <th>Issues</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -3043,7 +3004,7 @@ function SimulationTab() {
                         <strong>{ar.asset_name || ar.asset_id}</strong>
                         <div
                           className="mono secondary-text"
-                          style={{ fontSize: "0.75rem" }}
+                          style={{ fontSize: "0.875rem" }}
                         >
                           {ar.asset_id}
                         </div>
@@ -3052,21 +3013,21 @@ function SimulationTab() {
                         {ar.compatibility === "compatible" ? (
                           <span className="badge fresh">Compatible</span>
                         ) : ar.compatibility === "would_fail" ? (
-                          <span className="badge critical">Would Fail</span>
+                          <span className="badge critical">Does not meet policy</span>
                         ) : (
-                          <span className="badge">Insufficient Evidence</span>
+                          <span className="badge">Not enough data</span>
                         )}
                       </td>
                       <td>{ar.evaluated_sessions_count}</td>
                       <td>
                         {ar.breakages.length === 0 ? (
-                          <span className="secondary-text">No breakages</span>
+                          <span className="secondary-text">No issues</span>
                         ) : (
                           ar.breakages.map((br, idx) => (
                             <div
                               key={idx}
                               style={{
-                                fontSize: "0.8125rem",
+                                fontSize: "0.875rem",
                                 marginBottom: "0.25rem",
                               }}
                             >
@@ -3138,11 +3099,11 @@ function ReportsTab() {
           <table className="data-table">
             <thead>
               <tr>
-                <th>Report Title</th>
+                <th>Report</th>
                 <th>Subject</th>
                 <th>Fingerprint (SHA-256)</th>
-                <th>Archived At</th>
-                <th>Archived By</th>
+                <th>Saved</th>
+                <th>Saved by</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -3154,8 +3115,7 @@ function ReportsTab() {
                     style={{ textAlign: "center", padding: "2rem" }}
                   >
                     <span className="secondary-text">
-                      No saved reports yet. Open a mail server and choose
-                      Archive report to save its evidence.
+                      No saved reports yet. Open a mail server and choose Save report.
                     </span>
                   </td>
                 </tr>
@@ -3163,11 +3123,11 @@ function ReportsTab() {
                 archived.map((rep) => (
                   <tr key={rep.id}>
                     <td>
-                      <strong>{rep.title}</strong>
+                      <strong>{reportTitle(rep.title)}</strong>
                       {rep.notes && (
                         <div
                           className="secondary-text"
-                          style={{ fontSize: "0.8125rem" }}
+                          style={{ fontSize: "0.875rem" }}
                         >
                           Notes: {rep.notes}
                         </div>
@@ -3175,15 +3135,15 @@ function ReportsTab() {
                     </td>
                     <td>
                       <span className="badge">
-                        {rep.subject_kind}: {rep.subject_id.slice(0, 8)}
+                        {rep.subject_kind === "investigation" ? "Review" : rep.subject_kind === "asset" ? "Mail server" : "Session"}: {rep.subject_id.slice(0, 8)}
                       </span>
                     </td>
-                    <td className="mono" style={{ fontSize: "0.75rem" }}>
+                    <td className="mono" style={{ fontSize: "0.875rem" }}>
                       {rep.fingerprint.slice(0, 24)}...
                     </td>
                     <td
                       className="mono secondary-text"
-                      style={{ fontSize: "0.8125rem" }}
+                      style={{ fontSize: "0.875rem" }}
                     >
                       {new Date(rep.archived_at).toLocaleString()}
                     </td>
@@ -3194,7 +3154,7 @@ function ReportsTab() {
                           className="btn"
                           style={{
                             padding: "0.25rem 0.5rem",
-                            fontSize: "0.75rem",
+                            fontSize: "0.875rem",
                           }}
                           disabled={download.isPending}
                           onClick={() =>
@@ -3207,7 +3167,7 @@ function ReportsTab() {
                           className="btn"
                           style={{
                             padding: "0.25rem 0.5rem",
-                            fontSize: "0.75rem",
+                            fontSize: "0.875rem",
                           }}
                           disabled={download.isPending}
                           onClick={() =>
@@ -3220,7 +3180,7 @@ function ReportsTab() {
                           className="btn"
                           style={{
                             padding: "0.25rem 0.5rem",
-                            fontSize: "0.75rem",
+                            fontSize: "0.875rem",
                           }}
                           disabled={download.isPending}
                           onClick={() =>
@@ -3247,7 +3207,6 @@ function ReportsTab() {
 // ---------------------------------------------------------
 function IntegrationsTab() {
   const queryClient = useQueryClient();
-  const jevCheck = useMutation({ mutationFn: checkDecisionProvider });
   const [deleteTarget, setDeleteTarget] = useState<IntegrationConfig | null>(
     null,
   );
@@ -3408,26 +3367,11 @@ function IntegrationsTab() {
           className="btn-primary"
           onClick={() => setShowAddForm(!showAddForm)}
         >
-          {showAddForm ? "Cancel" : "+ Add Destination"}
+          {showAddForm ? "Cancel" : "Add integration"}
         </button>
       </div>
 
-      <section
-        className="card"
-        style={{ marginBottom: "1.5rem" }}
-        aria-labelledby="jev-title"
-      >
-        <h2 id="jev-title">Jev</h2>
-        <p className="secondary-text">
-          Reviews transport findings to help prioritize investigations. Email
-          content is not sent.
-        </p>
-        <Button disabled={jevCheck.isPending} onClick={() => jevCheck.mutate()}>
-          {jevCheck.isPending ? "Checking Jev…" : "Check Jev connection"}
-        </Button>
-        {jevCheck.data && <p role="status">{jevCheck.data.message}</p>}
-        {jevCheck.error && <p role="alert">{jevCheck.error.message}</p>}
-      </section>
+
 
       {testResult && (
         <div
@@ -3441,7 +3385,7 @@ function IntegrationsTab() {
           <span>{testResult}</span>
           <button
             onClick={() => setTestResult(null)}
-            style={{ padding: "0.2rem 0.5rem", fontSize: "0.75rem" }}
+            style={{ padding: "0.2rem 0.5rem", fontSize: "0.875rem" }}
           >
             Dismiss
           </button>
@@ -3474,24 +3418,24 @@ function IntegrationsTab() {
           }}
           style={{ marginBottom: "1.5rem" }}
         >
-          <h3>Add New Integration Destination</h3>
+          <h3>Add integration</h3>
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "1fr 1fr",
+              gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
               gap: "1rem",
             }}
           >
             <div className="form-group">
               <label className="form-label" htmlFor="integration-name">
-                Destination Name
+                Name
               </label>
               <input
                 id="integration-name"
                 required
                 maxLength={100}
                 type="text"
-                placeholder="e.g. Corporate Splunk / SOAR Webhook"
+                placeholder="Your alert destination"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
               />
@@ -3499,16 +3443,16 @@ function IntegrationsTab() {
 
             <div className="form-group">
               <label className="form-label" htmlFor="integration-kind">
-                Integration Type
+                Type
               </label>
               <select
                 id="integration-kind"
                 value={kind}
                 onChange={(e) => setKind(e.target.value as any)}
               >
-                <option value="webhook">Generic Webhook (JSON payload)</option>
+                <option value="webhook">Webhook</option>
                 <option value="syslog">
-                  Syslog / CEF Sink (ArcSight Common Event Format)
+                  Syslog (CEF)
                 </option>
               </select>
             </div>
@@ -3539,7 +3483,7 @@ function IntegrationsTab() {
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "1fr 1fr",
+                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
                 gap: "1rem",
               }}
             >
@@ -3559,17 +3503,17 @@ function IntegrationsTab() {
           )}
 
           <div className="form-group">
-            <label className="form-label">Subscribed Events</label>
+            <label className="form-label">Events to send</label>
             <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
               {[
-                { id: "investigation_created", label: "Investigation Created" },
-                { id: "finding_confirmed", label: "Finding Confirmed" },
+                { id: "investigation_created", label: "Review created" },
+                { id: "finding_confirmed", label: "Finding confirmed" },
                 {
                   id: "verification_completed",
-                  label: "Verification Completed",
+                  label: "Check completed",
                 },
-                { id: "remediation_verified", label: "Remediation Verified" },
-                { id: "verification_failed", label: "Verification Failed" },
+                { id: "remediation_verified", label: "Fix verified" },
+                { id: "verification_failed", label: "Check failed" },
               ].map((evt) => (
                 <label
                   key={evt.id}
@@ -3602,7 +3546,7 @@ function IntegrationsTab() {
               eventTypes.length === 0
             }
           >
-            {createMutation.isPending ? "Saving..." : "Save Integration"}
+            {createMutation.isPending ? "Saving..." : "Save integration"}
           </button>
         </form>
       )}
@@ -3610,7 +3554,7 @@ function IntegrationsTab() {
       <div className="card">
         <div className="card-header">
           <h3 className="card-title">
-            Configured Destinations ({integrations.length})
+            Connected tools ({integrations.length})
           </h3>
           <span className="badge">Delivery destinations</span>
         </div>
@@ -3619,10 +3563,10 @@ function IntegrationsTab() {
           <table className="data-table">
             <thead>
               <tr>
-                <th>Name & Kind</th>
+                <th>Name</th>
                 <th>Endpoint</th>
                 <th>Events</th>
-                <th>Last Status</th>
+                <th>Last delivery</th>
                 <th>Actions</th>
               </tr>
             </thead>
@@ -3634,7 +3578,7 @@ function IntegrationsTab() {
                     style={{ textAlign: "center", padding: "2rem" }}
                   >
                     <span className="secondary-text">
-                      No webhook or syslog sinks configured yet.
+                      No integrations yet. Add a destination to receive security events.
                     </span>
                   </td>
                 </tr>
@@ -3648,13 +3592,13 @@ function IntegrationsTab() {
                         {!item.enabled && <span className="badge">Paused</span>}
                       </div>
                     </td>
-                    <td className="mono" style={{ fontSize: "0.8125rem" }}>
+                    <td className="mono" style={{ fontSize: "0.875rem" }}>
                       {item.destination}
                     </td>
                     <td>
                       <span
                         className="secondary-text"
-                        style={{ fontSize: "0.8125rem" }}
+                        style={{ fontSize: "0.875rem" }}
                       >
                         {item.event_types.length} event type(s)
                       </span>
@@ -3676,12 +3620,12 @@ function IntegrationsTab() {
                           className="btn"
                           style={{
                             padding: "0.25rem 0.5rem",
-                            fontSize: "0.75rem",
+                            fontSize: "0.875rem",
                           }}
                           onClick={() => testMutation.mutate(item.id)}
                           disabled={testMutation.isPending || !item.enabled}
                         >
-                          Test Delivery
+                          Send test event
                         </button>
                         <Button
                           aria-pressed={item.enabled}
@@ -3694,7 +3638,7 @@ function IntegrationsTab() {
                           className="btn-danger"
                           style={{
                             padding: "0.25rem 0.5rem",
-                            fontSize: "0.75rem",
+                            fontSize: "0.875rem",
                           }}
                           onClick={() => setDeleteTarget(item)}
                         >
@@ -3801,7 +3745,7 @@ function SensorsTab() {
                   </td>
                   <td
                     className="mono secondary-text"
-                    style={{ fontSize: "0.8125rem" }}
+                    style={{ fontSize: "0.875rem" }}
                   >
                     {new Date(s.last_seen).toLocaleString()}
                   </td>
@@ -3863,7 +3807,7 @@ function EvaluatorTab({ readiness }: { readiness?: { ready: boolean } }) {
               <option value="modern">Modern TLS 1.3 Healthy</option>
               <option value="legacy">Legacy TLS 1.0 Negotiation</option>
               <option value="rsa">Static RSA Cipher (No PFS)</option>
-              <option value="expired">Expired Certificate Leaf</option>
+              <option value="expired">Expired Server certificate</option>
             </select>
           </div>
 
@@ -3960,13 +3904,13 @@ function EvaluatorTab({ readiness }: { readiness?: { ready: boolean } }) {
                     </div>
                     <div
                       className="mono secondary-text"
-                      style={{ fontSize: "0.75rem" }}
+                      style={{ fontSize: "0.875rem" }}
                     >
                       {finding.rule_id}
                     </div>
                     <p
                       className="secondary-text"
-                      style={{ fontSize: "0.8125rem", margin: "0.35rem 0" }}
+                      style={{ fontSize: "0.875rem", margin: "0.35rem 0" }}
                     >
                       {finding.description}
                     </p>

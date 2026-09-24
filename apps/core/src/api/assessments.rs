@@ -287,19 +287,19 @@ pub async fn analyze_capture_handler(
                 || obs.flow.dst_port == 465
                 || obs.flow.dst_port == 587
             {
-                "Mail Transfer Agent / Submission Server"
+                "Mail delivery server"
             } else {
-                "Mailbox Access Server"
+                "Mailbox server"
             };
             protocol_evidence.push(ProtocolEvidence {
                 protocol: proto_name.to_string(),
                 role: role_desc.to_string(),
                 proof: format!(
-                    "Observed on flow {}:{} → {}:{} with protocol handshake state machine",
+                    "Recorded connection {}:{} → {}:{}",
                     obs.flow.src_ip, obs.flow.src_port, obs.flow.dst_ip, obs.flow.dst_port
                 ),
                 verified_by: format!(
-                    "Zeek {} analyzer / {} engine",
+                    "Zeek {} · {}",
                     analysis.zeek_version, obs.provenance.parser
                 ),
             });
@@ -373,25 +373,25 @@ pub async fn analyze_capture_handler(
     let (ai_risk_classification, ai_risk_rationale) = if has_critical {
         (
             "CRITICAL".to_string(),
-            "Critical cryptographic non-compliances detected (deprecated protocol version, weak cipher or expired certificate) that expose mail transport to downgrade and interception."
+            "Critical issues were found in this traffic. Review the findings and recommended fixes."
                 .to_string(),
         )
     } else if has_high {
         (
             "HIGH".to_string(),
-            "High severity cryptographic non-compliance identified; requires prompt configuration remediation to prevent transport vulnerabilities."
+            "High-priority issues were found. Review the affected connections and update the server settings."
                 .to_string(),
         )
     } else if finding_ids.is_empty() {
         (
             "LOW".to_string(),
-            "Evaluated email transport complies with modern cryptographic baseline; no policy violations observed in analyzed traffic."
+            "No policy issues were found in the available traffic."
                 .to_string(),
         )
     } else {
         (
             "MEDIUM".to_string(),
-            "Moderate security observations detected; review recommendations to align with modern cryptographic best practices."
+            "Some settings need attention. Review the findings for recommended changes."
                 .to_string(),
         )
     };

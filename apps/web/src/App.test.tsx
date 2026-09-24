@@ -387,8 +387,8 @@ describe("observation console", () => {
       ],
       endpoints: [
         {
-          protocol: "smtp",
-          port: 25,
+          protocol: "imap",
+          port: 993,
           tls_versions: ["TLSv1.3"],
           cipher_suites: ["TLS_AES_256_GCM_SHA384"],
           first_seen: "2026-09-22T10:00:00Z",
@@ -401,6 +401,7 @@ describe("observation console", () => {
         "e714bc098be8370c1c82fa7d2cdaf60ca8534368198de0527ce887f5a84f99c6",
       ],
       active_findings_count: 0,
+      probe_authorized: true,
       first_seen: "2026-09-22T10:00:00Z",
       last_seen: "2026-09-22T10:00:00Z",
     };
@@ -544,6 +545,8 @@ describe("observation console", () => {
         return Promise.resolve(response([mockAsset]));
       if (url === `/api/v1/assets/${mockAsset.id}`)
         return Promise.resolve(response(mockAsset));
+      if (url === `/api/v1/assets/${mockAsset.id}/probe`)
+        return Promise.resolve(response({ probe_id: "check-1", status: "queued" }, 202));
       if (url === `/api/v1/assets/${mockAsset.id}/posture`)
         return Promise.resolve(response(mockPosture));
       if (url === `/api/v1/assets/${mockAsset.id}/drift`)
@@ -578,31 +581,36 @@ describe("observation console", () => {
 
     // Posture surface: versioned model, capped score, category breakdown.
     expect(
-      await screen.findByText("Security Posture (model v1.0.0)"),
+      await screen.findByText("Security score"),
     ).toBeVisible();
     expect(screen.getByText("25 / 100")).toBeVisible();
     expect(screen.getByText("82 → 25")).toBeVisible();
     expect(screen.getByText("transport security")).toBeVisible();
     const postureSection = screen
-      .getByLabelText("Security Posture")
+      .getByLabelText("Security score")
       .closest("section");
     expect(postureSection).toHaveTextContent("TLS_LEGACY_VERSION");
 
-    // Guidance surfaces stay distinct: Remediation vs Best Practice.
-    expect(await screen.findByText("Remediation Guidance (1)")).toBeVisible();
-    expect(screen.getByText("Observed compatibility caveats")).toBeVisible();
+    // Guidance surfaces stay distinct: Remediation vs Recommendation.
+    expect(await screen.findByText("Recommended fixes (1)")).toBeVisible();
+    expect(screen.getByText("Things to check before changing")).toBeVisible();
     expect(
       screen.getByText(/2 historical peer\(s\) negotiated legacy TLS/),
     ).toBeVisible();
-    expect(screen.getByText("Best Practice Guidance (1)")).toBeVisible();
-    expect(screen.getByText("Best Practice")).toBeVisible();
+    expect(screen.getByText("Recommendations (1)")).toBeVisible();
+    expect(screen.getByText("Recommendation")).toBeVisible();
     expect(screen.getByText("Enable TLS 1.3.")).toBeVisible();
 
     // Forensic report export surface present for the analyst.
-    expect(await screen.findByText("Forensic Report")).toBeVisible();
+    expect(await screen.findByText("Security report")).toBeVisible();
     expect(screen.getByRole("button", { name: "Export JSON" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Export HTML" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Export PDF" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Run check" }));
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
+      `/api/v1/assets/${mockAsset.id}/probe`,
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ port: 993, protocol: "imap", investigation_id: null, trigger: "manual_analyst" }) }),
+    ));
   });
 
   it("renders sensors list and telemetry status", async () => {

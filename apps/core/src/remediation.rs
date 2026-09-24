@@ -83,7 +83,7 @@ pub async fn start(
             .find_by_id(id)
             .await
             .map_err(storage)?
-            .ok_or((StatusCode::NOT_FOUND, "investigation not found".into()))?;
+            .ok_or((StatusCode::NOT_FOUND, "Review not found.".into()))?;
         if inv.asset_id != asset_id
             || !inv.finding_ids.contains(&finding.rule_id)
             || finding.last_seen.unix_timestamp_nanos() / 1000
@@ -93,7 +93,7 @@ pub async fn start(
         {
             return Err((
                 StatusCode::UNPROCESSABLE_ENTITY,
-                "investigation does not contain the affected finding".into(),
+                "This finding does not belong to the selected review.".into(),
             ));
         }
     }
@@ -189,7 +189,7 @@ pub async fn request_verification(
     if target.is_none() {
         return Err((
             StatusCode::FORBIDDEN,
-            "no authorized probe target for asset".into(),
+            "Live checks are not enabled for this server.".into(),
         ));
     }
     let revision = record.revision;
@@ -241,7 +241,7 @@ pub async fn complete_probe(state: &AppState, probe: &ProbeRun) -> Result<(), St
         };
         let Some(index) = record.attempts.iter().position(|a| a.probe_id == probe.id) else {
             return Err(StorageError::Conflict(
-                "probe is not a remediation attempt".into(),
+                "This check is not linked to a fix.".into(),
             ));
         };
         if record.attempts[index].completed_at.is_none() {
@@ -332,7 +332,7 @@ pub async fn recover(state: &AppState) -> Result<(), StorageError> {
             attempt.completed_at = Some(OffsetDateTime::now_utc());
             attempt.outcome = Some(RemediationState::Inconclusive);
             attempt.explanation =
-                "Core stopped before a probe could be scheduled; no fix established".into();
+                "The service stopped before the check could start. The fix has not been verified.".into();
             state.remediations.update(&record, revision).await?;
         }
     }

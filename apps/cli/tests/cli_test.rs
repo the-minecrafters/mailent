@@ -9,7 +9,7 @@ fn test_cli_help() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Analyze local captures or actively scan domain mail infrastructure"));
+    assert!(stdout.contains("Analyze local captures or check mail domains"));
     assert!(stdout.contains("analyze"));
     assert!(stdout.contains("scan"));
 }
@@ -38,7 +38,7 @@ fn test_cli_scan_help() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Actively scan and assess domain mail infrastructure"));
+    assert!(stdout.contains("Check mail servers, encryption, certificates, and DNS settings"));
     assert!(stdout.contains("--format"));
     assert!(stdout.contains("--timeout"));
 }

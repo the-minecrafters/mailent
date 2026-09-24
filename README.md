@@ -1,30 +1,19 @@
 # Mailent
 
-Rust-first email transport security observability. The project direction lives in
-[`notes/project.md`](notes/project.md), [`notes/features.md`](notes/features.md),
-[`notes/stack.md`](notes/stack.md), and [`notes/architecture.md`](notes/architecture.md).
+Check mail domains, analyze network captures, and monitor changes to encryption and certificates from the workspace or CLI.
 
-Mailent operates as a **continuous passive cryptographic monitoring system**:
+## Install the CLI
 
-```text
-Live Network Interface (or PCAP)
-        ↓
-Mailent Sensor (bounded spooler + Zeek sniffer + heartbeat telemetry)
-        ↓
-Continuous Zeek Observations (SMTP / IMAP / POP3)
-        ↓
-Mailent Core Ingestion Pipeline
-        ↓
-Dual Persistent Storage Engine
-├── PostgreSQL 18 (Control Plane: Assets, Drift, Certificates, Findings, Sensors)
-└── ClickHouse 24.8 (High-Volume Analytical Telemetry: Sessions, Observations, Timeline, Cert History)
-        ↓
-Continuous Security Posture UI (Assets, Drift, Timeline, Fleet Telemetry)
+Linux x86_64 (Ubuntu 22.04+, Debian 12+, or compatible with glibc 2.35+ and OpenSSL 3):
+
+```sh
+curl -fsSL https://mailent.onrender.com/install.sh | bash
+mailent login --server https://mailent.onrender.com
 ```
 
-A restart of Core no longer erases analysis history or discovered asset posture.
+The installer verifies the release checksum and installs to `~/.local/bin`. Local capture analysis requires Zeek 8+. Domain checks do not require Zeek.
 
----
+[Open Mailent](https://mailent.onrender.com) · [GitHub releases](https://github.com/the-minecrafters/mailent/releases) · [CLI instructions](docs/cli.md)
 
 ## Run locally
 

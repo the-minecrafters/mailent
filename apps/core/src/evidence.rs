@@ -187,7 +187,7 @@ impl EvidenceSnapshot {
             .map(|i| i.title.clone())
             .unwrap_or_else(|| {
                 format!(
-                    "Forensic report — {}",
+                    "Security report — {}",
                     self.asset
                         .as_ref()
                         .map(|a| a.hostname().unwrap_or_else(|| a.ip_address()))

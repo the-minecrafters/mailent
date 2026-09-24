@@ -59,9 +59,9 @@ impl std::fmt::Display for ProvenanceClass {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::ObservedFact => write!(f, "observed fact"),
-            Self::DeterministicFinding => write!(f, "deterministic finding"),
-            Self::AnomalyContext => write!(f, "anomaly context"),
-            Self::ActiveVerification => write!(f, "active verification"),
+            Self::DeterministicFinding => write!(f, "policy finding"),
+            Self::AnomalyContext => write!(f, "related changes"),
+            Self::ActiveVerification => write!(f, "live check"),
             Self::AiAssessment => write!(f, "AI assessment (supplemental)"),
         }
     }

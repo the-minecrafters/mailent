@@ -74,7 +74,7 @@ async fn schedule(
         })
         .ok_or((
             StatusCode::FORBIDDEN,
-            "asset has no target in the operator probe allowlist".into(),
+            "Live checks are not enabled for this server.".into(),
         ))?;
     let protocol = req.protocol.unwrap_or(EmailProtocol::Smtp);
     let port = req.port.unwrap_or(match protocol {
@@ -84,7 +84,7 @@ async fn schedule(
         EmailProtocol::Unknown => 0,
     });
     if port == 0 || protocol == EmailProtocol::Unknown {
-        return Err((StatusCode::UNPROCESSABLE_ENTITY, "invalid probe protocol or port".into()));
+        return Err((StatusCode::UNPROCESSABLE_ENTITY, "Choose a supported mail protocol and port.".into()));
     }
     if let Some(id) = req.investigation_id {
         let investigation = state
@@ -92,18 +92,18 @@ async fn schedule(
             .find_by_id(id)
             .await
             .map_err(storage_error)?
-            .ok_or((StatusCode::NOT_FOUND, "investigation not found".into()))?;
+            .ok_or((StatusCode::NOT_FOUND, "Review not found.".into()))?;
         if investigation.asset_id != asset_id {
             return Err((
                 StatusCode::UNPROCESSABLE_ENTITY,
-                "investigation belongs to another asset".into(),
+                "This review belongs to a different mail server.".into(),
             ));
         }
     }
     let permit = state.probe_slots.clone().try_acquire_owned().map_err(|_| {
         (
             StatusCode::TOO_MANY_REQUESTS,
-            "probe concurrency limit reached".into(),
+            "Too many checks are running. Try again shortly.".into(),
         )
     })?;
     let mut run = ProbeRun::new(
@@ -129,7 +129,7 @@ async fn schedule(
     {
         return Err((
             StatusCode::TOO_MANY_REQUESTS,
-            "target has a running probe or is within cooldown".into(),
+            "A check is already running or recently finished for this server. Try again shortly.".into(),
         ));
     }
     let id = run.id;
@@ -252,7 +252,7 @@ async fn execute(state: &AppState, mut run: ProbeRun) -> Result<(), StorageError
                 IntegrationEventType::VerificationCompleted,
                 format!("Verification Completed: {}", run.target),
                 format!(
-                    "Active verification probe succeeded for target {}",
+                    "Live check completed for {}",
                     run.target
                 ),
             )
@@ -267,7 +267,7 @@ async fn execute(state: &AppState, mut run: ProbeRun) -> Result<(), StorageError
                 IntegrationEventType::VerificationFailed,
                 format!("Verification Failed: {}", run.target),
                 format!(
-                    "Active verification probe failed for {}: {:?}",
+                    "Live check failed for {}: {:?}",
                     run.target, outcome
                 ),
             )
@@ -587,7 +587,7 @@ pub async fn recover_stale_probes(state: &AppState) -> Result<(), StorageError> 
         if OffsetDateTime::now_utc() - run.started_at
             > time::Duration::seconds(state.probe_config.timeout_seconds as i64 * 3 + 30)
         {
-            run.finish(ProbeOutcome::InternalError, Some(ProbeResult::unavailable(&run.target, Some("Probe interrupted or completion could not be persisted; request reverification after cooldown".into()))));
+            run.finish(ProbeOutcome::InternalError, Some(ProbeResult::unavailable(&run.target, Some("The check was interrupted or its result could not be saved. Wait briefly, then run it again.".into()))));
             state.probes.update(&run).await?;
             state.investigations.attach_probe(&run).await?;
         }

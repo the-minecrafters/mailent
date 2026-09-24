@@ -113,10 +113,10 @@ pub fn verify_remediation(
         || probe.protocol != record.before.protocol
         || probe.port != record.before.flow.dst_port
     {
-        return inconclusive("Probe does not identify the original affected endpoint");
+        return inconclusive("The check does not match the original mail server connection.");
     }
     if probe.outcome != ProbeOutcome::Success || probe.finished_at.is_none() {
-        return inconclusive("Probe failed or is incomplete; no fix established");
+        return inconclusive("The check failed or is incomplete. The fix has not been verified.");
     }
     let Some(result) = &probe.result else {
         return inconclusive("No active evidence");
@@ -126,7 +126,7 @@ pub fn verify_remediation(
     }
     if result.resolved_ip.as_deref() != Some(record.before.flow.dst_ip.as_str()) {
         return inconclusive(
-            "Probe reached a different address; original affected endpoint remains unverified",
+            "The check reached a different address. The original connection has not been verified.",
         );
     }
     let finished = probe.finished_at.expect("completed probe checked");

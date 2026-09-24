@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
 
@@ -33,9 +34,11 @@ test("capture upload, routed evidence, downloads, and responsive navigation", as
   await expect(
     dialog.getByText("Choose a PCAP, PCAPNG or CAP file."),
   ).toBeVisible();
-  await dialog
-    .locator("input[type=file]")
-    .setInputFiles(path.resolve("../../fixtures/pcap/smtp_legacy.pcap"));
+  await dialog.locator("input[type=file]").setInputFiles({
+    name: `production-mail-traffic-${"long-filename-".repeat(12)}.pcap`,
+    mimeType: "application/vnd.tcpdump.pcap",
+    buffer: readFileSync(path.resolve("../../fixtures/pcap/smtp_legacy.pcap")),
+  });
   await expect(
     dialog.getByRole("button", { name: "Analyze capture", exact: true }),
   ).toBeEnabled();
@@ -53,6 +56,11 @@ test("capture upload, routed evidence, downloads, and responsive navigation", as
   const capture = await response.json();
   await expect(page).toHaveURL(new RegExp(`/captures/${capture.id}`));
   await expect(dialog).not.toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
   await page.getByRole("button", { name: /^Sessions \(/ }).click();
   await expect(page).toHaveURL(/tab=sessions/);
   await page.reload();
@@ -90,12 +98,14 @@ test("capture upload, routed evidence, downloads, and responsive navigation", as
 test("public landing opens the separate workspace", async ({ page }) => {
   await page.goto("/");
   await expect(
-    page.getByRole("heading", { name: "Email security, in plain sight." }),
+    page.getByRole("heading", {
+      name: "Your mail. Every connection. In the clear.",
+    }),
   ).toBeVisible();
   await expect(
     page.getByRole("navigation", { name: "Main navigation" }),
   ).toHaveCount(0);
-  await page.getByRole("link", { name: "Open your workspace" }).click();
+  await page.getByRole("link", { name: "Open workspace" }).first().click();
   await expect(page).toHaveURL(/\/workspace\/overview$/);
   await expect(
     page.getByRole("heading", { name: "Overview", exact: true }),

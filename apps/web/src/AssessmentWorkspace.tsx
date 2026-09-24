@@ -1,3 +1,4 @@
+import { assessmentSummary, connectionSource, domainFromTitle } from "./display-copy";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import React, { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -115,7 +116,7 @@ export function AssessmentWorkspace({
   const infraMeta = isInfra ? (assessment?.source as any) : null;
   const targetDomain = isInfra
     ? (infraMeta?.target_domain ??
-      assessment?.title.replace(" Infrastructure Assessment", "").trim() ??
+      domainFromTitle(assessment?.title ?? "") ??
       "")
     : "";
 
@@ -216,7 +217,7 @@ export function AssessmentWorkspace({
     setActionError(null);
     const targetId = primaryAsset?.id || assessment.session_ids[0];
     if (!targetId) {
-      setActionError("No server or session is available to archive.");
+      setActionError("No server or session is available for this report.");
       return;
     }
     setArchiving(true);
@@ -224,13 +225,13 @@ export function AssessmentWorkspace({
       const result = await archiveReport({
         subject_kind: primaryAsset ? "asset" : "session",
         subject_id: targetId,
-        notes: `Forensic Assessment: ${assessment.title}. Posture score: ${assessment.posture_score} (${assessment.posture_grade}). ${assessment.ai_risk_rationale}`,
+        notes: `Capture: ${assessment.title}. Security score: ${assessment.posture_score} (${assessment.posture_grade}). ${assessmentSummary(assessment.ai_risk_rationale)}`,
       });
       setArchiveSuccess(`Server report saved: ${result.id.slice(0, 8)}`);
       setTimeout(() => setArchiveSuccess(null), 4000);
       void queryClient.invalidateQueries({ queryKey: ["archived-reports"] });
     } catch (err: any) {
-      setActionError(`Archive failed: ${err.message}`);
+      setActionError(`Could not save report: ${err.message}`);
     } finally {
       setArchiving(false);
     }
@@ -264,7 +265,7 @@ export function AssessmentWorkspace({
         </h3>
         <p className="secondary-text">
           {(assessmentQuery.error as any)?.message ||
-            "Assessment record not found"}
+            "Capture not found"}
         </p>
         <button
           className="btn btn-secondary"
@@ -377,7 +378,7 @@ export function AssessmentWorkspace({
             disabled={archiving}
           >
             <Icon name="archive" size={16} />
-            <span>{archiving ? "Saving…" : "Archive server report"}</span>
+            <span>{archiving ? "Saving…" : "Save server report"}</span>
           </button>
         </div>
       </div>
@@ -423,11 +424,11 @@ export function AssessmentWorkspace({
               }}
             >
               <span className={`badge ${isInfra ? "fresh" : ""}`}>
-                {isInfra ? "Infrastructure assessment" : "Capture analysis"}
+                {isInfra ? "Domain check" : "Capture analysis"}
               </span>
               <span
                 className="secondary-text"
-                style={{ fontSize: "0.8125rem" }}
+                style={{ fontSize: "0.875rem" }}
               >
                 Created {new Date(assessment.created_at).toLocaleString()}
               </span>
@@ -448,7 +449,7 @@ export function AssessmentWorkspace({
                 flexWrap: "wrap",
                 gap: "0.75rem",
                 alignItems: "center",
-                fontSize: "0.8125rem",
+                fontSize: "0.875rem",
               }}
             >
               {isInfra ? (
@@ -456,11 +457,7 @@ export function AssessmentWorkspace({
                   <span className="mono secondary-text">
                     Target:{" "}
                     <strong>
-                      {infraMeta?.target_domain ??
-                        assessment.title.replace(
-                          " Infrastructure Assessment",
-                          "",
-                        )}
+                      {targetDomain}
                     </strong>
                   </span>
                   <span style={{ color: "var(--border)" }}>•</span>
@@ -473,7 +470,7 @@ export function AssessmentWorkspace({
                   </span>
                   <span style={{ color: "var(--border)" }}>•</span>
                   <span className="mono secondary-text">
-                    Discovery: <strong>DNS MX &amp; Active Probing</strong>
+                    Discovery: <strong>DNS and live connection checks</strong>
                   </span>
                 </>
               ) : (
@@ -500,7 +497,7 @@ export function AssessmentWorkspace({
                         border: "none",
                         cursor: "pointer",
                         padding: "0 0.25rem",
-                        fontSize: "0.75rem",
+                        fontSize: "0.875rem",
                         color: "var(--accent)",
                       }}
                       title="Copy full SHA-256 hash"
@@ -554,7 +551,7 @@ export function AssessmentWorkspace({
               </div>
               <div
                 style={{
-                  fontSize: "0.75rem",
+                  fontSize: "0.875rem",
                   fontWeight: 600,
                   textTransform: "uppercase",
                   marginTop: "0.25rem",
@@ -566,7 +563,7 @@ export function AssessmentWorkspace({
                         : "var(--status-danger-ink)",
                 }}
               >
-                Grade {assessment.posture_grade} Posture
+                Grade {assessment.posture_grade}
               </div>
             </div>
 
@@ -590,7 +587,7 @@ export function AssessmentWorkspace({
                         : ""
                 }`}
                 style={{
-                  fontSize: "0.8125rem",
+                  fontSize: "0.875rem",
                   fontWeight: 700,
                   padding: "0.3rem 0.6rem",
                 }}
@@ -599,7 +596,7 @@ export function AssessmentWorkspace({
               </div>
               <div
                 className="secondary-text"
-                style={{ fontSize: "0.72rem", marginTop: "0.35rem" }}
+                style={{ fontSize: "0.875rem", marginTop: "0.35rem" }}
               >
                 Based on policy rules
               </div>
@@ -619,8 +616,8 @@ export function AssessmentWorkspace({
             flexWrap: "wrap",
           }}
         >
-          <span style={{ fontSize: "0.8125rem", fontWeight: 600 }}>
-            Protocols Reconstructed:
+          <span style={{ fontSize: "0.875rem", fontWeight: 600 }}>
+            Protocols found:
           </span>
           {assessment.protocols_identified.length === 0 ? (
             <span className="badge">No mail protocols detected</span>
@@ -761,21 +758,21 @@ export function AssessmentWorkspace({
           {/* Key Metrics Row */}
           <div className="metrics-row">
             <div className="metric-tile">
-              <div className="metric-tile-label">Analyzed Sessions</div>
+              <div className="metric-tile-label">Sessions checked</div>
               <div className="metric-tile-value">
                 {assessment.session_ids.length}
               </div>
-              <div className="metric-tile-sub">Reconstructed flows</div>
+              <div className="metric-tile-sub">Recorded connections</div>
             </div>
             <div className="metric-tile">
-              <div className="metric-tile-label">Mail Assets</div>
+              <div className="metric-tile-label">Mail servers</div>
               <div className="metric-tile-value">
                 {assessment.asset_ids.length}
               </div>
-              <div className="metric-tile-sub">Fingerprinted endpoints</div>
+              <div className="metric-tile-sub">Servers identified</div>
             </div>
             <div className="metric-tile">
-              <div className="metric-tile-label">Critical Issues</div>
+              <div className="metric-tile-label">Critical findings</div>
               <div
                 className="metric-tile-value"
                 style={{
@@ -785,10 +782,10 @@ export function AssessmentWorkspace({
               >
                 {criticalCount}
               </div>
-              <div className="metric-tile-sub">RFC violations</div>
+              <div className="metric-tile-sub">High-priority findings</div>
             </div>
             <div className="metric-tile">
-              <div className="metric-tile-label">Total Findings</div>
+              <div className="metric-tile-label">Findings</div>
               <div className="metric-tile-value">
                 {assessment.finding_ids.length}
               </div>
@@ -824,29 +821,29 @@ export function AssessmentWorkspace({
               <span className="badge critical" style={{ fontWeight: 700 }}>
                 RISK LEVEL: {assessment.ai_risk_classification}
               </span>
-              <span className="secondary-text" style={{ fontSize: "0.75rem" }}>
+              <span className="secondary-text" style={{ fontSize: "0.875rem" }}>
                 Rule-based assessment
               </span>
             </div>
             <p style={{ margin: 0, fontSize: "0.9375rem", lineHeight: 1.5 }}>
-              {assessment.ai_risk_rationale}
+              {assessmentSummary(assessment.ai_risk_rationale)}
             </p>
           </div>
 
           {/* Reconstructed Protocol Proof & Role Table */}
           <div className="card">
             <div className="card-header">
-              <h3 className="card-title">Reconstructed Protocol Evidence</h3>
-              <span className="badge fresh">Cryptographic Traceability</span>
+              <h3 className="card-title">Connection details</h3>
+              <span className="badge fresh">From this capture</span>
             </div>
             <div className="table-container">
               <table className="data-table">
                 <thead>
                   <tr>
                     <th>Protocol</th>
-                    <th>Inferred Server Role</th>
-                    <th>Technical Proof</th>
-                    <th>Forensic Verification Engine</th>
+                    <th>Server role</th>
+                    <th>Evidence</th>
+                    <th>Source</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -877,12 +874,12 @@ export function AssessmentWorkspace({
                         </td>
                         <td
                           className="secondary-text"
-                          style={{ fontSize: "0.8125rem" }}
+                          style={{ fontSize: "0.875rem" }}
                         >
                           {pe.proof}
                         </td>
-                        <td className="mono" style={{ fontSize: "0.75rem" }}>
-                          {pe.verified_by}
+                        <td className="mono" style={{ fontSize: "0.875rem" }}>
+                          {connectionSource(pe.verified_by)}
                         </td>
                       </tr>
                     ))
@@ -895,15 +892,13 @@ export function AssessmentWorkspace({
           {/* Evidence Integrity & Capture Completeness */}
           <div className="card" style={{ padding: "1.25rem 1.5rem" }}>
             <h3 className="card-title" style={{ marginBottom: "0.5rem" }}>
-              Evidence Integrity &amp; Packet Quality
+              Capture quality
             </h3>
             <p
               className="secondary-text"
               style={{ fontSize: "0.875rem", margin: "0 0 1rem 0" }}
             >
-              Mailent enforces defensible forensic evidentiary standards. All
-              timeline transitions must be backed by observed packets or
-              explicitly declared as inferred/unavailable.
+              See what this capture includes and where data is missing. Inferred events are labeled separately.
             </p>
             {assessment.evidence_gaps.length === 0 ? (
               <div
@@ -928,8 +923,7 @@ export function AssessmentWorkspace({
                     color: "var(--status-success-ink)",
                   }}
                 >
-                  Zero Packet Gaps Detected: Full TCP handshake and application
-                  payload recorded without frame loss.
+                  No gaps reported by the capture parser.
                 </span>
               </div>
             ) : (
@@ -968,14 +962,14 @@ export function AssessmentWorkspace({
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1fr 1fr",
+            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
             gap: "1.25rem",
           }}
         >
           {/* Sessions List */}
           <div className="card">
             <div className="card-header">
-              <h3 className="card-title">Reconstructed Sessions</h3>
+              <h3 className="card-title">Recorded sessions</h3>
               <span className="badge">{assessmentSessions.length} Flows</span>
             </div>
             <div
@@ -986,7 +980,7 @@ export function AssessmentWorkspace({
                 <thead>
                   <tr>
                     <th>Protocol</th>
-                    <th>Flow Endpoints</th>
+                    <th>Client and server</th>
                     <th>TLS Version</th>
                     <th>Action</th>
                   </tr>
@@ -999,7 +993,7 @@ export function AssessmentWorkspace({
                         style={{ textAlign: "center", padding: "2rem" }}
                       >
                         <span className="secondary-text">
-                          No sessions found in assessment
+                          No sessions found in this capture
                         </span>
                       </td>
                     </tr>
@@ -1023,7 +1017,7 @@ export function AssessmentWorkspace({
                               {s.protocol.toUpperCase()}
                             </span>
                           </td>
-                          <td className="mono" style={{ fontSize: "0.75rem" }}>
+                          <td className="mono" style={{ fontSize: "0.875rem" }}>
                             {s.flow.src_ip}:{s.flow.src_port} → {s.flow.dst_ip}:
                             {s.flow.dst_port}
                           </td>
@@ -1048,7 +1042,7 @@ export function AssessmentWorkspace({
                               className="btn btn-secondary"
                               style={{
                                 padding: "0.25rem 0.5rem",
-                                fontSize: "0.75rem",
+                                fontSize: "0.875rem",
                               }}
                               onClick={() => setSelectedSessionId(s.session_id)}
                             >
@@ -1067,13 +1061,13 @@ export function AssessmentWorkspace({
           {/* Deep Reconstructed Timeline */}
           <div className="card">
             <div className="card-header">
-              <h3 className="card-title">Deep Forensic Timeline</h3>
-              <span className="badge fresh">Truthful Evidence</span>
+              <h3 className="card-title">Connection timeline</h3>
+              <span className="badge fresh">Recorded events</span>
             </div>
             <div style={{ padding: "1.25rem" }}>
               {selectedSession ? (
                 <>
-                  <div style={{ marginBottom: "1rem", fontSize: "0.8125rem" }}>
+                  <div style={{ marginBottom: "1rem", fontSize: "0.875rem" }}>
                     <strong>Session UID:</strong>{" "}
                     <span className="mono">{selectedSession.session_id}</span>
                   </div>
@@ -1101,7 +1095,7 @@ export function AssessmentWorkspace({
                         >
                           <span
                             className="badge fresh"
-                            style={{ fontSize: "0.7rem", marginTop: "2px" }}
+                            style={{ fontSize: "0.875rem", marginTop: "2px" }}
                           >
                             [Observed]
                           </span>
@@ -1113,7 +1107,7 @@ export function AssessmentWorkspace({
                             </div>
                             <div
                               className="mono secondary-text"
-                              style={{ fontSize: "0.75rem" }}
+                              style={{ fontSize: "0.875rem" }}
                             >
                               Source: {event.source} ·{" "}
                               {new Date(event.timestamp).toLocaleTimeString()}
@@ -1133,11 +1127,11 @@ export function AssessmentWorkspace({
                         }}
                       >
                         <span className="badge fresh">
-                          Active Probing Transition
+                          Live connection check
                         </span>
                         <span
                           className="secondary-text"
-                          style={{ fontSize: "0.8125rem" }}
+                          style={{ fontSize: "0.875rem" }}
                         >
                           Verified over TCP port {selectedSession.flow.dst_port}
                         </span>
@@ -1166,7 +1160,7 @@ export function AssessmentWorkspace({
                           <div
                             className="secondary-text mono"
                             style={{
-                              fontSize: "0.75rem",
+                              fontSize: "0.875rem",
                               marginTop: "0.25rem",
                             }}
                           >
@@ -1190,7 +1184,7 @@ export function AssessmentWorkspace({
                             <div
                               className="secondary-text mono"
                               style={{
-                                fontSize: "0.75rem",
+                                fontSize: "0.875rem",
                                 marginTop: "0.25rem",
                               }}
                             >
@@ -1206,8 +1200,7 @@ export function AssessmentWorkspace({
                       className="secondary-text"
                       style={{ fontSize: "0.875rem", padding: "1rem 0" }}
                     >
-                      No detailed Zeek packet timeline events recorded for this
-                      session.
+                      No detailed timeline is available for this connection.
                     </div>
                   )}
                 </>
@@ -1232,12 +1225,12 @@ export function AssessmentWorkspace({
           {selectedSession ? (
             <div className="card" style={{ padding: "1.5rem" }}>
               <h3 className="card-title" style={{ marginBottom: "1rem" }}>
-                Protocol Negotiation &amp; Cryptographic Parameters
+                Encryption details
               </h3>
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(min(240px, 100%), 1fr))",
                   gap: "1rem",
                 }}
               >
@@ -1260,13 +1253,13 @@ export function AssessmentWorkspace({
                   </div>
                   <p
                     className="secondary-text"
-                    style={{ fontSize: "0.8125rem", marginTop: "0.5rem" }}
+                    style={{ fontSize: "0.875rem", marginTop: "0.5rem" }}
                   >
                     {selectedSession.starttls_state === "tls_established"
-                      ? "Clean STARTTLS upgrade successfully completed."
+                      ? "The connection upgraded to encryption with STARTTLS."
                       : selectedSession.starttls_state === "advertised_not_used"
-                        ? "STARTTLS capability advertised, but communication proceeded unencrypted (Downgrade/Cleartext Risk)!"
-                        : "Direct connection or unencrypted plain protocol."}
+                        ? "The server offered STARTTLS, but this connection remained unencrypted."
+                        : "No STARTTLS upgrade was recorded."}
                   </p>
                 </div>
 
@@ -1290,13 +1283,13 @@ export function AssessmentWorkspace({
                   </div>
                   <p
                     className="secondary-text"
-                    style={{ fontSize: "0.8125rem", marginTop: "0.5rem" }}
+                    style={{ fontSize: "0.875rem", marginTop: "0.5rem" }}
                   >
                     {selectedSession.tls_version === "tls10" ||
                     selectedSession.tls_version === "tls11"
                       ? "RFC 8996 Prohibited: TLS 1.0/1.1 are deprecated and vulnerable to POODLE, BEAST, and downgrade attacks."
                       : selectedSession.tls_version
-                        ? "Compliant modern TLS protocol version."
+                        ? "A modern TLS version was recorded."
                         : "No TLS handshake established."}
                   </p>
                 </div>
@@ -1306,14 +1299,14 @@ export function AssessmentWorkspace({
                   <div style={{ marginTop: "0.5rem" }}>
                     <span
                       className="badge mono"
-                      style={{ fontSize: "0.75rem" }}
+                      style={{ fontSize: "0.875rem" }}
                     >
                       {selectedSession.cipher_suite?.name || "Unavailable"}
                     </span>
                   </div>
                   <p
                     className="secondary-text"
-                    style={{ fontSize: "0.8125rem", marginTop: "0.5rem" }}
+                    style={{ fontSize: "0.875rem", marginTop: "0.5rem" }}
                   >
                     IANA ID:{" "}
                     {selectedSession.cipher_suite?.id
@@ -1349,7 +1342,7 @@ export function AssessmentWorkspace({
                   </div>
                   <p
                     className="secondary-text"
-                    style={{ fontSize: "0.8125rem", marginTop: "0.5rem" }}
+                    style={{ fontSize: "0.875rem", marginTop: "0.5rem" }}
                   >
                     Static RSA allows retrospective decryption of recorded mail
                     traffic if the server private key is compromised.
@@ -1388,11 +1381,11 @@ export function AssessmentWorkspace({
               >
                 <div>
                   <h3 className="card-title" style={{ margin: 0 }}>
-                    X.509 Certificate Inspector
+                    Certificate details
                   </h3>
                   <div
                     className="mono secondary-text"
-                    style={{ fontSize: "0.75rem", marginTop: "0.25rem" }}
+                    style={{ fontSize: "0.875rem", marginTop: "0.25rem" }}
                   >
                     Fingerprint:{" "}
                     {selectedSession.certificate.reference.sha256_fingerprint}
@@ -1418,13 +1411,13 @@ export function AssessmentWorkspace({
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
+                  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
                   gap: "1.25rem",
                 }}
               >
                 <div>
                   <h4 style={{ margin: "0 0 0.5rem 0", fontSize: "0.875rem" }}>
-                    Subject DN
+                    Subject
                   </h4>
                   <div
                     className="mono"
@@ -1432,7 +1425,7 @@ export function AssessmentWorkspace({
                       padding: "0.6rem 0.85rem",
                       background: "var(--canvas-sunken)",
                       borderRadius: "6px",
-                      fontSize: "0.8125rem",
+                      fontSize: "0.875rem",
                     }}
                   >
                     {selectedSession.certificate.reference.subject}
@@ -1441,7 +1434,7 @@ export function AssessmentWorkspace({
 
                 <div>
                   <h4 style={{ margin: "0 0 0.5rem 0", fontSize: "0.875rem" }}>
-                    Issuer DN
+                    Issuer
                   </h4>
                   <div
                     className="mono"
@@ -1449,7 +1442,7 @@ export function AssessmentWorkspace({
                       padding: "0.6rem 0.85rem",
                       background: "var(--canvas-sunken)",
                       borderRadius: "6px",
-                      fontSize: "0.8125rem",
+                      fontSize: "0.875rem",
                     }}
                   >
                     {selectedSession.certificate.reference.issuer}
@@ -1458,22 +1451,22 @@ export function AssessmentWorkspace({
 
                 <div>
                   <h4 style={{ margin: "0 0 0.5rem 0", fontSize: "0.875rem" }}>
-                    Validity Window
+                    Valid dates
                   </h4>
                   <div
                     style={{
                       padding: "0.6rem 0.85rem",
                       background: "var(--canvas-sunken)",
                       borderRadius: "6px",
-                      fontSize: "0.8125rem",
+                      fontSize: "0.875rem",
                     }}
                   >
                     <div>
-                      <strong>Not Before:</strong>{" "}
+                      <strong>Valid from:</strong>{" "}
                       {selectedSession.certificate.validity.not_before}
                     </div>
                     <div>
-                      <strong>Not After:</strong>{" "}
+                      <strong>Expires:</strong>{" "}
                       {selectedSession.certificate.validity.not_after}
                     </div>
                   </div>
@@ -1488,7 +1481,7 @@ export function AssessmentWorkspace({
                       padding: "0.6rem 0.85rem",
                       background: "var(--canvas-sunken)",
                       borderRadius: "6px",
-                      fontSize: "0.8125rem",
+                      fontSize: "0.875rem",
                     }}
                   >
                     {selectedSession.certificate.san.length > 0 ? (
@@ -1508,8 +1501,7 @@ export function AssessmentWorkspace({
               style={{ padding: "2rem", textAlign: "center" }}
             >
               <p className="secondary-text">
-                No X.509 certificate observed on the wire for the active session
-                (traffic may be plaintext or certificate packet uncaptured).
+                No certificate was recorded for this connection. The traffic may be unencrypted, or the certificate exchange may be missing from the capture.
               </p>
             </div>
           )}
@@ -1532,11 +1524,9 @@ export function AssessmentWorkspace({
                   marginBottom: "0.5rem",
                 }}
               />
-              <h3>Zero Policy Findings</h3>
+              <h3>No findings</h3>
               <p className="secondary-text">
-                Evaluated traffic strictly conforms to cryptographic policies.
-                No deprecated ciphers, expired certificates, or cleartext
-                exposures detected.
+                The available traffic did not trigger any of the selected policy rules.
               </p>
             </div>
           ) : (
@@ -1585,14 +1575,14 @@ export function AssessmentWorkspace({
                       </span>
                       <span
                         className="mono"
-                        style={{ fontSize: "0.8125rem", fontWeight: 600 }}
+                        style={{ fontSize: "0.875rem", fontWeight: 600 }}
                       >
                         {finding.rule_id}
                       </span>
                       <span className="badge">{finding.category}</span>
                       <span
                         className="secondary-text"
-                        style={{ fontSize: "0.75rem" }}
+                        style={{ fontSize: "0.875rem" }}
                       >
                         Ref: {finding.reference}
                       </span>
@@ -1604,9 +1594,9 @@ export function AssessmentWorkspace({
                   <button
                     className="btn btn-secondary"
                     onClick={() => setActiveTab("remediation")}
-                    style={{ fontSize: "0.8125rem" }}
+                    style={{ fontSize: "0.875rem" }}
                   >
-                    Remediate →
+                    Review fix →
                   </button>
                 </div>
 
@@ -1621,10 +1611,10 @@ export function AssessmentWorkspace({
                       padding: "0.6rem 0.85rem",
                       background: "var(--canvas-sunken)",
                       borderRadius: "6px",
-                      fontSize: "0.8125rem",
+                      fontSize: "0.875rem",
                     }}
                   >
-                    <strong>Forensic Evidence:</strong>
+                    <strong>Evidence:</strong>
                     <ul
                       style={{
                         margin: "0.25rem 0 0 0",
@@ -1650,14 +1640,14 @@ export function AssessmentWorkspace({
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1fr 1fr",
+            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
             gap: "1.25rem",
           }}
         >
           {/* Deterministic Violations */}
           <div className="card">
             <div className="card-header">
-              <h3 className="card-title">Deterministic Policy Violations</h3>
+              <h3 className="card-title">Policy findings</h3>
               <span className="badge critical">
                 {assessmentFindings.length} Rules
               </span>
@@ -1665,10 +1655,9 @@ export function AssessmentWorkspace({
             <div style={{ padding: "1.25rem" }}>
               <p
                 className="secondary-text"
-                style={{ fontSize: "0.8125rem", marginTop: 0 }}
+                style={{ fontSize: "0.875rem", marginTop: 0 }}
               >
-                Hard cryptographic compliance rules based on RFC standards and
-                enterprise security policies.
+                Issues found by checking traffic against the selected policy.
               </p>
               {assessmentFindings.map((f) => (
                 <div
@@ -1686,7 +1675,7 @@ export function AssessmentWorkspace({
                   >
                     <span
                       className="mono"
-                      style={{ fontWeight: 600, fontSize: "0.8125rem" }}
+                      style={{ fontWeight: 600, fontSize: "0.875rem" }}
                     >
                       {f.rule_id}
                     </span>
@@ -1698,12 +1687,12 @@ export function AssessmentWorkspace({
                             ? "high"
                             : ""
                       }`}
-                      style={{ fontSize: "0.6875rem" }}
+                      style={{ fontSize: "0.875rem" }}
                     >
                       {f.severity}
                     </span>
                   </div>
-                  <div style={{ fontSize: "0.8125rem", marginTop: "0.25rem" }}>
+                  <div style={{ fontSize: "0.875rem", marginTop: "0.25rem" }}>
                     {f.title}
                   </div>
                 </div>
@@ -1714,7 +1703,7 @@ export function AssessmentWorkspace({
           {/* Behavioral / Baseline Anomalies */}
           <div className="card">
             <div className="card-header">
-              <h3 className="card-title">Behavioral &amp; Drift Anomalies</h3>
+              <h3 className="card-title">Unusual changes</h3>
               <span className="badge">
                 {assetAnomaliesQuery.data?.length ?? 0} Detected
               </span>
@@ -1722,17 +1711,16 @@ export function AssessmentWorkspace({
             <div style={{ padding: "1.25rem" }}>
               <p
                 className="secondary-text"
-                style={{ fontSize: "0.8125rem", marginTop: 0 }}
+                style={{ fontSize: "0.875rem", marginTop: 0 }}
               >
-                Deviations from learned historical server baseline (e.g. cipher
-                drift, unexpected ports).
+                Changes from this server’s previous activity, such as different encryption or unexpected ports.
               </p>
               {(assetAnomaliesQuery.data ?? []).length === 0 ? (
                 <div
                   className="secondary-text"
                   style={{ textAlign: "center", padding: "1.5rem" }}
                 >
-                  No behavioral anomalies detected against baseline.
+                  No unusual changes found in the available history.
                 </div>
               ) : (
                 assetAnomaliesQuery.data?.map((anom, idx) => (
@@ -1746,12 +1734,12 @@ export function AssessmentWorkspace({
                       background: "var(--canvas-sunken)",
                     }}
                   >
-                    <div style={{ fontWeight: 600, fontSize: "0.8125rem" }}>
+                    <div style={{ fontWeight: 600, fontSize: "0.875rem" }}>
                       {anom.title}
                     </div>
                     <div
                       className="secondary-text"
-                      style={{ fontSize: "0.75rem", marginTop: "0.2rem" }}
+                      style={{ fontSize: "0.875rem", marginTop: "0.2rem" }}
                     >
                       Signal: {anom.signal} · Current: {anom.current_value}{" "}
                       (Baseline: {anom.baseline_value}) · {anom.evidence}
@@ -1788,8 +1776,8 @@ export function AssessmentWorkspace({
                     style={{
                       padding: "2rem",
                       textAlign: "center",
-                      border: "1px solid #10b981",
-                      background: "rgba(16, 185, 129, 0.04)",
+                      border: "1px solid var(--status-success-border)",
+                      background: "var(--status-success-bg)",
                       marginBottom: "1.25rem",
                     }}
                   >
@@ -1801,22 +1789,21 @@ export function AssessmentWorkspace({
                         width: "48px",
                         height: "48px",
                         borderRadius: "50%",
-                        background: "rgba(16, 185, 129, 0.15)",
-                        color: "#059669",
+                        background: "var(--status-success-bg)",
+                        color: "var(--status-success-ink)",
                         marginBottom: "0.75rem",
                       }}
                     >
                       <Icon name="verified" size={28} />
                     </div>
-                    <h3 style={{ margin: "0 0 0.5rem 0", color: "#065f46" }}>
-                      All security checks passed! (100/100)
+                    <h3 style={{ margin: "0 0 0.5rem 0", color: "var(--status-success-ink)" }}>
+                      No recommended fixes
                     </h3>
                     <p
                       className="secondary-text"
                       style={{ maxWidth: "560px", margin: "0 auto", fontSize: "0.9375rem" }}
                     >
-                      Your mail server has a clean security posture with zero vulnerabilities.
-                      There are no issues that need to be fixed or tested.
+                      No fixes are currently recommended based on the available results.
                     </p>
                   </div>
                 ) : (
@@ -1826,7 +1813,7 @@ export function AssessmentWorkspace({
                       style={{ padding: "1.25rem 1.5rem", marginBottom: "1.25rem" }}
                     >
                       <h3 className="card-title" style={{ margin: "0 0 0.5rem 0" }}>
-                        Fix &amp; Test Security Issues
+                        Fixes and verification
                       </h3>
                       <p
                         className="secondary-text"
@@ -1854,13 +1841,13 @@ export function AssessmentWorkspace({
                   <div style={{ marginTop: "1.5rem" }}>
                     <div className="card" style={{ padding: "1.25rem 1.5rem" }}>
                       <h4 style={{ margin: "0 0 0.4rem 0", fontSize: "1rem" }}>
-                        Helpful Security Tips (Optional)
+                        Recommendations
                       </h4>
                       <p
                         className="secondary-text"
                         style={{ fontSize: "0.875rem", margin: "0 0 1rem 0" }}
                       >
-                        These are optional suggestions to make your mail server even more secure. They don't affect your score and don't require active testing.
+                        Optional improvements to your mail server settings. These do not affect your score.
                       </p>
                       <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
                         {bestPractices.map((bp) => (
@@ -1887,7 +1874,7 @@ export function AssessmentWorkspace({
                             <p className="secondary-text" style={{ fontSize: "0.875rem", margin: "0 0 0.5rem 0" }}>
                               {bp.recommendation}
                             </p>
-                            <div style={{ fontSize: "0.8125rem", color: "var(--ink-secondary)" }}>
+                            <div style={{ fontSize: "0.875rem", color: "var(--ink-secondary)" }}>
                               <strong>Why it helps:</strong> {bp.why_it_matters}
                             </div>
                           </div>
@@ -1932,7 +1919,7 @@ export function AssessmentWorkspace({
               >
                 <div>
                   <span className="badge" style={{ marginBottom: "0.5rem" }}>
-                    Security Assessment Report
+                    Security report
                   </span>
                   <h1
                     style={{
@@ -1971,7 +1958,7 @@ export function AssessmentWorkspace({
                   </div>
                   <div
                     className="secondary-text"
-                    style={{ fontSize: "0.75rem" }}
+                    style={{ fontSize: "0.875rem" }}
                   >
                     Security Score
                   </div>
@@ -1988,7 +1975,7 @@ export function AssessmentWorkspace({
                   paddingBottom: "0.35rem",
                 }}
               >
-                1. Scan &amp; Verification Details
+                1. Check details
               </h3>
               <table
                 style={{
@@ -2045,7 +2032,7 @@ export function AssessmentWorkspace({
                   paddingBottom: "0.35rem",
                 }}
               >
-                2. Executive Summary
+                2. Summary
               </h3>
               <p style={{ fontSize: "0.875rem", lineHeight: 1.6 }}>
                 Analyzed {assessment.session_ids.length} email session(s) across{" "}
@@ -2066,7 +2053,7 @@ export function AssessmentWorkspace({
                   fontStyle: "italic",
                 }}
               >
-                "{assessment.ai_risk_rationale}"
+                "{assessmentSummary(assessment.ai_risk_rationale)}"
               </div>
             </div>
 
@@ -2084,7 +2071,7 @@ export function AssessmentWorkspace({
               </h3>
               {assessmentFindings.length === 0 ? (
                 <p className="secondary-text" style={{ fontSize: "0.875rem" }}>
-                  No security issues or policy violations were found in this traffic. All checks passed!
+                  No issues were found by the selected checks in the available traffic.
                 </p>
               ) : (
                 assessmentFindings.map((f, i) => (
@@ -2138,7 +2125,7 @@ export function AssessmentWorkspace({
               >
                 <Icon name="schedule" size={20} />
                 <h3 className="card-title" style={{ margin: 0 }}>
-                  Scheduled Infrastructure Monitor
+                  Scheduled checks
                 </h3>
               </div>
               <div>
@@ -2178,7 +2165,7 @@ export function AssessmentWorkspace({
             </div>
 
             {historyQuery.isLoading ? (
-              <LoadingState label="Loading monitoring telemetry…" />
+              <LoadingState label="Loading check history…" />
             ) : historyQuery.data?.monitor ? (
               <div
                 style={{
@@ -2197,9 +2184,9 @@ export function AssessmentWorkspace({
                 >
                   <div
                     className="secondary-text"
-                    style={{ fontSize: "0.75rem" }}
+                    style={{ fontSize: "0.875rem" }}
                   >
-                    Cadence
+                    Frequency
                   </div>
                   <div
                     style={{
@@ -2220,14 +2207,14 @@ export function AssessmentWorkspace({
                 >
                   <div
                     className="secondary-text"
-                    style={{ fontSize: "0.75rem" }}
+                    style={{ fontSize: "0.875rem" }}
                   >
-                    Execution Target
+                    Run checks from
                   </div>
                   <div style={{ fontWeight: 600, fontSize: "0.95rem" }}>
                     {historyQuery.data.monitor.execution_target.type === "cloud"
-                      ? "Cloud Core Node"
-                      : "Registered Agent Machine"}
+                      ? "Mailent cloud"
+                      : "Connected device"}
                   </div>
                 </div>
                 <div
@@ -2239,7 +2226,7 @@ export function AssessmentWorkspace({
                 >
                   <div
                     className="secondary-text"
-                    style={{ fontSize: "0.75rem" }}
+                    style={{ fontSize: "0.875rem" }}
                   >
                     Next Scheduled Run
                   </div>
@@ -2258,7 +2245,7 @@ export function AssessmentWorkspace({
                 >
                   <div
                     className="secondary-text"
-                    style={{ fontSize: "0.75rem" }}
+                    style={{ fontSize: "0.875rem" }}
                   >
                     Last Run Status
                   </div>
@@ -2285,8 +2272,7 @@ export function AssessmentWorkspace({
                 style={{ margin: "0.5rem 0 0 0", fontSize: "0.875rem" }}
               >
                 Automated continuous monitoring is not yet configured for{" "}
-                <strong>{targetDomain}</strong>. Schedule an automated cadence
-                to track drift and security regressions.
+                <strong>{targetDomain}</strong>. Schedule regular checks to follow changes over time.
               </p>
             )}
           </div>
@@ -2306,12 +2292,12 @@ export function AssessmentWorkspace({
               >
                 <Icon name="history" size={20} />
                 <h3 className="card-title" style={{ margin: 0 }}>
-                  Scan History &amp; What Changed?
+                  Check history
                 </h3>
               </div>
               <span
                 className="secondary-text"
-                style={{ fontSize: "0.8125rem" }}
+                style={{ fontSize: "0.875rem" }}
               >
                 {historyQuery.data?.history?.length ?? 0} historical
                 assessment(s)
@@ -2319,14 +2305,14 @@ export function AssessmentWorkspace({
             </div>
 
             {historyQuery.isLoading ? (
-              <LoadingState label="Computing chronological diffs…" />
+              <LoadingState label="Comparing results…" />
             ) : !historyQuery.data?.history ||
               historyQuery.data.history.length === 0 ? (
               <div
                 className="secondary-text"
                 style={{ padding: "1.5rem", textAlign: "center" }}
               >
-                No prior assessments recorded for this target domain.
+                No previous checks for this domain.
               </div>
             ) : (
               <div
@@ -2386,7 +2372,7 @@ export function AssessmentWorkspace({
                         </div>
                         <div
                           className="secondary-text"
-                          style={{ fontSize: "0.8125rem" }}
+                          style={{ fontSize: "0.875rem" }}
                         >
                           {entry.findings_count} finding(s)
                         </div>
@@ -2396,12 +2382,12 @@ export function AssessmentWorkspace({
                       {hasRegressions && (
                         <div
                           style={{
-                            background: "rgba(220, 38, 38, 0.1)",
-                            border: "1px solid rgba(220, 38, 38, 0.3)",
+                            background: "var(--status-danger-bg)",
+                            border: "1px solid var(--status-danger-border)",
                             borderRadius: "6px",
                             padding: "0.6rem 0.85rem",
                             marginTop: "0.5rem",
-                            fontSize: "0.8125rem",
+                            fontSize: "0.875rem",
                           }}
                         >
                           <div
@@ -2416,7 +2402,7 @@ export function AssessmentWorkspace({
                           >
                             <Icon name="warning" size={15} />
                             <span>
-                              Security Regression Detected (Change != Finding)
+                              New issues found
                             </span>
                           </div>
                           <ul
@@ -2439,12 +2425,12 @@ export function AssessmentWorkspace({
                       {hasDrift && (
                         <div
                           style={{
-                            background: "rgba(234, 179, 8, 0.08)",
-                            border: "1px solid rgba(234, 179, 8, 0.25)",
+                            background: "var(--status-warning-bg)",
+                            border: "1px solid var(--status-warning-border)",
                             borderRadius: "6px",
                             padding: "0.6rem 0.85rem",
                             marginTop: "0.5rem",
-                            fontSize: "0.8125rem",
+                            fontSize: "0.875rem",
                           }}
                         >
                           <div
@@ -2479,12 +2465,11 @@ export function AssessmentWorkspace({
                           <div
                             className="secondary-text"
                             style={{
-                              fontSize: "0.8125rem",
+                              fontSize: "0.875rem",
                               marginTop: "0.5rem",
                             }}
                           >
-                            ✓ Baseline preserved — no configuration drift or
-                            regressions detected.
+                            No changes or new issues found since the previous check.
                           </div>
                         )}
                     </div>

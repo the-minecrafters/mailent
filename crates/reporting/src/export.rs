@@ -131,7 +131,7 @@ fn evidence_sections(report: &ForensicReport) -> Vec<SectionData> {
         }
 
         sections.push(SectionData {
-            heading: format!("Mail Infrastructure & Policies: {}", infra.domain),
+            heading: format!("Mail servers and policies: {}", infra.domain),
             provenance: ProvenanceClass::ObservedFact,
             rows,
             bullets,
@@ -171,7 +171,7 @@ fn evidence_sections(report: &ForensicReport) -> Vec<SectionData> {
                 "Forward secrecy".to_string(),
                 maybe_string(&session.forward_secrecy, UnavailableReason::NotCaptured),
             ),
-            ("Provenance".to_string(), session.provenance.clone()),
+            ("Source".to_string(), session.provenance.clone()),
         ];
         if !session.gaps.is_empty() {
             rows.push(("Capture gaps".to_string(), session.gaps.join("; ")));
@@ -264,7 +264,7 @@ fn evidence_sections(report: &ForensicReport) -> Vec<SectionData> {
     for record in &report.remediation_lifecycle {
         sections.push(SectionData {
             heading: format!(
-                "Remediation {} — {:?}",
+                "Fix {} — {:?}",
                 record.finding.rule_id, record.state
             ),
             provenance: ProvenanceClass::ActiveVerification,
@@ -298,7 +298,7 @@ fn evidence_sections(report: &ForensicReport) -> Vec<SectionData> {
                 .iter()
                 .map(|a| {
                     format!(
-                        "Probe {} / request {} / completed {:?}: {:?}. {}",
+                        "Check {} / request {} / completed {:?}: {:?}. {}",
                         a.probe_id, a.request_id, a.completed_at, a.outcome, a.explanation
                     )
                 })
@@ -353,7 +353,7 @@ pub fn render_html(report: &ForensicReport) -> Result<String, ReportError> {
         report.content_fingerprint()
     ));
     body.push_str(&format!(
-        "<p>Generated {} by {} · Policy {} v{} · Posture model v{}</p>\n",
+        "<p>Generated {} by {} · Policy {} v{} · Score version {}</p>\n",
         fmt_time(report.metadata.generated_at),
         escape_html(&report.metadata.generator),
         escape_html(&report.metadata.policy_name),
@@ -362,7 +362,7 @@ pub fn render_html(report: &ForensicReport) -> Result<String, ReportError> {
     ));
     if let Some(name) = &report.metadata.asset_name {
         body.push_str(&format!(
-            "<p>Asset: {} ({})</p>\n",
+            "<p>Mail server: {} ({})</p>\n",
             escape_html(name),
             escape_html(&report.metadata.asset_addresses.join(", "))
         ));
@@ -371,7 +371,7 @@ pub fn render_html(report: &ForensicReport) -> Result<String, ReportError> {
 
     // Posture & risk
     if let Some(posture) = &report.posture {
-        body.push_str("<section class=\"posture\">\n<h2>Security posture</h2>\n");
+        body.push_str("<section class=\"posture\">\n<h2>Security score</h2>\n");
         body.push_str(&format!(
             "<p>Score <strong>{:.0}/100</strong> ({}){} · findings considered: {}</p>\n",
             posture.score,
@@ -399,7 +399,7 @@ pub fn render_html(report: &ForensicReport) -> Result<String, ReportError> {
         body.push_str("</ul>\n</section>\n");
     }
     if let Some(risk) = &report.risk {
-        body.push_str("<section class=\"risk\">\n<h2>Risk prioritization</h2>\n<ol>\n");
+        body.push_str("<section class=\"risk\">\n<h2>Recommended priorities</h2>\n<ol>\n");
         for action in &risk.prioritized_actions {
             body.push_str(&format!("<li>{}</li>\n", escape_html(action)));
         }
@@ -407,13 +407,13 @@ pub fn render_html(report: &ForensicReport) -> Result<String, ReportError> {
     }
 
     // Findings
-    body.push_str("<section class=\"findings\">\n<h2>Policy findings (deterministic)</h2>\n");
+    body.push_str("<section class=\"findings\">\n<h2>Policy findings</h2>\n");
     if report.findings.is_empty() {
         body.push_str("<p>No policy findings.</p>\n");
     }
     for f in &report.findings {
         body.push_str(&format!(
-            "<article><h3>[{}] {} <code>{}</code></h3>\n<p>{}</p>\n<p>Policy {} v{} · {} · provenance: {}</p>\n",
+            "<article><h3>[{}] {} <code>{}</code></h3>\n<p>{}</p>\n<p>Policy {} v{} · {} · source: {}</p>\n",
             escape_html(&f.severity),
             escape_html(&f.title),
             escape_html(&f.rule_id),
@@ -463,7 +463,7 @@ pub fn render_html(report: &ForensicReport) -> Result<String, ReportError> {
 
     // Anomaly / drift context
     if !report.context.is_empty() {
-        body.push_str("<section class=\"context\">\n<h2>Anomaly &amp; drift context</h2>\n<ul>\n");
+        body.push_str("<section class=\"context\">\n<h2>Changes over time</h2>\n<ul>\n");
         for c in &report.context {
             body.push_str(&format!(
                 "<li>{} — {}: {} (baseline: {}, current: {}) [{}]</li>\n",
@@ -484,10 +484,10 @@ pub fn render_html(report: &ForensicReport) -> Result<String, ReportError> {
 
     // Active verification
     if !report.active_verifications.is_empty() {
-        body.push_str("<section class=\"verification\">\n<h2>Active verification evidence</h2>\n");
+        body.push_str("<section class=\"verification\">\n<h2>Live check results</h2>\n");
         for v in &report.active_verifications {
             body.push_str(&format!(
-                "<article><h3>Probe {} — {}:{} ({})</h3>\n<p>Outcome: {} · trigger: {} · TLS: {} · FS: {}</p>\n",
+                "<article><h3>Check {} — {}:{} ({})</h3>\n<p>Outcome: {} · trigger: {} · TLS: {} · FS: {}</p>\n",
                 v.probe_id,
                 escape_html(&v.target),
                 v.port,
@@ -511,8 +511,8 @@ pub fn render_html(report: &ForensicReport) -> Result<String, ReportError> {
 
     // Guidance
     for (kind, label) in [
-        (GuidanceKind::Remediation, "Remediation"),
-        (GuidanceKind::BestPractice, "Best practice"),
+        (GuidanceKind::Remediation, "Fix"),
+        (GuidanceKind::BestPractice, "Recommended"),
     ] {
         let rows = guidance_rows(report, kind);
         if rows.is_empty() {
@@ -538,13 +538,11 @@ pub fn render_html(report: &ForensicReport) -> Result<String, ReportError> {
         body.push_str("</section>\n");
     }
 
-    // AI assessment (supplemental)
+    // Assisted assessment
     if let Some(ai) = &report.ai_assessment {
-        body.push_str("<section class=\"ai\">\n<h2>AI assessment (supplemental)</h2>\n");
+        body.push_str("<section class=\"ai\">\n<h2>Assisted assessment</h2>\n");
         body.push_str(&format!(
-            "<p>Provider: {} · model: {} · risk: {} · priority: {}</p>\n",
-            escape_html(&ai.provider),
-            escape_html(&ai.model),
+            "<p>Risk: {} · priority: {}</p>\n",
             escape_html(ai.risk.as_deref().unwrap_or("n/a")),
             escape_html(ai.priority.as_deref().unwrap_or("n/a")),
         ));
@@ -563,12 +561,12 @@ pub fn render_html(report: &ForensicReport) -> Result<String, ReportError> {
 
     let html_style = r#"
 :root {
-  --ink-primary: #1d1d1f;
-  --ink-secondary: #6e6e73;
-  --bg: #f5f5f7;
+  --ink-primary: #24243d;
+  --ink-secondary: #62627a;
+  --bg: #f7f7fc;
   --card: #ffffff;
-  --hairline: #e5e5ea;
-  --accent: #0066cc;
+  --hairline: #e1e2ee;
+  --accent: #5146ce;
 }
 * { box-sizing: border-box; }
 body {
@@ -579,6 +577,8 @@ body {
   padding: 2rem 1rem;
   line-height: 1.5;
   font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
 }
 .report-container {
   max-width: 56rem;
@@ -586,6 +586,8 @@ body {
 }
 .report-header-bar {
   display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
   justify-content: space-between;
   align-items: center;
   background: #ffffff;
@@ -600,16 +602,16 @@ body {
   gap: 0.75rem;
 }
 .brand-badge {
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.05em;
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   color: #ffffff;
   background: var(--ink-primary);
   padding: 0.2rem 0.6rem;
   border-radius: 4px;
 }
 .report-type {
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   font-weight: 600;
   color: var(--ink-secondary);
 }
@@ -617,13 +619,13 @@ body {
   background: var(--accent);
   color: #ffffff;
   border: none;
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   font-weight: 600;
   padding: 0.45rem 1rem;
   border-radius: 9999px;
   cursor: pointer;
 }
-.print-button:hover { background: #0071e3; }
+.print-button:hover { background: #4338b3; }
 section {
   background: var(--card);
   border: 1px solid var(--hairline);
@@ -661,13 +663,13 @@ p { margin: 0 0 0.6rem; }
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 0.5rem 1rem;
   margin-top: 0.75rem;
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
 }
 .meta-item { display: flex; flex-direction: column; }
-.meta-item span.label { color: var(--ink-secondary); font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
+.meta-item span.label { color: var(--ink-secondary); font-size: 0.875rem; font-weight: 600; text-transform: uppercase; }
 .meta-item span.val { color: var(--ink-primary); word-break: break-all; }
 .prov {
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   font-weight: 600;
   color: var(--ink-secondary);
   background: #f0f0f4;
@@ -678,7 +680,7 @@ p { margin: 0 0 0.6rem; }
 }
 dl {
   display: grid;
-  grid-template-columns: 170px 1fr;
+  grid-template-columns: 170px minmax(0, 1fr);
   gap: 0.35rem 1rem;
   margin: 0.5rem 0;
   font-size: 0.875rem;
@@ -686,7 +688,7 @@ dl {
 dt {
   font-weight: 600;
   color: var(--ink-secondary);
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   text-transform: uppercase;
   margin: 0;
 }
@@ -708,7 +710,7 @@ pre {
   border: 1px solid var(--hairline);
   padding: 0.75rem;
   border-radius: 6px;
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   overflow-x: auto;
   white-space: pre-wrap;
   font-family: ui-monospace, 'SF Mono', monospace;
@@ -716,7 +718,7 @@ pre {
 }
 code {
   font-family: ui-monospace, 'SF Mono', monospace;
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   background: #f5f5f7;
   padding: 0.15rem 0.4rem;
   border-radius: 4px;
@@ -725,7 +727,7 @@ code {
 ul, ol { margin: 0.5rem 0; padding-left: 1.25rem; font-size: 0.875rem; }
 li { margin-bottom: 0.25rem; }
 .caveats {
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   color: #854d0e;
   background: #fefce8;
   border: 1px solid #fef08a;
@@ -765,7 +767,7 @@ li { margin-bottom: 0.25rem; }
 "#;
 
     Ok(format!(
-        "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n<title>{}</title>\n<style>\n{}\n</style>\n</head>\n<body>\n<div class=\"report-container\">\n<div class=\"report-header-bar no-print\">\n<div class=\"report-brand\">\n<span class=\"brand-badge\">MAILENT</span>\n<span class=\"report-type\">FORENSIC EVIDENCE REPORT</span>\n</div>\n<button onclick=\"window.print()\" class=\"print-button\">Save as PDF / Print</button>\n</div>\n{}</div>\n<script>\nif (window.location.hash === '#print' || new URLSearchParams(window.location.search).get('print') === 'true') {{\n  window.addEventListener('DOMContentLoaded', () => {{\n    setTimeout(() => window.print(), 350);\n  }});\n}}\n</script>\n</body>\n</html>\n",
+        "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n<title>{}</title>\n<style>\n{}\n</style>\n</head>\n<body>\n<div class=\"report-container\">\n<div class=\"report-header-bar no-print\">\n<div class=\"report-brand\">\n<span class=\"brand-badge\">MAILENT</span>\n<span class=\"report-type\">SECURITY REPORT</span>\n</div>\n<button onclick=\"window.print()\" class=\"print-button\">Save as PDF / Print</button>\n</div>\n{}</div>\n<script>\nif (window.location.hash === '#print' || new URLSearchParams(window.location.search).get('print') === 'true') {{\n  window.addEventListener('DOMContentLoaded', () => {{\n    setTimeout(() => window.print(), 350);\n  }});\n}}\n</script>\n</body>\n</html>\n",
         escape_html(&report.metadata.title),
         html_style.trim(),
         body

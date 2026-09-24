@@ -258,7 +258,7 @@ pub fn compare_perspectives(
             passive_value: passive_ver.to_string(),
             active_value: active_ver.to_string(),
             description: format!(
-                "Passive observation saw {passive_ver}; active probe negotiated {active_ver}"
+                "The captured connection used {passive_ver}; the live check used {active_ver}"
             ),
         });
     }
@@ -272,7 +272,7 @@ pub fn compare_perspectives(
                 kind: MismatchKind::CertificateFingerprint,
                 passive_value: passive_cert.reference.sha256_fingerprint.clone(),
                 active_value: active_cert.reference.sha256_fingerprint.clone(),
-                description: "Active probe observed a different certificate than the passively captured session".to_string(),
+                description: "The live check found a different certificate from the captured connection.".to_string(),
             });
         }
         // Certificate issuer (even if fingerprint matched — useful standalone)
@@ -282,7 +282,7 @@ pub fn compare_perspectives(
                 passive_value: passive_cert.reference.issuer.clone(),
                 active_value: active_cert.reference.issuer.clone(),
                 description:
-                    "Certificate issuer differs between passive observation and active probe"
+                    "The certificate issuer differs between the captured connection and the live check."
                         .to_string(),
             });
         }

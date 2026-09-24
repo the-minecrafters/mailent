@@ -24,7 +24,7 @@ export function ScheduleMonitorModal({
   onClose,
   onCreated,
 }: ScheduleMonitorModalProps) {
-  const [cadence, setCadence] = useState<MonitorCadence>("daily");
+  const [cadence, setFrequency] = useState<MonitorCadence>("daily");
   const [targetType, setTargetType] = useState<"cloud" | "agent">("cloud");
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
   const [loading, setLoading] = useState(false);
@@ -46,7 +46,7 @@ export function ScheduleMonitorModal({
     let target: MonitorExecutionTarget = { type: "cloud" };
     if (targetType === "agent") {
       if (!selectedAgentId) {
-        setError("Please select a registered agent to execute this scan.");
+        setError("Choose a connected device to run this check.");
         setLoading(false);
         return;
       }
@@ -80,11 +80,10 @@ export function ScheduleMonitorModal({
             <div className="modal-header-content">
               <Dialog.Title className="modal-title">
                 <Icon name="schedule" size={20} />
-                <span>Schedule Infrastructure Monitoring</span>
+                <span>Schedule checks</span>
               </Dialog.Title>
               <Dialog.Description className="modal-description">
-                Continuously monitor {domain} for configuration drift and security
-                regressions.
+                Continuously monitor {domain} for changes and new issues.
               </Dialog.Description>
             </div>
             <Dialog.Close asChild disabled={loading}>
@@ -115,28 +114,28 @@ export function ScheduleMonitorModal({
 
             <div className="form-group" style={{ marginBottom: "1rem" }}>
               <label htmlFor="monitor-cadence-select" className="form-label">
-                Scan Cadence
+                Frequency
               </label>
               <select
                 id="monitor-cadence-select"
                 className="input select-input"
                 value={cadence}
-                onChange={(e) => setCadence(e.target.value as MonitorCadence)}
+                onChange={(e) => setFrequency(e.target.value as MonitorCadence)}
                 disabled={loading}
               >
-                <option value="hourly">Hourly (Every 1 hour)</option>
+                <option value="hourly">Every hour</option>
                 <option value="every_6_hours">Every 6 Hours</option>
                 <option value="every_12_hours">Every 12 Hours</option>
                 <option value="daily">
-                  Daily (Once per day - recommended)
+                  Daily
                 </option>
-                <option value="weekly">Weekly (Once per week)</option>
+                <option value="weekly">Weekly</option>
               </select>
             </div>
 
             <div className="form-group" style={{ marginBottom: "1.25rem" }}>
               <label htmlFor="monitor-target-select" className="form-label">
-                Execution Target
+                Run checks from
               </label>
               <select
                 id="monitor-target-select"
@@ -155,32 +154,32 @@ export function ScheduleMonitorModal({
                 }}
                 disabled={loading}
               >
-                <option value="cloud">Cloud Core Worker (Default)</option>
+                <option value="cloud">Mailent cloud</option>
                 <option value="agent" disabled={devices.length === 0}>
-                  Registered Scanning Agent{" "}
+                  Connected device{" "}
                   {devices.length === 0
-                    ? "(No active agents)"
+                    ? "(No devices available)"
                     : `(${devices.length} available)`}
                 </option>
               </select>
               <span
                 className="secondary-text"
                 style={{
-                  fontSize: "0.8125rem",
+                  fontSize: "0.875rem",
                   marginTop: "0.35rem",
                   display: "block",
                 }}
               >
                 {targetType === "cloud"
-                  ? "Scan will be executed by Mailent's cloud infrastructure worker pool."
-                  : "Scan job will be dispatched to an on-premises or registered host running the Mailent agent."}
+                  ? "Runs from your hosted Mailent workspace."
+                  : "Runs from the connected device you choose."}
               </span>
             </div>
 
             {targetType === "agent" && (
               <div className="form-group" style={{ marginBottom: "1.25rem" }}>
                 <label htmlFor="agent-device-select" className="form-label">
-                  Select Agent Machine
+                  Choose a device
                 </label>
                 <select
                   id="agent-device-select"
@@ -191,7 +190,7 @@ export function ScheduleMonitorModal({
                   required
                 >
                   <option value="" disabled>
-                    Choose an agent…
+                    Choose a device…
                   </option>
                   {devices.map((d) => (
                     <option key={d.id} value={d.id}>
@@ -209,25 +208,23 @@ export function ScheduleMonitorModal({
                 borderRadius: "6px",
                 padding: "0.85rem 1rem",
                 marginBottom: "1.25rem",
-                fontSize: "0.8125rem",
+                fontSize: "0.875rem",
                 display: "flex",
                 flexDirection: "column",
                 gap: "0.4rem",
               }}
             >
               <div style={{ fontWeight: 600, color: "var(--text)" }}>
-                Automated Security Actions
+                Each scheduled check
               </div>
               <div className="secondary-text">
-                • Historical baseline diffing on consecutive scans (Change !=
-                Finding)
+                Compares results with the previous check
               </div>
               <div className="secondary-text">
-                • Immediate alerting on security regressions (STARTTLS lost,
-                weak ciphers, expired certs)
+                Flags new issues with encryption and certificates
               </div>
               <div className="secondary-text">
-                • Webhook and SIEM notification dispatch on detected changes
+                Sends updates to your configured integrations
               </div>
             </div>
 
@@ -248,7 +245,7 @@ export function ScheduleMonitorModal({
                 Cancel
               </Button>
               <Button type="submit" variant="primary" disabled={loading}>
-                {loading ? "Scheduling…" : "Enable Monitor"}
+                {loading ? "Scheduling…" : "Schedule checks"}
               </Button>
             </div>
           </form>

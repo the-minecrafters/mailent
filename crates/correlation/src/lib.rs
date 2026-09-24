@@ -96,22 +96,22 @@ impl InvestigationCorrelator {
 
         let title = if let Some(ref jev) = jev_decision {
             if !jev.reasons.is_empty() {
-                format!("Security Incident: {}", jev.reasons[0])
+                format!("Review: {}", jev.reasons[0])
             } else if !findings.is_empty() {
-                format!("Security Incident: {}", findings[0].title)
+                format!("Review: {}", findings[0].title)
             } else {
-                format!("Anomalous Activity: {} signals detected", anomalies.len())
+                format!("Unusual activity: {} signals detected", anomalies.len())
             }
         } else if !findings.is_empty() {
-            format!("Security Incident: {}", findings[0].title)
+            format!("Review: {}", findings[0].title)
         } else if !anomalies.is_empty() {
-            format!("Anomalous Activity: {}", anomalies[0].title)
+            format!("Unusual activity: {}", anomalies[0].title)
         } else {
-            format!("Configuration Drift: {}", drifts[0].title)
+            format!("Settings changed: {}", drifts[0].title)
         };
 
         let summary = format!(
-            "Correlated incident involving {} findings, {} drifts, and {} anomaly signals.",
+            "{} findings, {} settings changes, and {} unusual changes to review.",
             findings.len(),
             drifts.len(),
             anomalies.len()
@@ -309,7 +309,7 @@ mod tests {
         assert_eq!(inv.priority, PriorityLevel::Immediate);
         assert_eq!(
             inv.title,
-            "Security Incident: Active plaintext downgrade attack"
+            "Review: Active plaintext downgrade attack"
         );
         assert_eq!(inv.finding_ids, vec!["RULE_STARTTLS_STRIPPED"]);
         assert_eq!(inv.status, InvestigationStatus::Open);

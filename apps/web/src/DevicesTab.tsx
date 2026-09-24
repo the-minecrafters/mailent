@@ -1,3 +1,4 @@
+import { InstallCommand } from "./components/InstallCommand";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -103,8 +104,8 @@ export function DevicesTab() {
   return (
     <div className="tab-page">
       <PageHeader
-        title="Registered Devices"
-        description={`Manage authorized CLI instances and devices scoped to ${org?.name ?? "your organization"}.`}
+        title="Devices"
+        description={`Manage devices connected to ${org?.name ?? "your workspace"}.`}
       />
 
       {/* Authorize New Device Card */}
@@ -122,16 +123,16 @@ export function DevicesTab() {
           }}
         >
           <Icon name="phonelink_lock" size={20} />
-          <span>Authorize Device or CLI</span>
+          <span>Connect a device</span>
         </h3>
         <p
           className="secondary-text"
           style={{ fontSize: "0.875rem", margin: "0 0 1rem 0" }}
         >
-          Run <code className="mono">mailent login</code> on your local terminal
-          and enter the 8-character challenge code below to grant workspace
-          access.
+          Install the CLI, then run <code className="mono">mailent login --server {window.location.origin}</code> and enter the device code below.
         </p>
+
+        <InstallCommand />
 
         {approvalMessage && (
           <div
@@ -182,7 +183,7 @@ export function DevicesTab() {
             type="submit"
             disabled={approveMutation.isPending || !challengeCode.trim()}
           >
-            {approveMutation.isPending ? "Approving…" : "Approve Device"}
+            {approveMutation.isPending ? "Approving…" : "Connect device"}
           </Button>
         </form>
       </div>
@@ -198,9 +199,9 @@ export function DevicesTab() {
           }}
         >
           <h3 className="card-title" style={{ margin: 0 }}>
-            Active Credentials &amp; Devices
+            Connected devices
           </h3>
-          <span className="secondary-text" style={{ fontSize: "0.8125rem" }}>
+          <span className="secondary-text" style={{ fontSize: "0.875rem" }}>
             {devices.length} registered{" "}
             {devices.length === 1 ? "device" : "devices"}
           </span>
@@ -229,8 +230,8 @@ export function DevicesTab() {
               <thead>
                 <tr>
                   <th>Device Name</th>
-                  <th>Hostname &amp; System</th>
-                  <th>Agent &amp; Telemetry</th>
+                  <th>System</th>
+                  <th>Activity</th>
                   <th>Last Seen</th>
                   <th>Status</th>
                   <th style={{ textAlign: "right" }}>Actions</th>
@@ -245,7 +246,7 @@ export function DevicesTab() {
                         <strong>{device.name}</strong>
                         <div
                           className="mono secondary-text"
-                          style={{ fontSize: "0.75rem" }}
+                          style={{ fontSize: "0.875rem" }}
                         >
                           ID: {device.id.slice(0, 8)}…
                         </div>
@@ -254,7 +255,7 @@ export function DevicesTab() {
                         <span className="mono">{device.hostname}</span>
                         <div
                           className="secondary-text"
-                          style={{ fontSize: "0.75rem" }}
+                          style={{ fontSize: "0.875rem" }}
                         >
                           {device.platform} ({device.architecture})
                         </div>
@@ -279,7 +280,7 @@ export function DevicesTab() {
                                       : ""
                                 }`}
                                 style={{
-                                  fontSize: "0.72rem",
+                                  fontSize: "0.875rem",
                                   padding: "0.15rem 0.4rem",
                                 }}
                               >
@@ -288,7 +289,7 @@ export function DevicesTab() {
                               {device.version && (
                                 <span
                                   className="secondary-text mono"
-                                  style={{ fontSize: "0.72rem" }}
+                                  style={{ fontSize: "0.875rem" }}
                                 >
                                   v{device.version}
                                 </span>
@@ -297,7 +298,7 @@ export function DevicesTab() {
                             <div
                               className="secondary-text"
                               style={{
-                                fontSize: "0.75rem",
+                                fontSize: "0.875rem",
                                 marginTop: "0.2rem",
                               }}
                             >
@@ -316,13 +317,13 @@ export function DevicesTab() {
                           <div>
                             <span
                               className="secondary-text"
-                              style={{ fontSize: "0.8125rem" }}
+                              style={{ fontSize: "0.875rem" }}
                             >
                               CLI instance
                             </span>
                             <div
                               className="secondary-text"
-                              style={{ fontSize: "0.72rem" }}
+                              style={{ fontSize: "0.875rem" }}
                             >
                               Run &lsquo;mailent agent install&rsquo; to enable
                             </div>
@@ -331,7 +332,7 @@ export function DevicesTab() {
                       </td>
                       <td
                         className="secondary-text"
-                        style={{ fontSize: "0.8125rem" }}
+                        style={{ fontSize: "0.875rem" }}
                       >
                         {new Date(device.last_seen_at).toLocaleString()}
                       </td>

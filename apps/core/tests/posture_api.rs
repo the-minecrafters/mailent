@@ -150,7 +150,7 @@ async fn remediation_maps_to_finding_and_includes_verification() {
         tls["verification"]
             .as_str()
             .unwrap()
-            .contains("active Mailent probe"),
+            .contains("live Mailent check"),
         "active verification must be suggested after remediation"
     );
     assert!(tls["finding_id"].is_string(), "maps to the finding");

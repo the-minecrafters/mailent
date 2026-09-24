@@ -188,9 +188,9 @@ async fn report_formats_carry_equivalent_core_findings() {
     assert!(html.starts_with("<!DOCTYPE html>"));
 
     // Provenance distinction is visible in human formats.
-    assert!(html.contains("deterministic finding"));
+    assert!(html.contains("policy finding"));
     assert!(html.contains("observed fact"));
-    assert!(pdf.contains("deterministic finding"));
+    assert!(pdf.contains("policy finding"));
 }
 
 #[tokio::test]

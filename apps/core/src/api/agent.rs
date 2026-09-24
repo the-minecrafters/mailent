@@ -455,7 +455,7 @@ pub async fn sync_infrastructure_investigation(
                 state,
                 EventNotification::new(
                     IntegrationEventType::InvestigationCreated,
-                    format!("Investigation Created: {}", inv.title),
+                    format!("Review created: {}", inv.title),
                     &inv.summary,
                 )
                 .with_asset(asset_id, Some(domain.to_string()))

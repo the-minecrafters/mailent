@@ -1,0 +1,61 @@
+name: Release CLI
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  release:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler pkg-config libssl-dev
+          rustup toolchain install 1.94.0 --profile minimal
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cli-linux-x86_64-rust194-${{ hashFiles('Cargo.lock') }}
+      - name: Verify installer and release version
+        run: |
+          bash scripts/test-install.sh
+          version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+          test "$RELEASE_TAG" = "v$version"
+      - name: Build CLI
+        run: cargo +1.94.0 build --locked --release -p mailent
+      - name: Verify binary and package
+        run: |
+          target/release/mailent --version
+          target/release/mailent --help
+          mkdir release
+          cp target/release/mailent release/mailent
+          cp LICENSE release/LICENSE
+          cp docs/cli.md release/README.md
+          tar -C release -czf mailent-linux-x86_64.tar.gz mailent LICENSE README.md
+          sha256sum mailent-linux-x86_64.tar.gz > mailent-linux-x86_64.tar.gz.sha256
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            mailent-linux-x86_64.tar.gz \
+            mailent-linux-x86_64.tar.gz.sha256 \
+            scripts/install.sh \
+            --verify-tag --title "Mailent CLI $RELEASE_TAG" --notes-file docs/cli-release-notes.md

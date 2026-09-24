@@ -326,7 +326,7 @@ test("persistent assets, drift events, and sensor telemetry UI", async ({
   await expect(page.getByText("CN=Internal Corporate CA")).toBeVisible();
 
   // Deterministic posture scoring surface: versioned model with categories.
-  await expect(page.getByText("Security Posture (model v1.0.0)")).toBeVisible();
+  await expect(page.getByText("Security score")).toBeVisible();
   await expect(
     page.getByText("transport security", { exact: true }),
   ).toBeVisible();
@@ -334,8 +334,8 @@ test("persistent assets, drift events, and sensor telemetry UI", async ({
     page.getByText("certificate hygiene", { exact: true }),
   ).toBeVisible();
   // No policy findings were correlated for this healthy asset.
-  await expect(page.getByText("Remediation Guidance (0)")).toBeVisible();
-  await expect(page.getByText(/Best Practice Guidance \(\d+\)/)).toBeVisible();
+  await expect(page.getByText("No recommended fixes")).toBeVisible();
+  await expect(page.getByText(/Recommendations \(\d+\)/)).toBeVisible();
 
   // Forensic report export: JSON endpoint returns complete evidence for this
   // asset (real backend, no mocks).

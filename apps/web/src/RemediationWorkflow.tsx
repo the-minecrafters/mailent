@@ -1,3 +1,4 @@
+import { liveCheckMessage } from "./display-copy";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import {
@@ -47,7 +48,7 @@ export function RemediationWorkflow({
           guidance.finding_id ?? "",
           selectedSession || undefined,
         );
-      if (!record) throw new Error("Start remediation first");
+      if (!record) throw new Error("Start a fix first");
       if (action === "apply") return applyRemediation(record.id, note);
       return verifyRemediation(record.id, requestId);
     },
@@ -81,11 +82,11 @@ export function RemediationWorkflow({
   const statusLabel = !record
     ? "Ready to fix"
     : record.state === "verified_fixed"
-      ? "Verified fixed!"
+      ? "Fix verified"
       : record.state === "still_present"
         ? "Issue still detected"
         : record.state === "applied"
-          ? "Marked as fixed (ready to test)"
+          ? "Ready to verify"
           : record.state === "verifying"
             ? "Testing live server…"
             : record.state === "inconclusive"
@@ -123,7 +124,7 @@ export function RemediationWorkflow({
       </div>
       <p
         className="secondary-text"
-        style={{ fontSize: "0.8125rem", margin: "0 0 1rem" }}
+        style={{ fontSize: "0.875rem", margin: "0 0 1rem" }}
       >
         When you test your fix, Mailent connects to your live mail server to confirm
         the issue is solved. Your test history is saved for your records.
@@ -139,7 +140,7 @@ export function RemediationWorkflow({
           }}
         >
           <p style={{ margin: 0 }}>
-            <strong>Optional Security Tip:</strong> This recommendation does not require an active test. Update your server settings and Mailent will detect the improvement on the next scan.
+            <strong>Recommendation:</strong> This recommendation does not require an active test. Update your server settings and Mailent will detect the improvement on the next scan.
           </p>
         </div>
       )}
@@ -171,7 +172,7 @@ export function RemediationWorkflow({
           }
           onClick={() => mutation.mutate("start")}
         >
-          {mutation.isPending ? "Starting…" : "Start fix workflow"}
+          {mutation.isPending ? "Starting…" : "Start fix"}
         </button>
       )}
       {record && (
@@ -240,12 +241,12 @@ export function RemediationWorkflow({
               style={{
                 cursor: "pointer",
                 fontWeight: 600,
-                fontSize: "0.8125rem",
+                fontSize: "0.875rem",
               }}
             >
               View original issue and evidence
             </summary>
-            <div style={{ marginTop: "0.75rem", fontSize: "0.8125rem" }}>
+            <div style={{ marginTop: "0.75rem", fontSize: "0.875rem" }}>
               <p style={{ margin: "0.25rem 0" }}>
                 {record.finding.description}
               </p>
@@ -287,17 +288,17 @@ export function RemediationWorkflow({
                 }}
               >
                 {attempt.outcome === "verified_fixed"
-                  ? "Verified fixed!"
+                  ? "Fix verified"
                   : attempt.outcome === "still_present"
                     ? "Issue still detected"
                     : attempt.outcome === "inconclusive"
                       ? "Test inconclusive"
                       : (attempt.outcome?.replaceAll("_", " ") ?? "Testing…")}:{" "}
-                {attempt.explanation.replace(/use SMTP STARTTLS or an implicit TLS endpoint.*; /i, "")}
+                {liveCheckMessage(attempt.explanation.replace(/use SMTP STARTTLS or an implicit TLS endpoint.*; /i, ""))}
               </p>
               <p
                 className="mono secondary-text"
-                style={{ fontSize: "0.75rem", margin: "0 0 0.5rem" }}
+                style={{ fontSize: "0.875rem", margin: "0 0 0.5rem" }}
               >
                 Tested at: {attempt.completed_at ? new Date(attempt.completed_at).toLocaleString() : "In progress"}
               </p>
@@ -306,7 +307,7 @@ export function RemediationWorkflow({
                   <summary
                     style={{
                       cursor: "pointer",
-                      fontSize: "0.75rem",
+                      fontSize: "0.875rem",
                       fontWeight: 600,
                     }}
                   >

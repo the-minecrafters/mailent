@@ -25,7 +25,7 @@ pub enum ScannerError {
     InvalidDomain(String),
     #[error("resolution error: {0}")]
     Resolution(String),
-    #[error("probe error: {0}")]
+    #[error("Connection check failed: {0}")]
     Probe(String),
 }
 
@@ -441,7 +441,7 @@ impl DomainScanner {
                     "Endpoint {}:{} returned banner/TLS handshake",
                     ep.host, ep.port
                 ),
-                verified_by: "mailent-probe".to_string(),
+                verified_by: "Live connection check".to_string(),
             });
 
             let session = probe_to_session(probe, proto, ep.port, &domain);
@@ -661,7 +661,7 @@ impl DomainScanner {
         };
 
         let report = build_report(
-            format!("{} Mail Infrastructure Forensic Report", domain),
+            format!("{} Mail security report", domain),
             "0.1.0",
             &report_input,
             scan_end,

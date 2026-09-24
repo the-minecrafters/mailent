@@ -1,3 +1,4 @@
+import { reviewSummary, reviewTitle, liveCheckMessage } from "./display-copy";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import {
@@ -14,7 +15,7 @@ export function ProbeEvidence({ run }: { run: ProbeRun }) {
   return (
     <article className="drift-card">
       <h4>
-        Active Verification · {run.target}:{run.port}
+        Live check · {run.target}:{run.port}
       </h4>
       <p>
         {run.finished_at ? run.outcome : "Running"} · {run.trigger} ·{" "}
@@ -56,7 +57,7 @@ export function ProbeEvidence({ run }: { run: ProbeRun }) {
           )}
           {r.tls_challenges?.map((c) => (
             <p key={c.version}>
-              Protocol challenge {c.version}: {c.outcome} · {c.detail}
+              Protocol check {c.version}: {c.outcome} · {c.detail}
             </p>
           ))}
           <p>MTA-STS: {r.mta_sts_result ?? "Unavailable"}</p>
@@ -65,42 +66,41 @@ export function ProbeEvidence({ run }: { run: ProbeRun }) {
           {r.warnings.map((w) => (
             <p key={w}>{w}</p>
           ))}
-          <h4>Passive Observation ↔ Active Verification</h4>
+          <h4>Captured traffic and live check</h4>
           <p>
             Verification confidence:{" "}
             {r.verification?.confidence ?? "Incomplete"}
           </p>
           <p>
-            Passive session:{" "}
+            Captured session:{" "}
             {r.verification?.passive_session_id ?? "No comparable session"}
           </p>
           {run.perspective_mismatches.map((m) => (
             <p key={m.kind}>
-              {m.kind}: {m.passive_value} → {m.active_value}. {m.description}
+              {m.kind}: {m.passive_value} → {m.active_value}. {liveCheckMessage(m.description)}
             </p>
           ))}
           {r.verification?.passive_session_id && !run.has_mismatch && (
             <p>
-              No differences among comparable captured fields. This does not
-              establish global health.
+              The available details match the captured connection.
             </p>
           )}
           {r.verification?.drift.map((d) => (
             <p key={d.drift_id}>
-              Drift {d.drift_id}:{" "}
+              Change {d.drift_id}:{" "}
               {d.confirmed
-                ? "Confirmed by probe"
-                : "Perspective mismatch; not confirmed"}{" "}
+                ? "Confirmed by live check"
+                : "Results differ; not confirmed"}{" "}
               · {d.active_value}
             </p>
           ))}
           {r.verification?.anomalies?.map((a) => (
             <p key={a.anomaly_id}>
-              Anomaly {a.anomaly_id}: {a.conclusion} · {a.active_value}
+              Unusual change {a.anomaly_id}: {a.conclusion} · {a.active_value}
             </p>
           ))}
           <p>
-            Anomaly context:{" "}
+            Related changes:{" "}
             {r.verification?.anomaly_ids.join(", ") || "None linked"}
           </p>
         </>
@@ -120,11 +120,11 @@ function InvestigationRemediationContext({ id }: { id: string }) {
       {query.data?.remediations.map((r) => (
         <div key={r.id}>
           <p>
-            Remediation {r.finding.rule_id}: {r.state.replaceAll("_", " ")}
+            Fix {r.finding.rule_id}: {r.state.replaceAll("_", " ")}
           </p>
           {r.attempts.map((a) => (
             <p key={a.request_id}>
-              {a.explanation} · {a.completed_at ?? "Pending"}
+              {liveCheckMessage(a.explanation)} · {a.completed_at ?? "Pending"}
             </p>
           ))}
         </div>
@@ -161,12 +161,10 @@ export function ProbePanel({ asset }: { asset: Asset }) {
     },
   });
   return (
-    <section aria-label="Active verification">
-      <h3>Active Verification</h3>
+    <section aria-label="Live connection check">
+      <h3>Live check</h3>
       <p>
-        Transport only. No authentication or mail delivery. Passive
-        observations, Policy Findings, Anomalies and AI Assessments retain their
-        own provenance.
+        Check this server’s current encryption and certificate. This does not send an email.
       </p>
       <label>
         Protocol{" "}
@@ -187,15 +185,15 @@ export function ProbePanel({ asset }: { asset: Asset }) {
         />
       </label>
       <label>
-        Investigation{" "}
+        Review{" "}
         <select
           value={investigationId}
           onChange={(e) => setInvestigationId(e.target.value)}
         >
-          <option value="">Asset verification only</option>
+          <option value="">No linked review</option>
           {related.map((i) => (
             <option key={i.id} value={i.id}>
-              {i.title}
+              {reviewTitle(i.title)}
             </option>
           ))}
         </select>
@@ -209,33 +207,33 @@ export function ProbePanel({ asset }: { asset: Asset }) {
         }
         onClick={() => trigger.mutate()}
       >
-        Verify transport
+        Run check
       </button>
       {!asset.probe_authorized && (
-        <p>Target is outside the configured probe allowlist.</p>
+        <p>Live checks are not enabled for this server.</p>
       )}
       {trigger.isError && <p role="alert">{trigger.error.message}</p>}
       {trigger.isSuccess && (
-        <p role="status">Probe accepted: {trigger.data.probe_id}</p>
+        <p role="status">Check started: {trigger.data.probe_id}</p>
       )}
       {probes.isError && <p role="alert">{probes.error.message}</p>}
       {probes.data?.map((run) => (
         <ProbeEvidence key={run.id} run={run} />
       ))}
-      <h3>Related investigations</h3>
+      <h3>Related reviews</h3>
       {investigations.isError && (
         <p role="alert">{investigations.error.message}</p>
       )}
       {related.map((i) => (
         <details key={i.id}>
           <summary>
-            {i.title} · {i.status}
+            {reviewTitle(i.title)} · {i.status}
           </summary>
-          <p>{i.summary}</p>
+          <p>{reviewSummary(i.summary)}</p>
           <InvestigationRemediationContext id={i.id} />
-          <p>Anomalies: {i.anomaly_ids.join(", ") || "None"}</p>
+          <p>Unusual changes: {i.anomaly_ids.join(", ") || "None"}</p>
           <button type="button" onClick={() => setInvestigationId(i.id)}>
-            Link next verification to this investigation
+            Link the next check to this review
           </button>
           {Object.values(
             i.external_intelligence.active_verifications ?? {},

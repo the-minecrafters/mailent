@@ -259,7 +259,7 @@ fn active_verification(run: &ProbeRun) -> ActiveVerificationSection {
                 d.drift_id,
                 d.active_value,
                 if d.confirmed {
-                    "confirmed at the probed endpoint"
+                    "confirmed by the live check"
                 } else {
                     "perspective mismatch; not globally refuted"
                 }
@@ -324,7 +324,7 @@ fn ai_assessment(investigation: &Investigation) -> Option<AiAssessmentSection> {
         confidence: Some(jev.confidence),
         reasons: jev.reasons.iter().map(|r| sanitize_text(r)).collect(),
         caveat: "Supplemental AI output copied verbatim from the stored decision record. \
-                 It does not alter the deterministic findings, scores, or guidance in this report."
+                 It does not change the findings, scores, or recommendations in this report."
             .to_string(),
         provenance: ProvenanceClass::AiAssessment,
     })
@@ -455,7 +455,7 @@ pub fn build_report(
         .collect();
     if !cert_without_crypto.is_empty() {
         evidence_gaps.push(format!(
-            "Cryptographic certificate details (public key algorithm/size, signature algorithm, chain validation) unavailable for {} certificate(s); passive capture sources do not expose PKI internals. Run an active probe for full details.",
+            "Cryptographic certificate details (public key algorithm/size, signature algorithm, chain validation) unavailable for {} certificate(s); passive capture sources do not expose PKI internals. Run a live check for more details.",
             cert_without_crypto.len()
         ));
     }
@@ -470,7 +470,7 @@ pub fn build_report(
         ));
     }
     if input.posture.is_none() {
-        evidence_gaps.push("No posture score computed for this report scope.".to_string());
+        evidence_gaps.push("No security score is available for this report.".to_string());
     }
 
     let asset_name = input.asset.and_then(|a| a.hostname().map(str::to_string));
@@ -666,7 +666,7 @@ mod tests {
             report
                 .evidence_gaps
                 .iter()
-                .any(|g| g.contains("No posture score"))
+                .any(|g| g.contains("No security score"))
         );
     }
 

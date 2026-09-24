@@ -287,7 +287,7 @@ pub fn compute_posture(
             anomaly.deduct(
                 "PERSPECTIVE_TLS_MISMATCH",
                 8.0,
-                "Active probe saw a different TLS version than passive observation".to_string(),
+                "The live check found a different TLS version from the recorded connection".to_string(),
             );
         }
     }
@@ -298,7 +298,7 @@ pub fn compute_posture(
     {
         anomaly
             .explanations
-            .push("Related investigation resolved by analyst triage.".to_string());
+            .push("The related review was marked resolved.".to_string());
     }
 
     let categories = vec![
@@ -444,7 +444,7 @@ fn remediation_facts(finding: &Finding) -> (String, String, String, String) {
             "The captured SMTP endpoint did not offer a TLS upgrade.".into(),
             finding.remediation.clone(),
             "STARTTLS advertised and accepted, followed by an established TLS handshake.".into(),
-            "Verify the same endpoint using an authorized SMTP STARTTLS probe; timeout or failed handshake is inconclusive.".into(),
+            "Run a live SMTP STARTTLS check on this server. A timeout or failed connection leaves the result inconclusive.".into(),
         ),
         "TLS_LEGACY_VERSION" => (
             "Legacy TLS allows downgrade-adjacent attacks and fails modern compliance \
@@ -453,7 +453,7 @@ fn remediation_facts(finding: &Finding) -> (String, String, String, String) {
             "Disable TLS 1.0/1.1 on the mail service and retain TLS 1.2/1.3 as required."
                 .to_string(),
             "TLS 1.2 minimum, TLS 1.3 preferred; legacy protocol versions disabled.".to_string(),
-            "After the change, run an active Mailent probe against the endpoint: it must \
+            "After the change, run a live Mailent check against the endpoint: it must \
              negotiate TLS 1.2+ and fail (or refuse) TLS 1.0/1.1 handshakes."
                 .to_string(),
         ),
@@ -464,7 +464,7 @@ fn remediation_facts(finding: &Finding) -> (String, String, String, String) {
             "Renew and deploy a currently valid certificate issued by an authorized CA."
                 .to_string(),
             "A valid, unexpired certificate whose SANs cover the mail hostname.".to_string(),
-            "Run an active Mailent probe after deployment: it must present the renewed \
+            "Run a live Mailent check after deployment: it must present the renewed \
              certificate (new fingerprint) with hostname validation passing."
                 .to_string(),
         ),
@@ -475,7 +475,7 @@ fn remediation_facts(finding: &Finding) -> (String, String, String, String) {
             "Enable ECDHE cipher suites (X25519 or P-256) or migrate the endpoint to TLS 1.3."
                 .to_string(),
             "Only ephemeral key exchange (ECDHE/DHE or TLS 1.3) is negotiated.".to_string(),
-            "Run an active Mailent probe: the negotiated key exchange must report forward \
+            "Run a live Mailent check: the negotiated key exchange must report forward \
              secrecy supported."
                 .to_string(),
         ),
@@ -596,7 +596,7 @@ fn best_practices(
             subject,
             &label,
             "BP_MTA_STS_DANE",
-            "No MTA-STS/DANE posture signals recorded",
+            "No MTA-STS or DANE settings recorded",
             format!(
                 "Mailent has no MTA-STS or DANE signals for {label}. This does not establish whether either policy is deployed; inspect existing intelligence before changing configuration."
             ),
@@ -860,7 +860,7 @@ mod tests {
         let now = OffsetDateTime::now_utc();
         let guidance = build_guidance(Uuid::new_v4(), &[f], None, &[], &[], now);
         let g = &guidance[0];
-        assert!(g.verification.contains("active Mailent probe"));
+        assert!(g.verification.contains("live Mailent check"));
     }
 
     #[test]

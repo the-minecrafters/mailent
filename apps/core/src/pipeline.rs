@@ -603,7 +603,7 @@ pub async fn process_observation(
             state,
             crate::integrations::EventNotification::new(
                 mailent_domain::IntegrationEventType::InvestigationCreated,
-                format!("Investigation Created: {}", inv.title),
+                format!("Review created: {}", inv.title),
                 &inv.summary,
             )
             .with_asset(asset_id, asset.primary_name.clone())

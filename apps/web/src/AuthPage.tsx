@@ -1,7 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { type FormEvent, useState } from "react";
 import { Link } from "react-router-dom";
-import { Icon } from "./components/Icon";
 import { MailentLogo } from "./components/MailentLogo";
 import { Button } from "./components/ui";
 
@@ -69,109 +68,36 @@ export function AuthPage({
 
   return (
     <main className="sign-in-page">
-      <section className="sign-in-card">
-        <div className="sign-in-brand">
-          <MailentLogo size={36} />
-          <Link to="/">mailent</Link>
-        </div>
-
-        <span className="eyebrow">WORKSPACE ACCESS</span>
-        <h1>{sent ? "Check your inbox" : "Sign in to workspace"}</h1>
-        <p className="secondary-text">
+      <section className="sign-in-card" aria-labelledby="sign-in-title">
+        <Link to="/" className="sign-in-brand" aria-label="Mailent home">
+          <MailentLogo size={40} />
+          <span>mailent</span>
+        </Link>
+        <h1 id="sign-in-title">
+          {sent ? "Check your inbox" : "Welcome to Mailent"}
+        </h1>
+        <p className="sign-in-description">
           {sent
-            ? `A secure sign-in link was sent to ${email}. Open it to continue.`
-            : "Sign in with your workspace credentials to persist captures and forensic reports."}
+            ? `We sent a sign-in link to ${email}. Open it to continue.`
+            : "Sign in to access your workspace."}
         </p>
-
         {sent ? (
-          <div style={{ marginTop: "1.5rem" }}>
-            <p className="secondary-text" style={{ marginBottom: "1rem" }}>
-              Links expire in one hour.
-            </p>
-            <Button variant="secondary" onClick={() => setSent(false)}>
-              Back to password sign-in
-            </Button>
-          </div>
-        ) : mode === "password" ? (
-          <form
-            onSubmit={handlePasswordSubmit}
-            className="sign-in-form"
-            autoComplete="off"
-            data-form-type="other"
-          >
-            <div className="form-group">
-              <label htmlFor="sign-in-email">Email address</label>
-              <input
-                id="sign-in-email"
-                type="email"
-                name="email"
-                autoComplete="off"
-                data-1p-ignore="true"
-                data-lpignore="true"
-                placeholder="you@example.com"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                disabled={busy}
-              />
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="sign-in-password">Password</label>
-              <input
-                id="sign-in-password"
-                type="password"
-                name="password"
-                autoComplete="new-password"
-                data-1p-ignore="true"
-                data-lpignore="true"
-                placeholder="Enter password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                disabled={busy}
-              />
-            </div>
-
+          <div className="sign-in-sent">
+            <p>Links expire in one hour.</p>
             <Button
-              type="submit"
-              disabled={busy}
-              style={{ width: "100%", marginTop: "0.5rem" }}
-            >
-              {busy ? "Signing in…" : "Sign in (Persistent Storage)"}
-            </Button>
-
-            <div
-              style={{
-                marginTop: "0.75rem",
-                display: "flex",
-                justifyContent: "space-between",
-                fontSize: "0.8125rem",
+              onClick={() => {
+                setSent(false);
+                setMode("password");
               }}
             >
-              <button
-                type="button"
-                className="btn-link"
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: "var(--ink-secondary)",
-                  cursor: "pointer",
-                  textDecoration: "underline",
-                  padding: 0,
-                }}
-                onClick={() => {
-                  setMode("otp");
-                  setError("");
-                }}
-              >
-                Sign in with magic link
-              </button>
-            </div>
-          </form>
+              Back to sign in
+            </Button>
+          </div>
         ) : (
           <form
-            onSubmit={handleOtpSubmit}
+            onSubmit={
+              mode === "password" ? handlePasswordSubmit : handleOtpSubmit
+            }
             className="sign-in-form"
             autoComplete="off"
             data-form-type="other"
@@ -185,90 +111,71 @@ export function AuthPage({
                 autoComplete="off"
                 data-1p-ignore="true"
                 data-lpignore="true"
-                placeholder="you@example.com"
+                placeholder="you@company.com"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 disabled={busy}
               />
             </div>
-
-            <Button
-              type="submit"
-              disabled={busy}
-              style={{ width: "100%", marginTop: "0.5rem" }}
-            >
-              {busy ? "Sending magic link…" : "Send sign-in link"}
+            {mode === "password" && (
+              <div className="form-group">
+                <label htmlFor="sign-in-password">Password</label>
+                <input
+                  id="sign-in-password"
+                  type="password"
+                  name="password"
+                  autoComplete="new-password"
+                  data-1p-ignore="true"
+                  data-lpignore="true"
+                  placeholder="Enter your password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  disabled={busy}
+                />
+              </div>
+            )}
+            {error && (
+              <p role="alert" className="error-message">
+                {error}
+              </p>
+            )}
+            <Button variant="primary" type="submit" disabled={busy}>
+              {busy
+                ? mode === "password"
+                  ? "Signing in…"
+                  : "Sending link…"
+                : mode === "password"
+                  ? "Sign in"
+                  : "Send sign-in link"}
             </Button>
-
-            <div
-              style={{
-                marginTop: "0.75rem",
-                textAlign: "center",
-                fontSize: "0.8125rem",
+            <button
+              type="button"
+              className="auth-text-button"
+              disabled={busy}
+              onClick={() => {
+                setMode(mode === "password" ? "otp" : "password");
+                setError("");
               }}
             >
-              <button
-                type="button"
-                className="btn-link"
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: "var(--ink-secondary)",
-                  cursor: "pointer",
-                  textDecoration: "underline",
-                  padding: 0,
-                }}
-                onClick={() => {
-                  setMode("password");
-                  setError("");
-                }}
-              >
-                Back to password sign-in
-              </button>
-            </div>
+              {mode === "password"
+                ? "Email me a sign-in link"
+                : "Sign in with a password"}
+            </button>
           </form>
         )}
-
-        {error && (
-          <p
-            role="alert"
-            className="error-message"
-            style={{ marginTop: "1rem" }}
-          >
-            {error}
-          </p>
-        )}
-
         {allowSkip && onSkip && (
-          <div
-            style={{
-              marginTop: "2rem",
-              paddingTop: "1.5rem",
-              borderTop: "1px solid var(--hairline)",
-              textAlign: "center",
-            }}
-          >
-            <Button
-              variant="secondary"
-              onClick={onSkip}
-              style={{ width: "100%", justifyContent: "center" }}
-            >
-              Skip sign in (use without persistence)
+          <div className="sign-in-guest">
+            <Button onClick={onSkip} disabled={busy}>
+              Continue as guest
             </Button>
-            <p
-              className="secondary-text"
-              style={{
-                marginTop: "0.5rem",
-                fontSize: "0.75rem",
-                lineHeight: 1.4,
-              }}
-            >
-              Inspect sessions, evaluate rules, and analyze captures in-memory.
-              Evidence is not persisted to PostgreSQL.
-            </p>
+            <p>Guest results are temporary.</p>
           </div>
         )}
+        <Link to="/privacy" className="sign-in-privacy">
+          Privacy
+        </Link>
       </section>
     </main>
   );

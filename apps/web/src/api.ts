@@ -1212,7 +1212,7 @@ export async function downloadInvestigationReport(
   const url = URL.createObjectURL(await response.blob());
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `mailent-investigation-${id}.${format}`;
+  anchor.download = `mailent-review-${id}.${format}`;
   document.body.appendChild(anchor);
   anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);

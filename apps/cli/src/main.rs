@@ -26,7 +26,7 @@ mod doctor;
 #[command(
     name = "mailent",
     version,
-    about = "Mailent — Unified Email Security & Forensic Platform\nAnalyze local captures or actively scan domain mail infrastructure."
+    about = "Mailent — Email security from your terminal\nAnalyze local captures or check mail domains."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -94,7 +94,7 @@ enum Commands {
         server: Option<String>,
     },
 
-    /// Actively scan and assess domain mail infrastructure
+    /// Check mail servers, encryption, certificates, and DNS settings
     Scan {
         /// Target domain to scan (e.g. example.com)
         domain: String,
@@ -219,7 +219,7 @@ async fn run_analyze(
         !verify_checksums,
     )
     .await
-    .map_err(|e| format!("PCAP forensic analysis failed: {e}"))?;
+    .map_err(|e| format!("Capture analysis failed: {e}"))?;
 
     // 4. Ingest and correlate observations
     if analysis.observations.is_empty() {
@@ -419,7 +419,7 @@ async fn run_analyze(
     };
 
     let report = build_report(
-        format!("Forensic Report: {}", capture_name),
+        format!("Security report: {}", capture_name),
         "0.1.0",
         &report_input,
         now,
@@ -1017,7 +1017,7 @@ fn print_capture_table(
     warnings: &[String],
 ) {
     println!("\n╔════════════════════════════════════════════════════════════════════════════╗");
-    println!("║                   MAILENT FORENSIC CAPTURE ASSESSMENT                     ║");
+    println!("║                   MAILENT CAPTURE ANALYSIS                               ║");
     println!("╚════════════════════════════════════════════════════════════════════════════╝");
     println!("  Capture:       {}", capture_name);
     println!("  SHA-256:       {}", capture_hash);
@@ -1101,7 +1101,7 @@ fn print_capture_table(
     }
     if !reports.is_empty() {
         println!("┌────────────────────────────────────────────────────────────────────────────┐");
-        println!("│ EXPORTED FORENSIC REPORTS                                                  │");
+        println!("│ EXPORTED SECURITY REPORTS                                                  │");
         println!("├────────────────────────────────────────────────────────────────────────────┤");
         for r in reports {
             println!("  -> {}", r.display());
@@ -1230,7 +1230,7 @@ fn print_scan_table(result: &mailent_scanner::InfrastructureScanResult, reports:
     }
     if !reports.is_empty() {
         println!("┌────────────────────────────────────────────────────────────────────────────┐");
-        println!("│ EXPORTED FORENSIC REPORTS                                                  │");
+        println!("│ EXPORTED SECURITY REPORTS                                                  │");
         println!("├────────────────────────────────────────────────────────────────────────────┤");
         for r in reports {
             println!("  -> {}", r.display());

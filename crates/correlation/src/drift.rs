@@ -270,9 +270,9 @@ impl InfrastructureDriftCorrelator {
                 id: Uuid::new_v4(),
                 asset_id,
                 kind: DriftKind::PostureChanged,
-                title: format!("Posture Score Changed ({:+.1})", score_diff),
+                title: format!("Security score changed ({:+.1})", score_diff),
                 description: format!(
-                    "Overall security posture changed from {:.1} ({}) to {:.1} ({})",
+                    "Security score changed from {:.1} ({}) to {:.1} ({})",
                     previous.posture_score,
                     previous.posture_grade,
                     current.posture_score,
@@ -414,13 +414,13 @@ impl InfrastructureDriftCorrelator {
         } else if let Some(first_f) = findings.first() {
             format!("{}: {}", first_f.title, first_f.description)
         } else {
-            format!("Security regressions detected during infrastructure scan of {domain}")
+            format!("New issues found while checking {domain}")
         };
 
         let title = if let Some(first_reg) = regressions.first() {
-            format!("Security Regression: {}", first_reg.title)
+            format!("New issue: {}", first_reg.title)
         } else {
-            format!("Infrastructure Security Alert: {domain}")
+            format!("Review: {domain}")
         };
 
         let relevant_finding_ids: Vec<String> = findings
