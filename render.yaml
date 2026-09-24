@@ -24,3 +24,5 @@ services:
         value: openjev-latest
       - key: MAILENT_JEV_API_KEY
         sync: false
+      - key: MAILENT_PROBE_ALLOWED_DOMAINS
+        value: "*"

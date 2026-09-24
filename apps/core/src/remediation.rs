@@ -177,7 +177,16 @@ pub async fn request_verification(
         .await
         .map_err(storage)?
         .ok_or((StatusCode::NOT_FOUND, "asset not found".into()))?;
-    if crate::probes::authorized_asset_target(&asset, &state.probe_config.to_scope()).is_none() {
+    let target = crate::probes::authorized_asset_target(&asset, &state.probe_config.to_scope())
+        .or_else(|| {
+            let candidate = &record.before.flow.dst_ip;
+            if state.probe_config.to_scope().is_authorized(candidate) {
+                Some(candidate.clone())
+            } else {
+                None
+            }
+        });
+    if target.is_none() {
         return Err((
             StatusCode::FORBIDDEN,
             "no authorized probe target for asset".into(),

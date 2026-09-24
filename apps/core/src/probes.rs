@@ -61,10 +61,21 @@ async fn schedule(
         .await
         .map_err(storage_error)?
         .ok_or((StatusCode::NOT_FOUND, "asset not found".into()))?;
-    let target = authorized_asset_target(&asset, &state.probe_config.to_scope()).ok_or((
-        StatusCode::FORBIDDEN,
-        "asset has no target in the operator probe allowlist".into(),
-    ))?;
+    let target = authorized_asset_target(&asset, &state.probe_config.to_scope())
+        .or_else(|| {
+            remediation.and_then(|(rec, _)| {
+                let candidate = &rec.before.flow.dst_ip;
+                if state.probe_config.to_scope().is_authorized(candidate) {
+                    Some(candidate.clone())
+                } else {
+                    None
+                }
+            })
+        })
+        .ok_or((
+            StatusCode::FORBIDDEN,
+            "asset has no target in the operator probe allowlist".into(),
+        ))?;
     let protocol = req.protocol.unwrap_or(EmailProtocol::Smtp);
     let port = req.port.unwrap_or(match protocol {
         EmailProtocol::Smtp => 25,

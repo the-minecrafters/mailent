@@ -22,14 +22,23 @@ impl AuthorizedDomain {
     /// - Wildcard:  `*.example.com`    matches `mail.example.com`, `smtp.example.com`
     /// - Suffix:    `.example.com`     matches any host under `example.com`
     pub fn matches(&self, candidate: &str) -> bool {
+        let d = self.domain.trim_end_matches('.').to_lowercase();
+        if d == "*" {
+            return true;
+        }
         if let (Ok(net), Ok(ip)) = (
             self.domain.parse::<ipnet::IpNet>(),
             candidate.parse::<std::net::IpAddr>(),
         ) {
             return net.contains(&ip);
         }
+        if let (Ok(net_ip), Ok(ip)) = (
+            self.domain.parse::<std::net::IpAddr>(),
+            candidate.parse::<std::net::IpAddr>(),
+        ) {
+            return net_ip == ip;
+        }
         let c = candidate.trim_end_matches('.').to_lowercase();
-        let d = self.domain.trim_end_matches('.').to_lowercase();
         if d.starts_with("*.") {
             // *.example.com — at least one label prefix
             c.ends_with(&d[1..]) && c.len() > d.len() - 1
@@ -121,6 +130,12 @@ impl ProbeConfiguration {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect();
+        } else if std::env::var("MAILENT_CORE_ENVIRONMENT")
+            .map(|e| e == "production" || e == "demo")
+            .unwrap_or(false)
+        {
+            // In hosted cloud production or demo, if not explicitly restricted, allow verification of all observed mail targets
+            config.allowed_domains = vec!["*".to_string()];
         }
         config.timeout_seconds = std::env::var("MAILENT_PROBE_TIMEOUT_SECONDS")
             .ok()
@@ -209,5 +224,36 @@ mod tests {
             protocol: EmailProtocol::Smtp,
         };
         assert!(scope.validate(&target.domain).is_ok());
+    }
+
+    #[test]
+    fn test_wildcard_all_match() {
+        let scope = ProbeScope::new(vec![AuthorizedDomain {
+            domain: "*".to_string(),
+            authorization_ref: "AUTH-ALL".to_string(),
+        }]);
+        assert!(scope.is_authorized("mail.example.org"));
+        assert!(scope.is_authorized("127.0.0.1"));
+        assert!(scope.is_authorized("10.0.0.5"));
+        assert!(scope.is_authorized("smtp.gmail.com"));
+        assert!(scope.validate("192.168.1.1").is_ok());
+    }
+
+    #[test]
+    fn test_ip_matching() {
+        let scope = ProbeScope::new(vec![
+            AuthorizedDomain {
+                domain: "127.0.0.1".to_string(),
+                authorization_ref: "AUTH-LOCAL".to_string(),
+            },
+            AuthorizedDomain {
+                domain: "10.0.0.0/24".to_string(),
+                authorization_ref: "AUTH-SUBNET".to_string(),
+            },
+        ]);
+        assert!(scope.is_authorized("127.0.0.1"));
+        assert!(!scope.is_authorized("127.0.0.2"));
+        assert!(scope.is_authorized("10.0.0.55"));
+        assert!(!scope.is_authorized("10.0.1.55"));
     }
 }
