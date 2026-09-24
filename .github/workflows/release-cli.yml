@@ -81,8 +81,22 @@ jobs:
             ~/.cargo/git
             target
           key: cli-windows-x86_64-rust194-${{ hashFiles('Cargo.lock') }}
+      - name: Install OpenSSL
+        run: choco install openssl.light -y
+      - name: Configure OpenSSL
+        shell: pwsh
+        run: |
+          if (Test-Path "C:\Program Files\OpenSSL") {
+            "OPENSSL_DIR=C:\Program Files\OpenSSL" >> $env:GITHUB_ENV
+            "OPENSSL_INCLUDE_DIR=C:\Program Files\OpenSSL\include" >> $env:GITHUB_ENV
+            "OPENSSL_LIB_DIR=C:\Program Files\OpenSSL\lib" >> $env:GITHUB_ENV
+          } elseif (Test-Path "C:\Program Files\OpenSSL-Win64") {
+            "OPENSSL_DIR=C:\Program Files\OpenSSL-Win64" >> $env:GITHUB_ENV
+            "OPENSSL_INCLUDE_DIR=C:\Program Files\OpenSSL-Win64\include" >> $env:GITHUB_ENV
+            "OPENSSL_LIB_DIR=C:\Program Files\OpenSSL-Win64\lib" >> $env:GITHUB_ENV
+          }
       - name: Build Windows CLI
-        run: cargo +1.94.0 build --locked --release -p mailent
+        run: cargo +1.94.0 build --release -p mailent
       - name: Verify binary and package
         shell: pwsh
         run: |
