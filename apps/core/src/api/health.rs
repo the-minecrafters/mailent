@@ -38,7 +38,8 @@ pub async fn ready_handler(State(state): State<AppState>) -> impl IntoResponse {
         Json(json!({
             "ready": ready, "policy_loaded": ready, "service": "mailent-core",
             "policy_name": state.policy_pack.name, "policy_version": state.policy_pack.version,
-            "rule_count": state.policy_pack.rules.len(), "storage": state.storage_mode, "decision_provider": state.decision_provider_name
+            "rule_count": state.policy_pack.rules.len(), "storage": state.storage_mode, "decision_provider": state.decision_provider_name,
+            "blocked_mail_ports": mailent_scanner::blocked_mail_ports()
         })),
     )
 }

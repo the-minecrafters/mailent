@@ -50,7 +50,7 @@ export function AuthPage({
         email: email.trim(),
         options: {
           shouldCreateUser: false,
-          emailRedirectTo: `${window.location.origin}/workspace/overview`,
+          emailRedirectTo: `${window.location.origin}${window.location.pathname}${window.location.search}`,
         },
       });
       if (error) throw error;

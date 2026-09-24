@@ -56,6 +56,8 @@ pub fn create_router(state: AppState) -> Router {
             "/api/v1/scans/infrastructure",
             post(scans::scan_infrastructure_handler),
         )
+        .route("/api/v1/scans/device", post(scans::scan_on_device_handler))
+        .route("/api/v1/scans/jobs/{id}", get(scans::get_scan_job_handler))
         .route(
             "/api/v1/assessments/{id}",
             get(assessments::get_assessment_handler),

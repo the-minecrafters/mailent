@@ -107,6 +107,8 @@ export function AssessmentWorkspace({
   });
 
   const assessment = assessmentQuery.data;
+  const scoreAvailable = assessment?.posture_grade.toLowerCase() !== "inconclusive";
+  const scoreLabel = scoreAvailable && assessment ? `${Math.round(assessment.posture_score)}/100 (${assessment.posture_grade})` : "Not scored — connection check incomplete";
   const isInfra =
     assessment?.source?.type === "infrastructure" ||
     Boolean(
@@ -225,7 +227,7 @@ export function AssessmentWorkspace({
       const result = await archiveReport({
         subject_kind: primaryAsset ? "asset" : "session",
         subject_id: targetId,
-        notes: `Capture: ${assessment.title}. Security score: ${assessment.posture_score} (${assessment.posture_grade}). ${assessmentSummary(assessment.ai_risk_rationale)}`,
+        notes: `Assessment: ${assessment.title}. ${scoreLabel}. ${assessmentSummary(assessment.ai_risk_rationale)}`,
       });
       setArchiveSuccess(`Server report saved: ${result.id.slice(0, 8)}`);
       setTimeout(() => setArchiveSuccess(null), 4000);
@@ -517,13 +519,13 @@ export function AssessmentWorkspace({
                 padding: "0.85rem 1.25rem",
                 borderRadius: "8px",
                 textAlign: "center",
-                background:
+                background: !scoreAvailable ? "var(--surface-alt)" :
                   assessment.posture_score >= 80
                     ? "var(--status-success-bg)"
                     : assessment.posture_score >= 60
                       ? "var(--status-warning-bg)"
                       : "var(--status-danger-bg)",
-                border:
+                border: !scoreAvailable ? "1px solid var(--border)" :
                   assessment.posture_score >= 80
                     ? "1px solid var(--status-success-border)"
                     : assessment.posture_score >= 60
@@ -536,7 +538,7 @@ export function AssessmentWorkspace({
                   fontSize: "1.75rem",
                   fontWeight: 700,
                   lineHeight: 1,
-                  color:
+                  color: !scoreAvailable ? "var(--ink)" :
                     assessment.posture_score >= 80
                       ? "var(--status-success-ink)"
                       : assessment.posture_score >= 60
@@ -544,10 +546,10 @@ export function AssessmentWorkspace({
                         : "var(--status-danger-ink)",
                 }}
               >
-                {Math.round(assessment.posture_score)}
+                {scoreAvailable ? <>{Math.round(assessment.posture_score)}
                 <span style={{ fontSize: "0.875rem", fontWeight: 500 }}>
                   /100
-                </span>
+                </span></> : "Not scored"}
               </div>
               <div
                 style={{
@@ -555,7 +557,7 @@ export function AssessmentWorkspace({
                   fontWeight: 600,
                   textTransform: "uppercase",
                   marginTop: "0.25rem",
-                  color:
+                  color: !scoreAvailable ? "var(--ink-muted)" :
                     assessment.posture_score >= 80
                       ? "var(--status-success-ink)"
                       : assessment.posture_score >= 60
@@ -563,7 +565,7 @@ export function AssessmentWorkspace({
                         : "var(--status-danger-ink)",
                 }}
               >
-                Grade {assessment.posture_grade}
+                {scoreAvailable ? `Grade ${assessment.posture_grade}` : "Check incomplete"}
               </div>
             </div>
 
@@ -592,13 +594,17 @@ export function AssessmentWorkspace({
                   padding: "0.3rem 0.6rem",
                 }}
               >
-                {assessment.ai_risk_classification} RISK
+                {assessment.ai_risk_classification === "INCONCLUSIVE"
+                  ? "INCONCLUSIVE"
+                  : `${assessment.ai_risk_classification} RISK`}
               </div>
               <div
                 className="secondary-text"
                 style={{ fontSize: "0.875rem", marginTop: "0.35rem" }}
               >
-                Based on policy rules
+                {assessment.ai_risk_classification === "INCONCLUSIVE"
+                  ? "Unverified connections"
+                  : "Based on policy rules"}
               </div>
             </div>
           </div>
@@ -619,8 +625,8 @@ export function AssessmentWorkspace({
           <span style={{ fontSize: "0.875rem", fontWeight: 600 }}>
             Protocols found:
           </span>
-          {assessment.protocols_identified.length === 0 ? (
-            <span className="badge">No mail protocols detected</span>
+          {!scoreAvailable || assessment.protocols_identified.length === 0 ? (
+            <span className="badge">No mail protocols verified</span>
           ) : (
             assessment.protocols_identified.map((proto, idx) => (
               <span
@@ -803,11 +809,15 @@ export function AssessmentWorkspace({
               background:
                 assessment.ai_risk_classification === "CRITICAL"
                   ? "var(--status-danger-bg)"
-                  : "var(--surface-card-solid)",
+                  : assessment.ai_risk_classification === "HIGH"
+                    ? "var(--status-warning-bg)"
+                    : "var(--surface-card-solid)",
               border:
                 assessment.ai_risk_classification === "CRITICAL"
                   ? "1px solid var(--status-danger-border)"
-                  : "1px solid var(--hairline)",
+                  : assessment.ai_risk_classification === "HIGH"
+                    ? "1px solid var(--status-warning-border)"
+                    : "1px solid var(--hairline)",
             }}
           >
             <div
@@ -818,11 +828,26 @@ export function AssessmentWorkspace({
                 marginBottom: "0.5rem",
               }}
             >
-              <span className="badge critical" style={{ fontWeight: 700 }}>
-                RISK LEVEL: {assessment.ai_risk_classification}
+              <span
+                className={`badge ${
+                  assessment.ai_risk_classification === "CRITICAL"
+                    ? "critical"
+                    : assessment.ai_risk_classification === "HIGH"
+                      ? "high"
+                      : assessment.ai_risk_classification === "LOW"
+                        ? "fresh"
+                        : ""
+                }`}
+                style={{ fontWeight: 700 }}
+              >
+                {assessment.ai_risk_classification === "INCONCLUSIVE"
+                  ? "STATUS: INCONCLUSIVE"
+                  : `RISK LEVEL: ${assessment.ai_risk_classification}`}
               </span>
               <span className="secondary-text" style={{ fontSize: "0.875rem" }}>
-                Rule-based assessment
+                {assessment.ai_risk_classification === "INCONCLUSIVE"
+                  ? "Unverified connections"
+                  : "Rule-based assessment"}
               </span>
             </div>
             <p style={{ margin: 0, fontSize: "0.9375rem", lineHeight: 1.5 }}>
@@ -847,7 +872,7 @@ export function AssessmentWorkspace({
                   </tr>
                 </thead>
                 <tbody>
-                  {assessment.protocol_evidence.length === 0 ? (
+                  {!scoreAvailable || assessment.protocol_evidence.length === 0 ? (
                     <tr>
                       <td
                         colSpan={4}
@@ -1953,8 +1978,7 @@ export function AssessmentWorkspace({
                           : "var(--status-danger-ink)",
                     }}
                   >
-                    {Math.round(assessment.posture_score)}/100 (
-                    {assessment.posture_grade})
+                    {scoreLabel}
                   </div>
                   <div
                     className="secondary-text"
@@ -2038,8 +2062,7 @@ export function AssessmentWorkspace({
                 Analyzed {assessment.session_ids.length} email session(s) across{" "}
                 {assessment.asset_ids.length} mail server(s). Overall security score is{" "}
                 <strong>
-                  {Math.round(assessment.posture_score)}/100 (
-                  {assessment.posture_grade})
+                  {scoreLabel}
                 </strong>
                 , with an assessed risk level of{" "}
                 <strong>{assessment.ai_risk_classification}</strong>.

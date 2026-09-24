@@ -332,7 +332,8 @@ pub async fn recover(state: &AppState) -> Result<(), StorageError> {
             attempt.completed_at = Some(OffsetDateTime::now_utc());
             attempt.outcome = Some(RemediationState::Inconclusive);
             attempt.explanation =
-                "The service stopped before the check could start. The fix has not been verified.".into();
+                "The service stopped before the check could start. The fix has not been verified."
+                    .into();
             state.remediations.update(&record, revision).await?;
         }
     }

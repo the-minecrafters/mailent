@@ -10,8 +10,9 @@ cat > "$work/package/mailent" <<'BIN'
 #!/usr/bin/env bash
 printf 'mailent 0.1.0\n'
 BIN
+cp "$repo/scripts/mailent-zeek" "$work/package/mailent-zeek"
 chmod +x "$work/package/mailent"
-tar -C "$work/package" -czf "$work/assets/mailent-linux-x86_64.tar.gz" mailent
+tar -C "$work/package" -czf "$work/assets/mailent-linux-x86_64.tar.gz" mailent mailent-zeek
 (cd "$work/assets" && sha256sum mailent-linux-x86_64.tar.gz > mailent-linux-x86_64.tar.gz.sha256)
 cat > "$work/mock/curl" <<'CURL'
 #!/usr/bin/env bash
@@ -35,6 +36,11 @@ case "$1" in
   -m) printf '%s\n' "${MOCK_ARCH:-x86_64}" ;;
 esac
 UNAME
+cat > "$work/mock/zeek" <<'ZEEK'
+#!/usr/bin/env bash
+[[ "${MOCK_NO_ZEEK:-0}" == 0 ]] || exit 1
+printf 'zeek version 8.0.4\n'
+ZEEK
 chmod +x "$work/mock/"*
 export PATH="$work/mock:$PATH" MOCK_ASSETS="$work/assets" MAILENT_INSTALL_DIR="$work/install path/bin"
 bash "$repo/scripts/install.sh" > "$work/success.log"
@@ -49,6 +55,7 @@ assert_failure() {
   [[ "$(cat "$MAILENT_INSTALL_DIR/mailent")" == 'previous binary' ]]
   ! grep -q 'unbound variable' "$work/error.log"
 }
+assert_failure env MOCK_NO_ZEEK=1 MAILENT_CONTAINER_RUNTIME=missing bash "$repo/scripts/install.sh"
 assert_failure env MOCK_OS=Darwin bash "$repo/scripts/install.sh"
 assert_failure env MOCK_ARCH=aarch64 bash "$repo/scripts/install.sh"
 assert_failure env MOCK_MISSING=1 bash "$repo/scripts/install.sh"

@@ -23,7 +23,7 @@ bash install.sh
 For a custom destination or pinned version:
 
 ```sh
-MAILENT_INSTALL_DIR="$HOME/bin" MAILENT_VERSION=v0.1.0 bash install.sh
+MAILENT_INSTALL_DIR="$HOME/bin" MAILENT_VERSION=v0.1.1 bash install.sh
 ```
 
 Run the installer again to update. It verifies the new binary before replacing the installed version. Downloads and checksums are also available from [GitHub Releases](https://github.com/the-minecrafters/mailent/releases).
@@ -36,9 +36,10 @@ mailent login --server https://mailent.onrender.com
 mailent status
 mailent scan your-domain.com --sync
 mailent analyze traffic.pcap --sync
+mailent monitor --interface eth0
 ```
 
-Only check domains you own or have permission to test. Local capture analysis requires Zeek 8+. Domain checks do not require Zeek. Use `--server` with your own deployment when applicable.
+Only check domains you own or have permission to test. Zeek 8+ is required for Mailent. The installer verifies native Zeek or pulls the official Zeek 8.0.4 container using an installed Podman or Docker runtime. Setup fails if neither is available; it never reports a partial installation as ready. Use `--server` with your own deployment when applicable.
 
 To run scheduled checks from this machine on Linux with systemd:
 
@@ -57,3 +58,11 @@ With Rust 1.94+, protobuf compiler, pkg-config, and OpenSSL development headers 
 cargo build --locked --release -p mailent
 ./target/release/mailent --version
 ```
+
+## Live traffic and free device checks
+
+`mailent monitor --interface eth0` runs Zeek on an interface that sees your mail-server traffic and sends normalized connection evidence to your signed-in workspace. Native Zeek needs packet-capture permissions; the container runner needs a rootful runtime for live capture. Rootless Podman supports PCAP analysis. Mailent never elevates privileges automatically. Live monitoring stops if access is revoked, local credentials change, or workspace access cannot be verified. Unsent observations are held in a bounded memory queue; they are not a durable disk archive.
+
+For scheduled active checks, run `mailent agent install` and select that device when setting up monitoring in the workspace. The domain-check dialog also lets you select a connected device for a one-off check. Results return over HTTPS, so the workspace does not need SMTP access. This costs no additional hosting fee, but the selected machine must be able to reach the target mail server. Port 587 is not a substitute for an MX server's port 25. No TLS score or handshake is reported for unreachable servers.
+
+Revoking a device from the web immediately rejects its API access and cancels queued jobs. Running CLI monitoring checks access every two seconds and clears revoked credentials before stopping. Local, offline PCAP analysis remains available without signing in. After upgrading, restart an installed service with `mailent agent restart` to load the new binary.

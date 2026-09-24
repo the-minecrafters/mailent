@@ -177,10 +177,7 @@ async fn test_scanner_mock_infrastructure_and_partial_failure() {
 
     // Verify report generation
     let report = &result.report;
-    assert_eq!(
-        report.metadata.title,
-        "example.com Mail Infrastructure Forensic Report"
-    );
+    assert_eq!(report.metadata.title, "example.com Mail security report");
     assert_eq!(
         report.metadata.assessment_source.as_deref(),
         Some("infrastructure")
@@ -211,9 +208,129 @@ async fn test_scanner_mock_infrastructure_and_partial_failure() {
     let html = mailent_reporting::render_html(report).expect("HTML export must succeed");
     assert!(html.starts_with("<!DOCTYPE html>"));
     assert!(html.contains("example.com"));
-    assert!(html.contains("Mail Infrastructure"));
+    assert!(html.contains("Mail security report"));
 
     let pdf = mailent_reporting::render_pdf(report).expect("PDF export must succeed");
     assert!(pdf.starts_with(b"%PDF-"));
     assert!(!pdf.is_empty());
+    assert!(result.assessment.protocol_evidence.is_empty());
+    assert!(result.assessment.protocols_identified.is_empty());
+    assert!(report.posture.is_none());
+    assert!(
+        result
+            .findings
+            .iter()
+            .all(|finding| finding.rule_id != "ENDPOINTS_UNREACHABLE")
+    );
+}
+
+async fn local_mail_resolver(port: u16) -> Arc<MockDomainIntelligenceResolver> {
+    let resolver = Arc::new(MockDomainIntelligenceResolver::new());
+    let now = OffsetDateTime::now_utc();
+    resolver
+        .add_mx(
+            "example.test",
+            vec![MxRecord {
+                domain: "example.test".into(),
+                priority: 0,
+                hostname: ".".into(),
+                resolved_ips: vec![],
+                dnssec: DnssecState::Insecure,
+                first_seen: now,
+                last_checked: now,
+            }],
+        )
+        .await;
+    resolver
+        .add_srv(
+            "submission",
+            "tcp",
+            "example.test",
+            vec![SrvRecord {
+                service: "submission".into(),
+                protocol: "tcp".into(),
+                domain: "example.test".into(),
+                priority: 0,
+                weight: 1,
+                port,
+                target: "127.0.0.1".into(),
+                dnssec: DnssecState::Insecure,
+            }],
+        )
+        .await;
+    resolver
+}
+
+#[tokio::test]
+async fn real_smtp_exchange_reports_only_observed_protocol_evidence() {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        stream
+            .write_all(b"220 mail.example.test ESMTP\r\n")
+            .await
+            .unwrap();
+        let mut reader = BufReader::new(stream);
+        let mut command = String::new();
+        reader.read_line(&mut command).await.unwrap();
+        assert!(command.starts_with("EHLO "));
+        reader
+            .get_mut()
+            .write_all(b"250 mail.example.test\r\n")
+            .await
+            .unwrap();
+    });
+    let scanner = DomainScanner::new(
+        local_mail_resolver(port).await,
+        DomainScannerConfig {
+            blocked_ports: vec![],
+            ..Default::default()
+        },
+    );
+    let result = scanner.scan_domain("example.test").await.unwrap();
+    server.await.unwrap();
+    assert_eq!(result.endpoints_succeeded, 1);
+    assert_eq!(result.endpoints_failed, 0);
+    assert_eq!(result.assessment.protocol_evidence.len(), 1);
+    assert!(
+        result.assessment.protocol_evidence[0]
+            .proof
+            .contains("TLS was not established")
+    );
+    assert!(
+        !result.assessment.protocol_evidence[0]
+            .proof
+            .contains("negotiated")
+    );
+    assert_eq!(result.sessions.len(), 1);
+    assert_eq!(
+        result.assessment.session_ids[0],
+        result.sessions[0].session_id
+    );
+}
+
+#[tokio::test]
+async fn explicitly_disabled_port_is_missing_evidence_not_a_server_vulnerability() {
+    let scanner = DomainScanner::new(
+        local_mail_resolver(2525).await,
+        DomainScannerConfig {
+            blocked_ports: vec![2525],
+            ..Default::default()
+        },
+    );
+    let result = scanner.scan_domain("example.test").await.unwrap();
+    assert_eq!(result.endpoints_succeeded, 0);
+    assert_eq!(result.endpoints_failed, 1);
+    assert!(result.assessment.evidence_gaps[0].contains("disabled"));
+    assert!(result.assessment.protocol_evidence.is_empty());
+    assert!(result.assessment.protocols_identified.is_empty());
+    assert!(
+        result
+            .findings
+            .iter()
+            .all(|f| f.rule_id != "ENDPOINTS_UNREACHABLE")
+    );
+    assert!(result.report.posture.is_none());
 }

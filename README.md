@@ -11,7 +11,7 @@ curl -fsSL https://mailent.onrender.com/install.sh | bash
 mailent login --server https://mailent.onrender.com
 ```
 
-The installer verifies the release checksum and installs to `~/.local/bin`. Local capture analysis requires Zeek 8+. Domain checks do not require Zeek.
+The installer verifies the release checksum and installs to `~/.local/bin`. Zeek 8+ is required. The installer verifies native Zeek or sets up the official Zeek image using Podman or Docker.
 
 [Open Mailent](https://mailent.onrender.com) · [GitHub releases](https://github.com/the-minecrafters/mailent/releases) · [CLI instructions](docs/cli.md)
 
@@ -66,7 +66,7 @@ Open <http://127.0.0.1:5173>. The web console provides dedicated views for:
 cargo run -p mailent-sensor -- listen -i eth0 --core http://127.0.0.1:8080
 ```
 
-Runs live Zeek traffic sniffing on the specified network interface with automatic log tailing, normalization, bounded memory/disk spooling on Core disconnections, and periodic heartbeat telemetry.
+Runs live Zeek traffic sniffing on the specified network interface with automatic log tailing, normalization, bounded in-memory buffering on Core disconnections, and periodic heartbeat telemetry.
 
 ### Offline Forensic PCAP Analysis
 

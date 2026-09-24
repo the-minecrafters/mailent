@@ -72,3 +72,29 @@ pub fn clear_credentials() -> io::Result<()> {
     }
     Ok(())
 }
+
+/// A running process must stop using credentials removed or replaced by another CLI.
+pub fn still_current(expected: &DeviceCredentials) -> bool {
+    load_credentials().is_some_and(|c| {
+        c.device_id == expected.device_id
+            && c.device_token == expected.device_token
+            && c.server_url == expected.server_url
+    })
+}
+
+/// Never erase a newer login when an older process receives a rejection.
+pub fn handle_rejection(
+    status: reqwest::StatusCode,
+    creds: &DeviceCredentials,
+) -> Result<bool, String> {
+    if status != reqwest::StatusCode::UNAUTHORIZED && status != reqwest::StatusCode::FORBIDDEN {
+        return Ok(false);
+    }
+    if still_current(creds) {
+        clear_credentials().map_err(|e| format!("Cannot remove revoked credentials: {e}"))?;
+    }
+    eprintln!(
+        "Device access has been revoked. Signed out; monitoring stopped. Run 'mailent login' to reconnect."
+    );
+    Ok(true)
+}

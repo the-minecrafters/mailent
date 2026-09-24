@@ -34,6 +34,8 @@ pub struct DomainScannerConfig {
     pub probe_limits: ProbeLimits,
     pub policy_pack: PolicyPack,
     pub sensor_hostname: String,
+    /// Ports explicitly disabled by the operator, never inferred from a host name.
+    pub blocked_ports: Vec<u16>,
 }
 
 impl Default for DomainScannerConfig {
@@ -46,6 +48,7 @@ impl Default for DomainScannerConfig {
             },
             policy_pack: PolicyPack::modern(),
             sensor_hostname: "scanner.mailent.local".to_string(),
+            blocked_ports: blocked_mail_ports(),
         }
     }
 }
@@ -56,6 +59,8 @@ pub struct InfrastructureScanResult {
     pub report: ForensicReport,
     #[serde(default)]
     pub findings: Vec<Finding>,
+    #[serde(default)]
+    pub sessions: Vec<EmailSession>,
     pub endpoints_checked: usize,
     pub endpoints_succeeded: usize,
     pub endpoints_failed: usize,
@@ -88,7 +93,7 @@ impl DomainScanner {
         &self,
         target: &str,
     ) -> Result<InfrastructureScanResult, ScannerError> {
-        let domain = sanitize_domain(target)?;
+        let domain = normalize_scan_domain(target)?;
         let scan_start = OffsetDateTime::now_utc();
 
         // 1. DNS & Service Discovery
@@ -223,19 +228,18 @@ impl DomainScanner {
         let mut endpoints_succeeded = 0;
         let mut endpoints_failed = 0;
 
-        let is_port25_blocked_env = std::env::var("RENDER").is_ok()
-            || std::env::var("PORT25_BLOCKED").as_deref() == Ok("1")
-            || std::env::var("PORT25_BLOCKED").as_deref() == Ok("true");
-
         for ep in &discovered_endpoints {
-            if ep.port == 25 && is_port25_blocked_env {
+            if self.config.blocked_ports.contains(&ep.port) {
                 endpoints_failed += 1;
                 coverage_gaps.push(format!(
-                    "Endpoint {}:{} check skipped: Outbound port 25 is blocked by cloud provider (Render).",
+                    "Endpoint {}:{} was not checked because this port is disabled in the workspace configuration.",
                     ep.host, ep.port
                 ));
                 let mut unavail = ProbeResult::unavailable(&ep.host, None);
-                unavail.error = Some("Outbound port 25 blocked by cloud provider firewall (Render)".to_string());
+                unavail.error = Some(format!(
+                    "Port {} is disabled in the workspace configuration",
+                    ep.port
+                ));
 
                 endpoint_reports.push(DiscoveredServiceReport {
                     service: ep.service.clone(),
@@ -243,7 +247,7 @@ impl DomainScanner {
                     port: ep.port,
                     priority: ep.priority,
                     resolved_ips: ep.resolved_ips.clone(),
-                    starttls_status: "Port 25 blocked by cloud host".to_string(),
+                    starttls_status: "Not checked: port disabled".to_string(),
                     tls_version: None,
                     cipher: None,
                     cert_subject: None,
@@ -432,17 +436,15 @@ impl DomainScanner {
                 110 | 995 => EmailProtocol::Pop3,
                 _ => EmailProtocol::Smtp,
             };
-            protocols_set.insert(format!("{:?}", proto));
-
-            protocol_evidence.push(ProtocolEvidence {
-                protocol: format!("{:?}", proto),
-                role: "server".to_string(),
-                proof: format!(
-                    "Endpoint {}:{} returned banner/TLS handshake",
-                    ep.host, ep.port
-                ),
-                verified_by: "Live connection check".to_string(),
-            });
+            if let Some(proof) = observed_protocol_evidence(ep, probe) {
+                protocols_set.insert(format!("{:?}", proto));
+                protocol_evidence.push(ProtocolEvidence {
+                    protocol: format!("{:?}", proto),
+                    role: "server".to_string(),
+                    proof,
+                    verified_by: "Live connection check".to_string(),
+                });
+            }
 
             let session = probe_to_session(probe, proto, ep.port, &domain);
             let mut candidates = mailent_policy::evaluate(&session, &self.config.policy_pack);
@@ -492,30 +494,8 @@ impl DomainScanner {
         let scan_end = OffsetDateTime::now_utc();
 
         let all_endpoints_failed = endpoints_succeeded == 0 && !discovered_endpoints.is_empty();
-        if all_endpoints_failed {
-            let unreachable_finding = Finding {
-                id: Uuid::new_v5(&Uuid::NAMESPACE_OID, format!("unreachable:{domain}").as_bytes()),
-                rule_id: "ENDPOINTS_UNREACHABLE".to_string(),
-                policy_name: self.config.policy_pack.name.clone(),
-                policy_version: self.config.policy_pack.version.clone(),
-                reference: "network-probe".to_string(),
-                severity: FindingSeverity::High,
-                category: FindingCategory::PolicyViolation,
-                title: "Mail Servers Unreachable on Port 25".to_string(),
-                description: format!(
-                    "All {} mail servers discovered for {} could not be reached on port 25 (outbound port 25 is filtered by cloud hosting or network firewall). Live TLS encryption and certificate validation could not be performed.",
-                    discovered_endpoints.len(),
-                    domain
-                ),
-                remediation: "To verify live transport encryption, run Mailent in an environment where outbound port 25 is open, or capture live email traffic into a PCAP file and upload it for full inspection.".to_string(),
-                affected_count: discovered_endpoints.len() as u64,
-                first_seen: scan_start,
-                last_seen: scan_end,
-                evidence: vec![],
-                organization_id: None,
-            };
-            all_findings.push(unreachable_finding);
-        }
+        // A connection failure describes missing evidence, not a vulnerability
+        // in the remote server. The individual errors remain in coverage_gaps.
 
         // Deduplicate findings by rule_id and title
         all_findings.sort_by(|a, b| (&a.rule_id, &a.title).cmp(&(&b.rule_id, &b.title)));
@@ -534,12 +514,11 @@ impl DomainScanner {
         let posture = compute_posture(PostureSubjectKind::Asset, asset_id, &posture_input);
         let guidance = build_guidance(asset_id, &all_findings, None, &sessions, &[], scan_end);
 
-        let mut posture_score = posture.score;
+        let posture_score = posture.score;
         let mut posture_grade = posture.grade.to_string();
 
         let ai_risk_classification = if all_endpoints_failed {
             posture_grade = "Inconclusive".to_string();
-            posture_score = posture_score.min(50.0);
             "INCONCLUSIVE".to_string()
         } else {
             match posture.grade {
@@ -551,11 +530,22 @@ impl DomainScanner {
         };
 
         let ep_status = if endpoints_failed == 0 {
-            format!("All {} mail servers responded normally.", discovered_endpoints.len())
+            format!(
+                "All {} mail servers responded normally.",
+                discovered_endpoints.len()
+            )
         } else if endpoints_succeeded == 0 {
-            format!("Discovered {} mail servers, but all {} were unreachable over the network (port 25 was filtered or timed out).", discovered_endpoints.len(), endpoints_failed)
+            format!(
+                "Discovered {} mail services, but none could be checked from this network. See connection details for the individual errors.",
+                discovered_endpoints.len()
+            )
         } else {
-            format!("Discovered {} mail servers ({} connected, {} unreachable).", discovered_endpoints.len(), endpoints_succeeded, endpoints_failed)
+            format!(
+                "Discovered {} mail servers ({} connected, {} unreachable).",
+                discovered_endpoints.len(),
+                endpoints_succeeded,
+                endpoints_failed
+            )
         };
 
         let finding_count_str = if all_findings.is_empty() {
@@ -573,8 +563,7 @@ impl DomainScanner {
         } else {
             format!(
                 "Security score: {:.1}/100 ({}). {ep_status} {finding_count_str} across encryption, certificates, and email policies.",
-                posture_score,
-                posture_grade,
+                posture_score, posture_grade,
             )
         };
 
@@ -593,7 +582,7 @@ impl DomainScanner {
 
         let assessment = AssessmentRecord::new_infrastructure(
             assessment_id,
-            format!("{} Infrastructure Assessment", domain),
+            format!("{} Domain check", domain),
             infra_metadata,
             scan_end,
             protocols_set.into_iter().collect(),
@@ -650,7 +639,7 @@ impl DomainScanner {
             anomalies: &[],
             drifts: &[],
             probe_runs: &[],
-            posture: Some(&posture),
+            posture: (!all_endpoints_failed).then_some(&posture),
             guidance: &guidance,
             remediation_records: &[],
             policy_name: self.config.policy_pack.name.clone(),
@@ -671,6 +660,7 @@ impl DomainScanner {
             assessment,
             report,
             findings: all_findings,
+            sessions,
             endpoints_checked: discovered_endpoints.len(),
             endpoints_succeeded,
             endpoints_failed,
@@ -678,7 +668,40 @@ impl DomainScanner {
     }
 }
 
-fn sanitize_domain(raw: &str) -> Result<String, ScannerError> {
+/// Hosting providers and paid plans have different network policies. Only an
+/// explicit operator setting may skip a check before a connection is attempted.
+pub fn blocked_mail_ports() -> Vec<u16> {
+    let mut ports: Vec<u16> = std::env::var("MAILENT_BLOCKED_PORTS")
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|port| port.trim().parse::<u16>().ok())
+        .filter(|port| *port != 0)
+        .collect();
+    if matches!(std::env::var("PORT25_BLOCKED").as_deref(), Ok("1" | "true")) {
+        ports.push(25);
+    }
+    ports.sort_unstable();
+    ports.dedup();
+    ports
+}
+
+fn observed_protocol_evidence(ep: &DiscoveredEndpoint, probe: &ProbeResult) -> Option<String> {
+    if let Some(version) = &probe.tls_version {
+        Some(format!(
+            "Endpoint {}:{} negotiated {}",
+            ep.host, ep.port, version
+        ))
+    } else if probe.smtp_greeting.is_some() || probe.starttls != ProbeStartTlsResult::NotReached {
+        Some(format!(
+            "Endpoint {}:{} responded to the mail protocol; TLS was not established",
+            ep.host, ep.port
+        ))
+    } else {
+        None
+    }
+}
+
+pub fn normalize_scan_domain(raw: &str) -> Result<String, ScannerError> {
     let clean = raw
         .trim()
         .trim_start_matches("https://")

@@ -71,7 +71,12 @@ pub async fn get_probe_handler(
         .find_by_id(probe_id)
         .await
         .map_err(storage_error)?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Check {probe_id} not found.")))?;
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                format!("Check {probe_id} not found."),
+            )
+        })?;
     Ok(Json(run))
 }
 

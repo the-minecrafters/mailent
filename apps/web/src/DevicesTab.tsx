@@ -21,7 +21,7 @@ import {
 } from "./components/ui";
 
 export function DevicesTab() {
-  const { user } = useAuth();
+  const { user, openSignIn } = useAuth();
   const [params, setParams] = useSearchParams();
   const queryClient = useQueryClient();
   const urlCode = params.get("code") || "";
@@ -45,6 +45,8 @@ export function DevicesTab() {
   const devicesQuery = useQuery({
     queryKey: ["devices"],
     queryFn: fetchDevices,
+    enabled: !!user,
+    refetchInterval: user ? 10000 : false,
   });
 
   const approveMutation = useMutation({
@@ -85,7 +87,7 @@ export function DevicesTab() {
 
   const handleApprove = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!challengeCode.trim()) return;
+    if (!user || !challengeCode.trim()) return;
     setApprovalMessage(null);
     setApprovalError(null);
     approveMutation.mutate(challengeCode);
@@ -104,6 +106,21 @@ export function DevicesTab() {
 
   const devices = devicesQuery.data ?? [];
   const orgName = user ? workspaceName(orgQuery.data) : "your workspace";
+
+  if (!user) {
+    return (
+      <div className="tab-page">
+        <PageHeader title="Devices" description="Connect a machine to analyze captures and monitor your mail servers." />
+        <section className="card device-sign-in">
+          <Icon name="phonelink_lock" size={28} />
+          <h2>Sign in to connect a device</h2>
+          <p className="secondary-text">Devices need an account to send results to your workspace and receive scheduled checks.</p>
+          {urlCode && <p>Your device code is saved here. You can approve it after signing in.</p>}
+          <Button variant="primary" onClick={openSignIn}>Sign in</Button>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="tab-page">
@@ -133,10 +150,11 @@ export function DevicesTab() {
           className="secondary-text"
           style={{ fontSize: "0.875rem", margin: "0 0 1rem 0" }}
         >
-          Install the CLI, then run <code className="mono">mailent login --server {window.location.origin}</code> and enter the device code below.
+          Install Mailent with Zeek, then sign in from your terminal and enter the device code below.
         </p>
 
         <InstallCommand />
+        <pre className="device-login-command"><code>mailent login --server {window.location.origin}</code></pre>
 
         {approvalMessage && (
           <div
@@ -172,6 +190,7 @@ export function DevicesTab() {
             type="text"
             className="input text-input mono"
             placeholder="MLT-XXXXXXXX"
+            aria-label="Device code"
             value={challengeCode}
             onChange={(e) => setChallengeCode(e.target.value.toUpperCase())}
             style={{
@@ -229,8 +248,8 @@ export function DevicesTab() {
             description="Install the Mailent CLI locally and run 'mailent login' to register your machine."
           />
         ) : (
-          <div className="table-container">
-            <table className="data-table">
+          <div className="table-container device-table-scroll" role="region" aria-label="Connected devices" tabIndex={0}>
+            <table className="data-table devices-table">
               <thead>
                 <tr>
                   <th>Device Name</th>
@@ -265,13 +284,14 @@ export function DevicesTab() {
                         </div>
                       </td>
                       <td>
-                        {device.agent_enabled || device.agent_status ? (
+                        {isRevoked ? <span className="secondary-text">Access removed</span> : device.agent_enabled || device.agent_status ? (
                           <div>
                             <div
                               style={{
                                 display: "flex",
                                 alignItems: "center",
                                 gap: "0.4rem",
+                                flexWrap: "wrap",
                               }}
                             >
                               <span
@@ -288,11 +308,11 @@ export function DevicesTab() {
                                   padding: "0.15rem 0.4rem",
                                 }}
                               >
-                                Agent: {device.agent_status ?? "online"}
+                                {Date.now() - new Date(device.last_seen_at).getTime() > 300000 ? "Offline" : device.agent_status === "busy" ? "Checking" : "Ready"}
                               </span>
                               {device.version && (
                                 <span
-                                  className="secondary-text mono"
+                                  className="secondary-text mono device-version"
                                   style={{ fontSize: "0.875rem" }}
                                 >
                                   v{device.version}
@@ -338,7 +358,10 @@ export function DevicesTab() {
                         className="secondary-text"
                         style={{ fontSize: "0.875rem" }}
                       >
-                        {new Date(device.last_seen_at).toLocaleString()}
+                        <time dateTime={device.last_seen_at}>
+                          <span>{new Date(device.last_seen_at).toLocaleDateString()}</span>
+                          <span>{new Date(device.last_seen_at).toLocaleTimeString()}</span>
+                        </time>
                       </td>
                       <td>
                         {isRevoked ? (

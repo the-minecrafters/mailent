@@ -519,7 +519,7 @@ export function LandingPage() {
             <code>mailent login --server https://mailent.onrender.com</code>
           </div>
           <p className="install-note">
-            Installs to ~/.local/bin. Local capture analysis also requires Zeek.
+            Installs to ~/.local/bin and verifies required Zeek 8+. Uses your Zeek installation or sets it up with Podman or Docker.
           </p>
         </section>
 

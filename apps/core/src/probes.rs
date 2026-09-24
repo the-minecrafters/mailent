@@ -84,7 +84,10 @@ async fn schedule(
         EmailProtocol::Unknown => 0,
     });
     if port == 0 || protocol == EmailProtocol::Unknown {
-        return Err((StatusCode::UNPROCESSABLE_ENTITY, "Choose a supported mail protocol and port.".into()));
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Choose a supported mail protocol and port.".into(),
+        ));
     }
     if let Some(id) = req.investigation_id {
         let investigation = state
@@ -129,7 +132,8 @@ async fn schedule(
     {
         return Err((
             StatusCode::TOO_MANY_REQUESTS,
-            "A check is already running or recently finished for this server. Try again shortly.".into(),
+            "A check is already running or recently finished for this server. Try again shortly."
+                .into(),
         ));
     }
     let id = run.id;
@@ -154,11 +158,9 @@ async fn execute(state: &AppState, mut run: ProbeRun) -> Result<(), StorageError
         mailent_probe::probe_smtp_starttls(&run.target, run.port, "mailent-probe", &limits, &scope)
             .await
     } else if run.protocol == EmailProtocol::Imap && (run.port == 143 || run.port != 993) {
-        mailent_probe::probe_imap_starttls(&run.target, run.port, &limits, &scope)
-            .await
+        mailent_probe::probe_imap_starttls(&run.target, run.port, &limits, &scope).await
     } else if run.protocol == EmailProtocol::Pop3 && (run.port == 110 || run.port != 995) {
-        mailent_probe::probe_pop3_stls(&run.target, run.port, &limits, &scope)
-            .await
+        mailent_probe::probe_pop3_stls(&run.target, run.port, &limits, &scope).await
     } else {
         mailent_probe::smtp::probe_implicit_tls(&run.target, run.port, &limits, &scope).await
     };
@@ -205,21 +207,11 @@ async fn execute(state: &AppState, mut run: ProbeRun) -> Result<(), StorageError
                 )
                 .await
             } else if run.protocol == EmailProtocol::Imap && (run.port == 143 || run.port != 993) {
-                mailent_probe::probe_imap_starttls(
-                    &run.target,
-                    run.port,
-                    &challenge_limits,
-                    &scope,
-                )
-                .await
+                mailent_probe::probe_imap_starttls(&run.target, run.port, &challenge_limits, &scope)
+                    .await
             } else if run.protocol == EmailProtocol::Pop3 && (run.port == 110 || run.port != 995) {
-                mailent_probe::probe_pop3_stls(
-                    &run.target,
-                    run.port,
-                    &challenge_limits,
-                    &scope,
-                )
-                .await
+                mailent_probe::probe_pop3_stls(&run.target, run.port, &challenge_limits, &scope)
+                    .await
             } else {
                 mailent_probe::smtp::probe_implicit_tls(
                     &run.target,
@@ -251,10 +243,7 @@ async fn execute(state: &AppState, mut run: ProbeRun) -> Result<(), StorageError
             crate::integrations::EventNotification::new(
                 IntegrationEventType::VerificationCompleted,
                 format!("Verification Completed: {}", run.target),
-                format!(
-                    "Live check completed for {}",
-                    run.target
-                ),
+                format!("Live check completed for {}", run.target),
             )
             .with_asset(run.asset_id, Some(run.target.clone()))
             .with_probe(run.id)
@@ -266,10 +255,7 @@ async fn execute(state: &AppState, mut run: ProbeRun) -> Result<(), StorageError
             crate::integrations::EventNotification::new(
                 IntegrationEventType::VerificationFailed,
                 format!("Verification Failed: {}", run.target),
-                format!(
-                    "Live check failed for {}: {:?}",
-                    run.target, outcome
-                ),
+                format!("Live check failed for {}: {:?}", run.target, outcome),
             )
             .with_asset(run.asset_id, Some(run.target.clone()))
             .with_probe(run.id)

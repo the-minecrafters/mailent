@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::process::Command;
 use std::time::Instant;
 
@@ -24,12 +23,7 @@ pub async fn run_doctor(server_override: Option<String>) -> Result<(), String> {
 
     let token_opt = match &creds {
         Some(c) => {
-            let masked_token = if c.device_token.len() > 8 {
-                format!("{}...", &c.device_token[..8])
-            } else {
-                "***".to_string()
-            };
-            println!("[✓] Authentication: Authenticated");
+            println!("[•] Sign-in saved; checking workspace access…");
             println!("    • Device Name:     {}", c.device_name);
             println!("    • Device ID:       {}", c.device_id);
             println!(
@@ -38,7 +32,6 @@ pub async fn run_doctor(server_override: Option<String>) -> Result<(), String> {
                     .map(|id| id.to_string())
                     .unwrap_or_else(|| "None".to_string())
             );
-            println!("    • Token:           {}", masked_token);
             println!("    • Config File:     {}", credentials_path().display());
             Some(c.device_token.clone())
         }
@@ -83,7 +76,13 @@ pub async fn run_doctor(server_override: Option<String>) -> Result<(), String> {
                         println!("    • Device token verified with control plane");
                     }
                     Ok(dev_resp) => {
-                        println!("    [!] Device token rejected (HTTP {})", dev_resp.status());
+                        if let Some(c) = &creds {
+                            crate::credentials::handle_rejection(dev_resp.status(), c)?;
+                        }
+                        println!(
+                            "    [!] Workspace access rejected (HTTP {})",
+                            dev_resp.status()
+                        );
                         all_ok = false;
                     }
                     Err(e) => {
@@ -140,18 +139,13 @@ pub async fn run_doctor(server_override: Option<String>) -> Result<(), String> {
         }
     }
 
-    // 6. Zeek Forensics Engine Detection
-    let zeek_detected = check_zeek();
-    if let Some(zeek_ver) = zeek_detected {
-        println!("[✓] Zeek Network Security Monitor: {}", zeek_ver);
-        println!("    • Local PCAP deep protocol inspection is ENABLED");
-    } else {
-        println!("[!] Zeek Network Security Monitor: Not found in PATH");
-        println!(
-            "    ℹ Note: Zeek is only required for local offline PCAP file analysis (`mailent analyze`)."
-        );
-        println!("    ℹ Domain infrastructure scanning (`mailent scan`), scheduled monitoring,");
-        println!("      and agent execution do NOT require Zeek and are 100% operational.");
+    // Zeek is a required product dependency, not an optional diagnostic.
+    match crate::locate_zeek(None) {
+        Ok(path) => println!("[✓] Required Zeek 8+: {}", path.display()),
+        Err(error) => {
+            println!("[✗] {error}");
+            all_ok = false;
+        }
     }
 
     // 7. Systemd Service Status
@@ -206,35 +200,17 @@ pub async fn run_doctor(server_override: Option<String>) -> Result<(), String> {
 
     println!("\n------------------------------------------------------------");
     if all_ok {
-        println!("Status: System ready for scanning and agent execution.");
+        println!(
+            "Status: Required dependencies are ready. Mail-server reachability depends on this network."
+        );
     } else {
         println!("Status: Diagnostics completed with warnings/issues above.");
     }
     println!("------------------------------------------------------------\n");
 
-    Ok(())
-}
-
-fn check_zeek() -> Option<String> {
-    if let Ok(z) = std::env::var("MAILENT_ZEEK") {
-        let p = PathBuf::from(z);
-        if p.exists() {
-            if let Ok(out) = Command::new(&p).arg("--version").output() {
-                if out.status.success() {
-                    return Some(String::from_utf8_lossy(&out.stdout).trim().to_string());
-                }
-            }
-            return Some(p.display().to_string());
-        }
+    if all_ok {
+        Ok(())
+    } else {
+        Err("Setup is incomplete. Resolve the checks above and run 'mailent doctor' again.".into())
     }
-
-    for bin in ["zeek", "zeek-container"] {
-        if let Ok(out) = Command::new(bin).arg("--version").output() {
-            if out.status.success() {
-                return Some(String::from_utf8_lossy(&out.stdout).trim().to_string());
-            }
-        }
-    }
-
-    None
 }

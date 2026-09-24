@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Zeek 8 runner for installations without a native Zeek package.
+set -euo pipefail
+runtime=${MAILENT_CONTAINER_RUNTIME:-}
+if [[ -z "$runtime" ]]; then
+  for candidate in podman docker; do
+    if command -v "$candidate" >/dev/null 2>&1; then runtime=$candidate; break; fi
+  done
+fi
+case "$runtime" in podman|docker) ;; *) printf 'Zeek requires Podman or Docker, or a native Zeek 8+ installation.\n' >&2; exit 1 ;; esac
+args=(run --rm --network none)
+[[ "$runtime" != podman ]] || args+=(--userns=keep-id)
+live=false
+for argument in "$@"; do
+  if [[ "$argument" == -i || "$argument" == --interface ]]; then live=true; fi
+done
+if $live; then
+  # Capture privileges must be granted by the machine owner; never invoke sudo.
+  if [[ "$runtime" == podman && $(id -u) != 0 ]]; then
+    printf 'Live capture requires native Zeek with packet-capture permissions, or a rootful container runtime. Set MAILENT_ZEEK to the native executable. PCAP analysis uses this runner without root.\n' >&2
+    exit 1
+  fi
+  args=(run --rm --network host --cap-add NET_RAW --cap-add NET_ADMIN)
+fi
+cid_dir=$(mktemp -d)
+cleanup() {
+  if [[ -s "$cid_dir/id" ]]; then
+    "$runtime" stop --time 2 "$(cat "$cid_dir/id")" >/dev/null 2>&1 || true
+  fi
+  rm -rf -- "$cid_dir"
+}
+trap cleanup EXIT
+trap 'exit 0' INT TERM HUP
+args+=(--cidfile "$cid_dir/id" -v "$PWD:/work:Z" -w /work docker.io/zeek/zeek:8.0.4 zeek)
+"$runtime" "${args[@]}" "$@" &
+wait "$!"

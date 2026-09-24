@@ -29,7 +29,13 @@ export function assessmentSummary(value: string): string {
 export function connectionSource(value: string): string {
   if (value === "Active network probe" || value === "mailent-probe")
     return "Live connection check";
-  return value.replace(/^Zeek (.+) analyzer \/ (.+) engine$/, "Zeek $1 · $2");
+  let s = value;
+  // Strip duplicate "Zeek" words like "Zeek zeek version 8.0.4"
+  s = s.replace(/Zeek\s+zeek\s+(version\s+)?/gi, "Zeek ");
+  s = s.replace(/Zeek\s+version\s+/gi, "Zeek ");
+  s = s.replace(/^Zeek\s+(.+)\s+analyzer\s*\/\s*(?:zeek\s+)?engine$/i, "Zeek $1");
+  s = s.replace(/\s*·\s*zeek$/i, "");
+  return s;
 }
 
 export function reviewTitle(value: string): string {

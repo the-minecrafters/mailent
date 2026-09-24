@@ -165,6 +165,7 @@ const readinessSchema = z.object({
   rule_count: z.number(),
   storage: z.string(),
   decision_provider: z.string(),
+  blocked_mail_ports: z.array(z.number()).default([]),
 });
 
 async function request(
@@ -1311,6 +1312,25 @@ export async function scanInfrastructure(domain: string): Promise<{
     endpoints_succeeded: number;
     endpoints_failed: number;
   };
+}
+
+const deviceScanJobSchema = z.object({
+  id: z.string(),
+  state: z.enum(["pending", "leased", "running", "completed", "failed", "canceled"]),
+  result_assessment_id: z.string().nullable(),
+  last_error: z.string().nullable(),
+});
+export type DeviceScanJob = z.infer<typeof deviceScanJobSchema>;
+
+export async function scanOnDevice(domain: string, deviceId: string): Promise<DeviceScanJob> {
+  return deviceScanJobSchema.parse(await request("/api/v1/scans/device", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ domain, device_id: deviceId }),
+  }));
+}
+
+export async function fetchDeviceScanJob(id: string): Promise<DeviceScanJob> {
+  return deviceScanJobSchema.parse(await request(`/api/v1/scans/jobs/${encodeURIComponent(id)}`));
 }
 
 export type MonitorCadence =

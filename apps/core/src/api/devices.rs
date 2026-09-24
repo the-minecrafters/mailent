@@ -243,6 +243,9 @@ pub async fn revoke_device_handler(
     Extension(ctx): Extension<ExecutionContext>,
     Path(id): Path<Uuid>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    if ctx.is_guest() {
+        return Err((StatusCode::FORBIDDEN, "Sign in to manage devices.".into()));
+    }
     let org_id = ctx
         .organization_id
         .unwrap_or(mailent_domain::DEFAULT_ORG_ID);
@@ -265,6 +268,8 @@ pub async fn revoke_device_handler(
         .revoke_device(id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    stop_device_jobs(&state, id, org_id).await?;
 
     Ok(Json(serde_json::json!({
         "status": "revoked",
@@ -328,8 +333,47 @@ pub async fn device_status_handler(
     }
 }
 
+async fn stop_device_jobs(
+    state: &AppState,
+    id: Uuid,
+    org_id: Uuid,
+) -> Result<(), (StatusCode, String)> {
+    use mailent_domain::JobState;
+    state
+        .devices
+        .update_agent_status(id, Some("revoked".into()), None, false)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let jobs = state
+        .jobs
+        .list_for_org(org_id, 200)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    for mut job in jobs {
+        if job.target_agent_id == Some(id)
+            && matches!(
+                job.state,
+                JobState::Pending | JobState::Leased | JobState::Running
+            )
+        {
+            job.state = JobState::Canceled;
+            job.completed_at = Some(OffsetDateTime::now_utc());
+            job.lease_expires_at = None;
+            job.last_error =
+                Some("Device access was revoked. Connect a device to run this check again.".into());
+            state
+                .jobs
+                .update_job(&job)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        }
+    }
+    Ok(())
+}
+
 pub async fn device_logout_handler(
     State(state): State<AppState>,
+    Extension(ctx): Extension<ExecutionContext>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let token = headers
@@ -341,7 +385,19 @@ pub async fn device_logout_handler(
     if let Some(tok) = token {
         if tok.starts_with("mlt_") {
             let hash = format!("{:x}", Sha256::digest(tok.as_bytes()));
-            let _ = state.devices.revoke_device_token(&hash).await;
+            state
+                .devices
+                .revoke_device_token(&hash)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            if let Actor::Device {
+                device_id,
+                organization_id,
+                ..
+            } = ctx.actor
+            {
+                stop_device_jobs(&state, device_id, organization_id).await?;
+            }
         }
     }
 

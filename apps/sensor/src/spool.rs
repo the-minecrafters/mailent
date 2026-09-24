@@ -37,6 +37,15 @@ impl BoundedSpooler {
             .build()
             .unwrap_or_default();
 
+        Self::with_client(core_endpoint, spool_dir, capacity, client)
+    }
+
+    pub fn with_client(
+        core_endpoint: String,
+        spool_dir: PathBuf,
+        capacity: usize,
+        client: reqwest::Client,
+    ) -> Self {
         Self {
             core_endpoint,
             _spool_dir: spool_dir,

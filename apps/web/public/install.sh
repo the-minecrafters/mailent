@@ -3,7 +3,7 @@
 set -euo pipefail
 
 main() {
-  local os arch asset release_url install_dir version expected actual
+  local os arch asset release_url install_dir version expected actual zeek_output zeek_major runtime
   os=$(uname -s)
   arch=$(uname -m)
   if [[ "$os" != Linux || "$arch" != x86_64 ]]; then
@@ -50,7 +50,29 @@ main() {
     printf 'Mailent could not run. This release requires Linux x86_64, glibc 2.35+, and OpenSSL 3. Nothing was installed.\n' >&2
     return 1
   fi
+  tar -xOzf "$mailent_work_dir/$asset" mailent-zeek > "$mailent_work_dir/mailent-zeek"
+  chmod 755 "$mailent_work_dir/mailent-zeek"
+  zeek_output=$("${MAILENT_ZEEK:-zeek}" --version 2>&1 || true)
+  zeek_major=$(printf '%s' "$zeek_output" | sed -nE 's/.*version ([0-9]+)\..*/\1/p' | head -n 1)
+  if [[ "$zeek_major" =~ ^[0-9]+$ ]] && (( zeek_major >= 8 )); then
+    printf 'Required Zeek is ready: %s\n' "$zeek_output"
+  else
+    runtime=${MAILENT_CONTAINER_RUNTIME:-}
+    if [[ -z "$runtime" ]]; then
+      for tool in podman docker; do
+        if command -v "$tool" >/dev/null 2>&1; then runtime=$tool; break; fi
+      done
+    fi
+    case "$runtime" in
+      podman|docker) ;;
+      *) printf 'Zeek 8+ is required. Install Zeek, Podman, or Docker, then run this installer again. Nothing was installed.\n' >&2; return 1 ;;
+    esac
+    printf 'Setting up required Zeek 8.0.4 with %s…\n' "$runtime"
+    "$runtime" pull docker.io/zeek/zeek:8.0.4
+    MAILENT_CONTAINER_RUNTIME="$runtime" "$mailent_work_dir/mailent-zeek" --version
+  fi
   mkdir -p -- "$install_dir"
+  install -m 755 "$mailent_work_dir/mailent-zeek" "$install_dir/mailent-zeek"
   mailent_staging=$(mktemp "$install_dir/.mailent-install.XXXXXX")
   install -m 755 "$mailent_work_dir/mailent" "$mailent_staging"
   mv -f -- "$mailent_staging" "$install_dir/mailent"
@@ -61,7 +83,10 @@ main() {
     *) printf 'Add this directory to your PATH:\n  export PATH=%q:"$PATH"\n' "$install_dir" ;;
   esac
   printf '\nConnect to your workspace:\n  mailent login --server https://mailent.onrender.com\n'
-  printf '\nDomain checks are ready to use. Local capture analysis also requires Zeek.\n'
+  printf '\nZeek is ready. Analyze a PCAP: mailent analyze capture.pcap\n'
+  printf 'Monitor live mail traffic: mailent monitor --interface eth0\n'
+  printf 'Live capture requires native Zeek capture permissions or a rootful container runtime.\n'
+  printf 'Run scheduled server checks: mailent agent install\n'
   # Cleanup while the local variables are still in scope, including when piped to bash.
   rm -rf -- "$mailent_work_dir"
   trap - EXIT

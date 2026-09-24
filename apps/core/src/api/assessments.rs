@@ -74,6 +74,9 @@ fn locate_zeek() -> PathBuf {
         }
     }
     for candidate in [
+        "scripts/mailent-zeek",
+        "../scripts/mailent-zeek",
+        "../../scripts/mailent-zeek",
         "scripts/zeek-container",
         "../scripts/zeek-container",
         "../../scripts/zeek-container",
@@ -291,6 +294,18 @@ pub async fn analyze_capture_handler(
             } else {
                 "Mailbox server"
             };
+            let clean_ver = analysis
+                .zeek_version
+                .trim_start_matches("zeek ")
+                .trim_start_matches("Zeek ")
+                .trim_start_matches("version ")
+                .trim();
+            let proto_lower = proto_name.to_lowercase();
+            let verified_by = if clean_ver.is_empty() {
+                format!("Zeek {proto_lower} analyzer")
+            } else {
+                format!("Zeek {clean_ver} · {proto_lower} analyzer")
+            };
             protocol_evidence.push(ProtocolEvidence {
                 protocol: proto_name.to_string(),
                 role: role_desc.to_string(),
@@ -298,10 +313,7 @@ pub async fn analyze_capture_handler(
                     "Recorded connection {}:{} → {}:{}",
                     obs.flow.src_ip, obs.flow.src_port, obs.flow.dst_ip, obs.flow.dst_port
                 ),
-                verified_by: format!(
-                    "Zeek {} · {}",
-                    analysis.zeek_version, obs.provenance.parser
-                ),
+                verified_by,
             });
         }
 
@@ -370,7 +382,12 @@ pub async fn analyze_capture_handler(
         "F"
     };
 
-    let (ai_risk_classification, ai_risk_rationale) = if has_critical {
+    let (ai_risk_classification, ai_risk_rationale) = if session_ids.is_empty() {
+        (
+            "INCONCLUSIVE".to_string(),
+            "No email traffic was identified in this capture to evaluate.".to_string(),
+        )
+    } else if has_critical {
         (
             "CRITICAL".to_string(),
             "Critical issues were found in this traffic. Review the findings and recommended fixes."
@@ -385,8 +402,7 @@ pub async fn analyze_capture_handler(
     } else if finding_ids.is_empty() {
         (
             "LOW".to_string(),
-            "No policy issues were found in the available traffic."
-                .to_string(),
+            "No policy issues were found in the available traffic.".to_string(),
         )
     } else {
         (

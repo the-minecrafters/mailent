@@ -21,6 +21,7 @@ use uuid::Uuid;
 mod agent;
 mod credentials;
 mod doctor;
+mod monitor;
 
 #[derive(Parser)]
 #[command(
@@ -124,7 +125,17 @@ enum Commands {
         server: Option<String>,
     },
 
-    /// Manage the Mailent scanning agent service
+    /// Monitor live mail traffic with Zeek and send results to your workspace
+    Monitor {
+        /// Network interface that sees your mail-server traffic
+        #[arg(short, long)]
+        interface: String,
+        /// Path to the required Zeek executable
+        #[arg(long)]
+        zeek: Option<PathBuf>,
+    },
+
+    /// Manage scheduled mail-server checks
     #[command(subcommand)]
     Agent(agent::AgentCommands),
 
@@ -180,6 +191,7 @@ async fn main() {
             )
             .await
         }
+        Commands::Monitor { interface, zeek } => monitor::run(interface, zeek).await,
         Commands::Agent(agent_cmd) => agent::run_agent_command(agent_cmd).await,
         Commands::Doctor { server } => doctor::run_doctor(server).await,
     };
@@ -284,6 +296,18 @@ async fn run_analyze(
         };
 
         if protocols_set.insert(proto_name.to_string()) {
+            let clean_ver = analysis
+                .zeek_version
+                .trim_start_matches("zeek ")
+                .trim_start_matches("Zeek ")
+                .trim_start_matches("version ")
+                .trim();
+            let proto_lower = proto_name.to_lowercase();
+            let verified_by = if clean_ver.is_empty() {
+                format!("Zeek {proto_lower} analyzer")
+            } else {
+                format!("Zeek {clean_ver} · {proto_lower} analyzer")
+            };
             protocol_evidence.push(ProtocolEvidence {
                 protocol: proto_name.to_string(),
                 role: if obs.flow.dst_port == 25
@@ -298,10 +322,7 @@ async fn run_analyze(
                     "Observed on flow {} with protocol handshake state machine",
                     obs.flow
                 ),
-                verified_by: format!(
-                    "Zeek {} analyzer / {} engine",
-                    analysis.zeek_version, obs.provenance.parser
-                ),
+                verified_by,
             });
         }
 
@@ -511,8 +532,9 @@ async fn run_scan(
     sync: bool,
     server_override: Option<String>,
 ) -> Result<(), String> {
-    // 1. Sanitize & validate target domain
-    let domain = validate_domain(&raw_domain)?;
+    // Validate input before checking installed dependencies.
+    let domain = mailent_scanner::normalize_scan_domain(&raw_domain).map_err(|e| e.to_string())?;
+    locate_zeek(None)?;
 
     // 2. Initialize live scanner engine
     let resolver = LiveDomainIntelligenceResolver::new()
@@ -526,6 +548,7 @@ async fn run_scan(
         },
         policy_pack: PolicyPack::modern(),
         sensor_hostname: "mailent-cli".to_string(),
+        ..Default::default()
     };
 
     let scanner = DomainScanner::new(Arc::new(resolver), config);
@@ -583,7 +606,14 @@ async fn run_scan(
     }
 
     if sync {
-        sync_assessment(server_override, &scan_result.assessment, &[], &[], &[]).await?;
+        sync_assessment(
+            server_override,
+            &scan_result.assessment,
+            &scan_result.findings,
+            &[],
+            &scan_result.sessions,
+        )
+        .await?;
     }
 
     Ok(())
@@ -603,7 +633,7 @@ async fn sync_assessment(
 
     let server_url = server_override
         .or_else(|| std::env::var("MAILENT_SERVER_URL").ok())
-        .unwrap_or(creds.server_url);
+        .unwrap_or(creds.server_url.clone());
 
     let client = reqwest::Client::new();
     let url = format!(
@@ -626,6 +656,10 @@ async fn sync_assessment(
         .send()
         .await
         .map_err(|e| format!("Failed to connect to Mailent server at {url}: {e}"))?;
+
+    if credentials::handle_rejection(resp.status(), &creds)? {
+        return Err("Sign in again before syncing results.".into());
+    }
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -817,7 +851,7 @@ async fn run_status(server_override: Option<String>) -> Result<(), String> {
         .await
         .map_err(|e| format!("Failed to connect to {url}: {e}"))?;
 
-    if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+    if credentials::handle_rejection(resp.status(), &creds)? {
         println!("Status: Unauthorized / Token Revoked");
         println!(
             "Device credentials at {} are invalid or revoked.",
@@ -941,65 +975,67 @@ fn validate_pcap(path: &Path) -> Result<(u64, String), String> {
 }
 
 fn locate_zeek(user_path: Option<&Path>) -> Result<PathBuf, String> {
-    if let Some(p) = user_path {
-        if p.exists() {
-            return Ok(p.to_path_buf());
+    fn verified(path: PathBuf) -> Result<PathBuf, String> {
+        let output = std::process::Command::new(&path)
+            .arg("--version")
+            .output()
+            .map_err(|e| format!("Cannot start required Zeek at {}: {e}", path.display()))?;
+        if !output.status.success() {
+            return Err(format!(
+                "Zeek is not ready at {}. Run the installer again or set MAILENT_ZEEK to Zeek 8+.",
+                path.display()
+            ));
         }
-        return Err(format!(
-            "Specified Zeek path does not exist: {}",
-            p.display()
-        ));
+        let version = format!(
+            "{} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let major = version
+            .split_whitespace()
+            .find_map(|part| part.split('.').next()?.parse::<u32>().ok());
+        if !major.is_some_and(|v| v >= 8) {
+            return Err(format!(
+                "Mailent requires Zeek 8 or newer; found {}",
+                version.trim()
+            ));
+        }
+        Ok(if path.is_relative() && path.components().count() > 1 {
+            std::fs::canonicalize(&path).map_err(|e| e.to_string())?
+        } else {
+            path
+        })
     }
-
-    if let Ok(z) = std::env::var("MAILENT_ZEEK") {
-        let p = PathBuf::from(z);
-        if p.exists() {
-            return Ok(p);
+    if let Some(path) = user_path {
+        return verified(path.to_path_buf());
+    }
+    if let Some(path) = std::env::var_os("MAILENT_ZEEK") {
+        return verified(PathBuf::from(path));
+    }
+    if let Ok(path) = verified(PathBuf::from("zeek")) {
+        return Ok(path);
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let adjacent = dir.join("mailent-zeek");
+            if adjacent.exists() {
+                return verified(adjacent);
+            }
         }
     }
-
     for candidate in [
-        "scripts/zeek-container",
-        "../scripts/zeek-container",
-        "../../scripts/zeek-container",
+        "scripts/mailent-zeek",
+        "../scripts/mailent-zeek",
+        "../../scripts/mailent-zeek",
     ] {
         let p = PathBuf::from(candidate);
         if p.exists() {
-            return Ok(p);
+            if let Ok(verified_path) = verified(p) {
+                return Ok(verified_path);
+            }
         }
     }
-
-    if let Ok(output) = std::process::Command::new("zeek").arg("--version").output() {
-        if output.status.success() {
-            return Ok(PathBuf::from("zeek"));
-        }
-    }
-
-    Err("Zeek executable not found.\n\
-         Please install Zeek (https://zeek.org), set MAILENT_ZEEK, or pass --zeek path/to/zeek.\n\
-         If running in the Mailent repository, scripts/zeek-container can be used."
-        .to_string())
-}
-
-fn validate_domain(domain: &str) -> Result<String, String> {
-    let clean = domain
-        .trim()
-        .trim_start_matches("https://")
-        .trim_start_matches("http://")
-        .trim_end_matches('/')
-        .trim_end_matches('.')
-        .to_lowercase();
-
-    if clean.is_empty() {
-        return Err("Domain cannot be empty".to_string());
-    }
-    if clean.contains(' ') || clean.contains('/') || clean.contains(':') {
-        return Err(format!("Invalid domain format: '{domain}'"));
-    }
-    if !clean.contains('.') {
-        return Err(format!("Domain must contain a valid TLD: '{domain}'"));
-    }
-    Ok(clean)
+    Err("Zeek 8+ is required for Mailent. Run the website installer to set up Zeek, or set MAILENT_ZEEK to your Zeek executable.".into())
 }
 
 fn print_capture_table(

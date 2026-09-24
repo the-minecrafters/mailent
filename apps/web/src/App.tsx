@@ -3206,6 +3206,7 @@ function ReportsTab() {
 // 9. INTEGRATIONS TAB (WEBHOOK & SYSLOG/CEF)
 // ---------------------------------------------------------
 function IntegrationsTab() {
+  const { isGuest, openSignIn } = useAuth();
   const queryClient = useQueryClient();
   const [deleteTarget, setDeleteTarget] = useState<IntegrationConfig | null>(
     null,
@@ -3228,6 +3229,7 @@ function IntegrationsTab() {
   const integrationsQuery = useQuery({
     queryKey: ["integrations"],
     queryFn: fetchIntegrations,
+    enabled: !isGuest,
   });
 
   const createMutation = useMutation({
@@ -3286,6 +3288,8 @@ function IntegrationsTab() {
       prev.includes(evt) ? prev.filter((e) => e !== evt) : [...prev, evt],
     );
   };
+
+  if (isGuest) return <div className="tab-page"><PageHeader title="Integrations" description="Send updates to your team's tools." /><section className="card device-sign-in"><h2>Sign in to connect an integration</h2><p className="secondary-text">Connections are managed from your account.</p><Button variant="primary" onClick={openSignIn}>Sign in</Button></section></div>;
 
   if (integrationsQuery.isPending)
     return <LoadingState label="Loading integrations…" />;
@@ -3661,12 +3665,16 @@ function IntegrationsTab() {
 // 10. SENSORS TAB
 // ---------------------------------------------------------
 function SensorsTab() {
+  const { isGuest, openSignIn } = useAuth();
   const sensorsQuery = useQuery({
     queryKey: ["sensors"],
     queryFn: fetchSensors,
+    enabled: !isGuest,
     refetchInterval: 15000,
   });
   const sensors = sensorsQuery.data ?? [];
+
+  if (isGuest) return <div className="tab-page"><PageHeader title="Collectors" description="Monitor mail traffic with Zeek." /><section className="card device-sign-in"><h2>Sign in to connect a collector</h2><p className="secondary-text">Live traffic results are saved to your workspace.</p><Button variant="primary" onClick={openSignIn}>Sign in</Button></section></div>;
 
   return (
     <div>
@@ -3689,16 +3697,14 @@ function SensorsTab() {
         <summary>Connect a collector</summary>
         <p>
           On the machine that sees your mail traffic, choose the network
-          interface and run the Mailent collector with your service address.
+          interface, sign in with the CLI, and start Zeek monitoring.
         </p>
         <pre>
           <code>
-            MAILENT_COLLECTOR_TOKEN=&lt;collector-token&gt; mailent-sensor
-            listen -i &lt;network-interface&gt; --core
-            &lt;mailent-service-url&gt;
+            mailent monitor --interface &lt;network-interface&gt;
           </code>
         </pre>
-        <p>Once connected, its status and last update appear below.</p>
+        <p>Zeek 8+ and packet-capture permissions are required. Once connected, its status and last update appear below. Revoke the device to stop its workspace access.</p>
       </details>
       <div className="table-container">
         <table className="data-table">

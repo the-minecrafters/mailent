@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use clap::Subcommand;
 use mailent_domain::{AgentJob, AgentJobType};
@@ -9,7 +9,7 @@ use mailent_scanner::DomainScanner;
 use serde_json::json;
 use tracing::warn;
 
-use crate::credentials::load_credentials;
+use crate::credentials::{self, load_credentials};
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum AgentCommands {
@@ -87,6 +87,7 @@ fn get_unit_path(system: bool) -> Result<PathBuf, String> {
 }
 
 fn run_install(system: bool) -> Result<(), String> {
+    let zeek_path = crate::locate_zeek(None)?;
     let creds = load_credentials().ok_or_else(|| {
         "This device is not linked to a Mailent workspace yet.\nPlease run 'mailent login' first before installing the agent service.".to_string()
     })?;
@@ -99,24 +100,28 @@ fn run_install(system: bool) -> Result<(), String> {
         .ok_or("Invalid executable path string")?;
 
     let unit_path = get_unit_path(system)?;
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-
+    let zeek_path = zeek_path.display().to_string();
+    let credentials_path = credentials::credentials_path().display().to_string();
+    for value in [exe_str, &zeek_path, &credentials_path] {
+        if value.contains(['\n', '\r', '"', '%', '\\']) {
+            return Err("Unsupported character in the installation path.".into());
+        }
+    }
     let unit_content = format!(
         r#"[Unit]
-Description=Mailent Scanning Agent
+Description=Mailent mail-server monitoring
 Documentation=https://github.com/the-minecrafters/mailent
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart={exe_str} agent run
+ExecStart="{exe_str}" agent run
 Restart=on-failure
 RestartSec=5s
-NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths={home}/.config/mailent /tmp
+UMask=0077
+Environment="MAILENT_ZEEK={zeek_path}"
+Environment="MAILENT_CREDENTIALS_PATH={credentials_path}"
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 
 [Install]
@@ -162,7 +167,7 @@ WantedBy=default.target
     println!("  • Device Name:     {}", creds.device_name);
     println!("  • Device ID:       {}", creds.device_id);
     println!("  • Control Plane:   {}", creds.server_url);
-    println!("  • Auto-start:      Enabled (Restart=on-failure, NoNewPrivileges=true)");
+    println!("  • Auto-start:      Enabled (restart on connection errors)");
     println!("\nAgent service is now active and polling for scheduled jobs.");
     println!("Check agent status at any time with: mailent agent status\n");
 
@@ -170,6 +175,7 @@ WantedBy=default.target
 }
 
 fn run_start(system: bool) -> Result<(), String> {
+    crate::locate_zeek(None)?;
     let mut cmd = Command::new("systemctl");
     if !system {
         cmd.arg("--user");
@@ -204,6 +210,7 @@ fn run_stop(system: bool) -> Result<(), String> {
 }
 
 fn run_restart(system: bool) -> Result<(), String> {
+    crate::locate_zeek(None)?;
     let mut cmd = Command::new("systemctl");
     if !system {
         cmd.arg("--user");
@@ -334,7 +341,13 @@ async fn run_status(system: bool) -> Result<(), String> {
                     }
                 }
                 Ok(resp) => {
-                    println!("  • Control Status:    Failed (HTTP {})", resp.status());
+                    if credentials::handle_rejection(resp.status(), &c)? {
+                        return Ok(());
+                    }
+                    println!(
+                        "  • Control Status:    Unavailable (HTTP {})",
+                        resp.status()
+                    );
                 }
                 Err(e) => {
                     println!("  • Control Status:    Unreachable ({})", e);
@@ -351,100 +364,92 @@ async fn run_status(system: bool) -> Result<(), String> {
 }
 
 async fn run_daemon(poll_interval: u64, heartbeat_interval: u64) -> Result<(), String> {
-    let creds = load_credentials().ok_or_else(|| {
-        "This device is not linked to a Mailent workspace.\nPlease run 'mailent login' first to register this device.".to_string()
-    })?;
-
-    println!("\n╔══════════════════════════════════════════════════════════╗");
-    println!("║             MAILENT SCANNING AGENT DAEMON                ║");
-    println!("╚══════════════════════════════════════════════════════════╝");
-    println!(
-        "  Device:        {} ({})",
-        creds.device_name, creds.device_id
-    );
-    println!("  Control Plane: {}", creds.server_url);
-    println!("  Poll Interval: {}s", poll_interval);
-    println!("  Heartbeat:     {}s", heartbeat_interval);
-    println!("  Capabilities:  [infrastructure_scan, active_verification]");
-    println!("  PID:           {}", std::process::id());
-    println!("\nListening for scheduled infrastructure scan jobs. Press Ctrl+C to terminate.\n");
-
+    let creds = load_credentials().ok_or("Run 'mailent login' to connect this device.")?;
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(10))
         .build()
         .map_err(|e| e.to_string())?;
-
-    let base_url = creds.server_url.trim_end_matches('/').to_string();
-    let token = creds.device_token.clone();
-
-    // 1. Initial Heartbeat
-    send_heartbeat(&client, &base_url, &token, "idle").await;
-
-    let mut last_heartbeat = Instant::now();
-    let poll_dur = Duration::from_secs(poll_interval);
-    let heartbeat_dur = Duration::from_secs(heartbeat_interval);
-
+    let base_url = creds.server_url.trim_end_matches('/');
+    // Check access before starting any local work, including dependency setup.
+    if !send_heartbeat(&client, base_url, &creds, "idle").await? {
+        return Ok(());
+    }
+    let zeek = crate::locate_zeek(None)?;
+    println!("Mailent monitoring — {}", creds.device_name);
+    println!("Zeek: {}", zeek.display());
+    println!("Waiting for mail-server checks. Press Ctrl+C to stop.");
+    let mut poll = tokio::time::interval(Duration::from_secs(poll_interval.clamp(1, 30)));
+    let mut heartbeat = tokio::time::interval(Duration::from_secs(heartbeat_interval.clamp(1, 30)));
     loop {
-        // Send heartbeat if interval elapsed
-        if last_heartbeat.elapsed() >= heartbeat_dur {
-            send_heartbeat(&client, &base_url, &token, "idle").await;
-            last_heartbeat = Instant::now();
-        }
-
-        // Poll for assigned job
-        let poll_url = format!("{base_url}/api/v1/agent/jobs/poll");
-        let poll_resp = client
-            .post(&poll_url)
-            .header("Authorization", format!("Bearer {token}"))
-            .json(&json!({}))
-            .send()
-            .await;
-
-        match poll_resp {
-            Ok(resp) if resp.status().is_success() => {
-                if let Ok(body) = resp.json::<serde_json::Value>().await {
-                    if let Some(job_val) = body.get("job") {
-                        if !job_val.is_null() {
-                            if let Ok(job) = serde_json::from_value::<AgentJob>(job_val.clone()) {
-                                println!("[*] Leased Job: {} (type: {:?})", job.id, job.job_type);
-                                execute_job(&client, &base_url, &token, job).await;
-                                last_heartbeat = Instant::now();
-                                continue;
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => return Ok(()),
+            _ = heartbeat.tick() => {
+                if !send_heartbeat(&client, base_url, &creds, "idle").await? { return Ok(()); }
+            }
+            _ = poll.tick() => {
+                if !credentials::still_current(&creds) { println!("Signed out. Monitoring stopped."); return Ok(()); }
+                let response = client.post(format!("{base_url}/api/v1/agent/jobs/poll"))
+                    .bearer_auth(&creds.device_token).json(&json!({})).send().await;
+                match response {
+                    Ok(resp) => {
+                        if credentials::handle_rejection(resp.status(), &creds)? { return Ok(()); }
+                        if !resp.status().is_success() { warn!("Job check returned {}", resp.status()); continue; }
+                        let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+                        if let Some(value) = body.get("job").filter(|v| !v.is_null()) {
+                            let job: AgentJob = serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
+                            println!("Checking job {}", job.id);
+                            let work = execute_job(&client, base_url, &creds, job);
+                            tokio::pin!(work);
+                            let mut access_check = tokio::time::interval(Duration::from_secs(2));
+                            loop {
+                                tokio::select! {
+                                    result = &mut work => { if !result? { return Ok(()); } break; }
+                                    _ = tokio::signal::ctrl_c() => return Ok(()),
+                                    _ = access_check.tick() => {
+                                        if !send_heartbeat(&client, base_url, &creds, "busy").await? { return Ok(()); }
+                                    }
+                                }
                             }
+                            if !send_heartbeat(&client, base_url, &creds, "idle").await? { return Ok(()); }
                         }
                     }
+                    Err(e) => warn!("Cannot reach workspace: {e}"),
                 }
             }
-            Ok(resp) => {
-                warn!("Job poll returned HTTP status: {}", resp.status());
-            }
-            Err(e) => {
-                warn!("Failed to poll for jobs: {e}");
-            }
         }
-
-        tokio::time::sleep(poll_dur).await;
     }
 }
 
-async fn send_heartbeat(client: &reqwest::Client, base_url: &str, token: &str, status: &str) {
-    let url = format!("{base_url}/api/v1/agent/heartbeat");
-    let version = env!("CARGO_PKG_VERSION");
-    let req_body = json!({
-        "version": version,
-        "capabilities": ["infrastructure_scan", "active_verification"],
-        "status": status,
-    });
-
-    let _ = client
-        .post(&url)
-        .header("Authorization", format!("Bearer {token}"))
-        .json(&req_body)
-        .send()
-        .await;
+async fn send_heartbeat(
+    client: &reqwest::Client,
+    base_url: &str,
+    creds: &credentials::DeviceCredentials,
+    status: &str,
+) -> Result<bool, String> {
+    if !credentials::still_current(creds) {
+        println!("Signed out. Monitoring stopped.");
+        return Ok(false);
+    }
+    match client.post(format!("{base_url}/api/v1/agent/heartbeat"))
+        .bearer_auth(&creds.device_token)
+        .json(&json!({ "version": env!("CARGO_PKG_VERSION"), "capabilities": ["infrastructure_scan"], "status": status }))
+        .send().await {
+        Ok(response) => {
+            if credentials::handle_rejection(response.status(), creds)? { return Ok(false); }
+            if !response.status().is_success() { warn!("Workspace heartbeat returned {}", response.status()); }
+        }
+        Err(e) => warn!("Cannot send workspace heartbeat: {e}"),
+    }
+    Ok(true)
 }
 
-async fn execute_job(client: &reqwest::Client, base_url: &str, token: &str, job: AgentJob) {
+async fn execute_job(
+    client: &reqwest::Client,
+    base_url: &str,
+    creds: &credentials::DeviceCredentials,
+    job: AgentJob,
+) -> Result<bool, String> {
+    let token = &creds.device_token;
     match job.job_type {
         AgentJobType::InfrastructureAssessment {
             domain,
@@ -460,12 +465,29 @@ async fn execute_job(client: &reqwest::Client, base_url: &str, token: &str, job:
                 Err(e) => {
                     let err_msg = format!("Failed to initialize DomainScanner: {e}");
                     eprintln!("  [✗] {err_msg}");
-                    report_failure(client, base_url, token, job.id, &err_msg).await;
-                    return;
+                    return report_failure(client, base_url, creds, job.id, &err_msg).await;
                 }
             };
 
-            match scanner.scan_domain(&domain).await {
+            let result = tokio::time::timeout(
+                Duration::from_secs(timeout_seconds.clamp(10, 240)),
+                scanner.scan_domain(&domain),
+            )
+            .await;
+            let result = match result {
+                Ok(result) => result,
+                Err(_) => {
+                    return report_failure(
+                        client,
+                        base_url,
+                        creds,
+                        job.id,
+                        "The device check exceeded its time limit.",
+                    )
+                    .await;
+                }
+            };
+            match result {
                 Ok(scan_result) => {
                     println!(
                         "  [✓] Scan completed for {domain}: {} endpoints checked, {} passed, Posture Grade: {}",
@@ -479,7 +501,7 @@ async fn execute_job(client: &reqwest::Client, base_url: &str, token: &str, job:
                         "assessment": scan_result.assessment,
                         "findings": scan_result.findings,
                         "assets": [],
-                        "sessions": [],
+                        "sessions": scan_result.sessions,
                         "output_summary": {
                             "domain": domain,
                             "endpoints_checked": scan_result.endpoints_checked,
@@ -501,6 +523,9 @@ async fn execute_job(client: &reqwest::Client, base_url: &str, token: &str, job:
                             println!("  [✓] Job {} reported completed to control plane", job.id);
                         }
                         Ok(resp) => {
+                            if credentials::handle_rejection(resp.status(), creds)? {
+                                return Ok(false);
+                            }
                             eprintln!(
                                 "  [!] Failed to report completion to control plane: HTTP {}",
                                 resp.status()
@@ -514,41 +539,33 @@ async fn execute_job(client: &reqwest::Client, base_url: &str, token: &str, job:
                 Err(e) => {
                     let err_msg = format!("Infrastructure scan failed: {e}");
                     eprintln!("  [✗] {err_msg}");
-                    report_failure(client, base_url, token, job.id, &err_msg).await;
+                    return report_failure(client, base_url, creds, job.id, &err_msg).await;
                 }
             }
         }
         AgentJobType::ActiveVerification { endpoint } => {
-            println!("  ↳ Active verification for endpoint: {endpoint}");
-            let complete_url = format!("{base_url}/api/v1/agent/jobs/{}/complete", job.id);
-            let _ = client
-                .post(&complete_url)
-                .header("Authorization", format!("Bearer {token}"))
-                .json(&json!({
-                    "output_summary": {
-                        "endpoint": endpoint,
-                        "verified": true,
-                    }
-                }))
-                .send()
-                .await;
-            println!("  [✓] Active verification completed for {endpoint}");
+            return report_failure(client, base_url, creds, job.id, &format!("This CLI supports domain checks. Individual endpoint verification is not available for {endpoint}.")).await;
         }
     }
+    Ok(true)
 }
 
 async fn report_failure(
     client: &reqwest::Client,
     base_url: &str,
-    token: &str,
+    creds: &credentials::DeviceCredentials,
     job_id: uuid::Uuid,
     error: &str,
-) {
+) -> Result<bool, String> {
     let fail_url = format!("{base_url}/api/v1/agent/jobs/{job_id}/fail");
-    let _ = client
+    let response = client
         .post(&fail_url)
-        .header("Authorization", format!("Bearer {token}"))
+        .bearer_auth(&creds.device_token)
         .json(&json!({ "error": error }))
         .send()
         .await;
+    if let Ok(response) = response {
+        return Ok(!credentials::handle_rejection(response.status(), creds)?);
+    }
+    Ok(true)
 }

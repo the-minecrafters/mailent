@@ -2906,3 +2906,18 @@ main.console-main { max-width: 1540px; padding: 32px clamp(20px, 2.4vw, 40px); }
 .install-command .btn { flex-shrink: 0; display: inline-flex; align-items: center; gap: 8px; }
 .install-copy-status { min-height: 22px; margin: 6px 0 10px; font-size: 14px; color: var(--ink-secondary); }
 @media(max-width:650px) { .install-command { flex-wrap: wrap; padding: 15px; }.install-command code { flex-basis: calc(100% - 40px); }.install-command .btn { margin-left: auto; } }
+
+/* Device details keep whole labels and scroll inside the card on narrow desktops. */
+.device-sign-in { padding: 2rem; max-width: 48rem; display: grid; justify-items: start; gap: 1rem; }
+.device-sign-in h2, .device-sign-in p { margin: 0; }
+.device-sign-in p { max-width: 58ch; }
+.device-login-command { margin: 1rem 0 1.5rem; padding: 1rem; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.device-table-scroll { max-width: 100%; overflow-x: auto; }
+.devices-table { min-width: 920px; table-layout: auto; }
+.devices-table th, .devices-table .badge, .devices-table .device-version, .devices-table time span { white-space: nowrap; overflow-wrap: normal; word-break: normal; }
+.devices-table th:nth-child(1) { width: 22%; }
+.devices-table th:nth-child(2) { width: 18%; }
+.devices-table th:nth-child(3) { width: 23%; }
+.devices-table td { vertical-align: top; }
+.devices-table td:first-child strong { display: block; max-width: 22rem; }
+.devices-table time { display: grid; gap: .2rem; }

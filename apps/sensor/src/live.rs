@@ -7,7 +7,21 @@ use tracing::{error, info, warn};
 pub async fn run_live_listener(
     config: SensorConfig,
     zeek_bin: PathBuf,
+    shutdown_rx: watch::Receiver<bool>,
+) -> Result<(), SensorError> {
+    let client = reqwest::Client::builder()
+        .default_headers(crate::auth_headers())
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| SensorError::Submit(e.to_string()))?;
+    run_live_listener_with_client(config, zeek_bin, shutdown_rx, client).await
+}
+
+pub async fn run_live_listener_with_client(
+    config: SensorConfig,
+    zeek_bin: PathBuf,
     mut shutdown_rx: watch::Receiver<bool>,
+    client: reqwest::Client,
 ) -> Result<(), SensorError> {
     info!(
         sensor_id = %config.sensor_id,
@@ -20,10 +34,11 @@ pub async fn run_live_listener(
     let spool_dir = PathBuf::from(
         std::env::var("MAILENT_SENSOR_SPOOL_DIR").unwrap_or_else(|_| "/tmp/mailent-spool".into()),
     );
-    let spooler = Arc::new(BoundedSpooler::new(
+    let spooler = Arc::new(BoundedSpooler::with_client(
         config.core_endpoint.clone(),
         spool_dir,
         config.buffer_capacity,
+        client.clone(),
     ));
 
     // Prepare temporary directory for Zeek live execution
@@ -52,6 +67,11 @@ pub async fn run_live_listener(
             zeek_bin.display()
         ))
     })?;
+    if !version_out.status.success() {
+        return Err(SensorError::Zeek(
+            "Required Zeek could not start. Run 'mailent doctor'.".into(),
+        ));
+    }
     let zeek_version = String::from_utf8_lossy(&version_out.stdout)
         .trim()
         .to_string();
@@ -64,6 +84,9 @@ pub async fn run_live_listener(
         .arg(&config.interface)
         .arg("-C") // ignore checksums for live interface sniffing
         .arg("mailent")
+        .arg("-f")
+        .arg("tcp port 25 or tcp port 465 or tcp port 587 or tcp port 110 or tcp port 995 or tcp port 143 or tcp port 993")
+        .kill_on_drop(true)
         .current_dir(&work_path)
         .spawn()
         .map_err(|e| {
@@ -71,12 +94,6 @@ pub async fn run_live_listener(
         })?;
 
     info!(pid = ?zeek_child.id(), "Zeek live capture process running");
-
-    let client = reqwest::Client::builder()
-        .default_headers(crate::auth_headers())
-        .timeout(Duration::from_secs(5))
-        .build()
-        .unwrap_or_default();
 
     let hostname = std::env::var("HOSTNAME")
         .or_else(|_| std::env::var("HOST"))
@@ -86,10 +103,11 @@ pub async fn run_live_listener(
     let mut poll_ticker = interval(Duration::from_secs(2));
     let mut seen_observation_ids = std::collections::HashSet::new();
 
+    let mut failure = None;
     loop {
         tokio::select! {
-            _ = shutdown_rx.changed() => {
-                if *shutdown_rx.borrow() {
+            changed = shutdown_rx.changed() => {
+                if changed.is_err() || *shutdown_rx.borrow() {
                     info!("Shutdown signal received; stopping Zeek live listener");
                     break;
                 }
@@ -97,11 +115,12 @@ pub async fn run_live_listener(
             status = zeek_child.wait() => {
                 match status {
                     Ok(exit_status) => {
-                        warn!("Zeek process exited with: {exit_status}");
+                        failure = Some(SensorError::Zeek(format!("Live capture stopped ({exit_status}). Check the interface and packet-capture permissions.")));
                         break;
                     }
                     Err(e) => {
                         error!("Error waiting on Zeek process: {e}");
+                        failure = Some(SensorError::Zeek(e.to_string()));
                         break;
                     }
                 }
@@ -135,18 +154,37 @@ pub async fn run_live_listener(
                 };
 
                 let hb_url = format!("{}/api/v1/sensors/heartbeat", config.core_endpoint.trim_end_matches('/'));
-                if let Err(e) = client.post(&hb_url).json(&hb).send().await {
-                    warn!(error = %e, "Sensor heartbeat failed; Core may be offline");
+                match client.post(&hb_url).json(&hb).send().await {
+                    Ok(response) if response.status() == reqwest::StatusCode::UNAUTHORIZED || response.status() == reqwest::StatusCode::FORBIDDEN => {
+                        failure = Some(SensorError::Submit("Workspace access was removed. Live monitoring stopped.".into()));
+                        break;
+                    }
+                    Ok(response) if !response.status().is_success() => warn!(status = %response.status(), "Collector heartbeat rejected"),
+                    Err(e) => warn!(error = %e, "Collector heartbeat failed; workspace may be offline"),
+                    _ => {}
                 }
             }
         }
     }
 
-    // Gracefully terminate Zeek child
-    let _ = zeek_child.kill().await;
-    info!("Zeek process killed; draining remaining spool");
-    spooler.drain_pending().await;
-    info!("Mailent Sensor live listener stopped cleanly");
-
+    // SIGTERM lets container runners remove their container and lets Zeek flush logs.
+    #[cfg(unix)]
+    if let Some(pid) = zeek_child.id() {
+        let _ = Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .status()
+            .await;
+    }
+    if tokio::time::timeout(Duration::from_secs(5), zeek_child.wait())
+        .await
+        .is_err()
+    {
+        let _ = zeek_child.kill().await;
+    }
+    // Never send queued results after access is revoked or the caller stops.
+    if let Some(error) = failure {
+        return Err(error);
+    }
+    info!("Mailent live monitoring stopped");
     Ok(())
 }

@@ -175,13 +175,25 @@ pub async fn agent_complete_job_handler(
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
         for finding in &req.findings {
-            let _ = state.findings.save(finding.clone()).await;
+            state
+                .findings
+                .save(finding.clone())
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         }
         for asset in &req.assets {
-            let _ = state.assets.upsert(asset.clone()).await;
+            state
+                .assets
+                .upsert(asset.clone())
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         }
         for session in &req.sessions {
-            let _ = state.sessions.save(session.clone()).await;
+            state
+                .sessions
+                .save(session.clone())
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         }
 
         // Check for domain drift against prior infrastructure assessment
