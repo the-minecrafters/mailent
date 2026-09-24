@@ -6,7 +6,7 @@ services:
     region: singapore
     dockerfilePath: ./Dockerfile
     healthCheckPath: /health
-    autoDeployTrigger: off
+    autoDeployTrigger: commit
     envVars:
       - key: MAILENT_DATABASE_URL
         sync: false

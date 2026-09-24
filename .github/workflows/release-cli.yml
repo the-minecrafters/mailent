@@ -69,7 +69,9 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref_name }}
       - name: Install Protoc
-        run: choco install protoc -y
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Install Rust toolchain
         run: rustup toolchain install 1.94.0 --profile minimal
       - uses: actions/cache@v4
