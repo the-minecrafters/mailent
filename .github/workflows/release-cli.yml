@@ -26,6 +26,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler pkg-config libssl-dev
           rustup toolchain install 1.94.0 --profile minimal
+          # Ubuntu 22.04 ships protoc 3.12, which gates proto3 optional fields.
+          printf '#!/usr/bin/env bash\nexec /usr/bin/protoc --experimental_allow_proto3_optional "$@"\n' > "$RUNNER_TEMP/mailent-protoc"
+          chmod +x "$RUNNER_TEMP/mailent-protoc"
+          echo "PROTOC=$RUNNER_TEMP/mailent-protoc" >> "$GITHUB_ENV"
       - uses: actions/cache@v4
         with:
           path: |
