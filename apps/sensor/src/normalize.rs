@@ -421,6 +421,13 @@ pub fn normalize(
                         None
                     };
 
+                    let val_status = tls.text("validation_status")?;
+                    let chain_validation = match val_status {
+                        Some(s) if s.eq_ignore_ascii_case("ok") => ChainValidation::Verified,
+                        Some(s) if !s.is_empty() => ChainValidation::Failed,
+                        _ => ChainValidation::NotVerified,
+                    };
+
                     let crypto_details = Some(CertificateCryptoDetails {
                         signature_algorithm: sig_alg,
                         public_key: PublicKeyDetails {
@@ -429,7 +436,7 @@ pub fn normalize(
                             ec_curve,
                             spki_sha256: None,
                         },
-                        chain_validation: ChainValidation::NotVerified,
+                        chain_validation,
                         chain_length: chain_len,
                         extensions: CertificateExtensions {
                             basic_constraints,

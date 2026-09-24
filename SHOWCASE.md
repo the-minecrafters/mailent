@@ -77,9 +77,9 @@ To persist assessments, sessions, and findings across server restarts, authentic
 ```bash
 # 1. Obtain JWT token for approved workspace member
 TOKEN=$(curl -s -X POST "https://vuskxbttfmmyxpqudjwv.supabase.co/auth/v1/token?grant_type=password" \
-  -H "apikey: sb_publishable_JlhOKBZix9ohRNUSW87Qrw_qAt93seo" \
+  -H "apikey: $SUPABASE_ANON_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"email":"seadeepie@gmail.com","password":"Mailent2026!"}' | jq -r .access_token)
+  -d '{"email":"'"$WORKSPACE_EMAIL"'","password":"'"$WORKSPACE_PASSWORD"'"}' | jq -r .access_token)
 
 # 2. Perform authenticated analysis (persisted to Supabase PostgreSQL in Singapore)
 curl -s -X POST https://mailent.onrender.com/api/v1/assessments/analyze \
@@ -101,7 +101,7 @@ Open **`https://mailent.onrender.com`** in any browser.
 
 2. **Authentication Gate**:
    - **Skip Sign-In (Guest / Ephemeral Mode)**: Click **"Skip sign in (use without persistence)"** at the bottom of the card. You can immediately analyze PCAPs in-memory without creating an account.
-   - **Persistent Sign-In**: Enter `seadeepie@gmail.com` with password `Mailent2026!` to access persistent cloud storage.
+   - **Persistent Sign-In**: Enter your authorized workspace credentials to access persistent cloud storage.
 
 3. **Analyze Capture Workflow**:
    - Click the **"+ Analyze capture"** button in the top right.

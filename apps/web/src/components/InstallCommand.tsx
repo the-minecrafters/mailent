@@ -40,20 +40,22 @@ export function InstallCommand() {
   }
   return (
     <div className="install-command-group">
-      <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
+      <div className="platform-selector" role="tablist" aria-label="Target platform">
         <button
           type="button"
+          role="tab"
+          aria-selected={platform === "linux"}
           onClick={() => setPlatform("linux")}
-          className={platform === "linux" ? "badge badge-neutral" : "badge badge-outline"}
-          style={{ cursor: "pointer", fontSize: "12px", padding: "4px 10px", borderRadius: "14px" }}
+          className={`platform-btn ${platform === "linux" ? "is-active" : ""}`}
         >
-          Linux / macOS
+          Linux (x86_64)
         </button>
         <button
           type="button"
+          role="tab"
+          aria-selected={platform === "windows"}
           onClick={() => setPlatform("windows")}
-          className={platform === "windows" ? "badge badge-neutral" : "badge badge-outline"}
-          style={{ cursor: "pointer", fontSize: "12px", padding: "4px 10px", borderRadius: "14px" }}
+          className={`platform-btn ${platform === "windows" ? "is-active" : ""}`}
         >
           Windows (PowerShell)
         </button>

@@ -3655,6 +3655,18 @@ impl DeviceRepository for PostgresStorage {
 
 #[async_trait]
 impl JobRepository for PostgresStorage {
+    async fn cancel_active_for_device(
+        &self,
+        org_id: Uuid,
+        device_id: Uuid,
+        now: OffsetDateTime,
+    ) -> Result<u64, StorageError> {
+        let result = sqlx::query("UPDATE agent_jobs SET state = 'canceled', completed_at = $3, lease_expires_at = NULL, last_error = 'Device access was revoked. Connect a device to run this check again.' WHERE organization_id = $1 AND target_agent_id = $2 AND state IN ('pending', 'leased', 'running')")
+            .bind(org_id).bind(device_id).bind(now).execute(&*self.pool).await
+            .map_err(|e| StorageError::Backend(format!("cancel device jobs error: {e}")))?;
+        Ok(result.rows_affected())
+    }
+
     async fn create_job(&self, job: &AgentJob) -> Result<(), StorageError> {
         let exec_target = serde_json::to_value(&job.execution_target)
             .map_err(|e| StorageError::Backend(format!("Serialization error: {e}")))?;

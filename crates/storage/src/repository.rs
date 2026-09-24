@@ -459,6 +459,13 @@ pub trait DeviceRepository: Send + Sync {
 
 #[async_trait]
 pub trait JobRepository: Send + Sync {
+    /// Cancel every active job for a device within its workspace in one operation.
+    async fn cancel_active_for_device(
+        &self,
+        org_id: Uuid,
+        device_id: Uuid,
+        now: time::OffsetDateTime,
+    ) -> Result<u64, StorageError>;
     async fn create_job(&self, job: &mailent_domain::AgentJob) -> Result<(), StorageError>;
     async fn find_by_id(&self, id: Uuid) -> Result<Option<mailent_domain::AgentJob>, StorageError>;
     async fn find_by_idempotency_key(

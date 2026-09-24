@@ -338,36 +338,16 @@ async fn stop_device_jobs(
     id: Uuid,
     org_id: Uuid,
 ) -> Result<(), (StatusCode, String)> {
-    use mailent_domain::JobState;
     state
         .devices
         .update_agent_status(id, Some("revoked".into()), None, false)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let jobs = state
+    state
         .jobs
-        .list_for_org(org_id, 200)
+        .cancel_active_for_device(org_id, id, OffsetDateTime::now_utc())
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    for mut job in jobs {
-        if job.target_agent_id == Some(id)
-            && matches!(
-                job.state,
-                JobState::Pending | JobState::Leased | JobState::Running
-            )
-        {
-            job.state = JobState::Canceled;
-            job.completed_at = Some(OffsetDateTime::now_utc());
-            job.lease_expires_at = None;
-            job.last_error =
-                Some("Device access was revoked. Connect a device to run this check again.".into());
-            state
-                .jobs
-                .update_job(&job)
-                .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-        }
-    }
     Ok(())
 }
 

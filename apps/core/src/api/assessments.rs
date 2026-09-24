@@ -4,8 +4,10 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use mailent_correlation::{PostureInput, build_guidance, compute_posture};
 use mailent_domain::{
-    AssessmentRecord, CaptureMetadata, EmailProtocol, ProtocolEvidence, StartTlsState,
+    AssessmentRecord, CaptureMetadata, EmailProtocol, FindingSeverity, GuidanceKind, PostureGrade,
+    PostureSubjectKind, ProtocolEvidence, RiskLevel, StartTlsState,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -345,43 +347,6 @@ pub async fn analyze_capture_handler(
         all_drifts.extend(proc_res.drift_events);
     }
 
-    // Determine posture score and grade
-    let mut total_score = 100.0f32;
-
-    for f_id in &finding_ids {
-        if let Ok(Some(f)) = state.findings.find_by_id(*f_id).await {
-            match f.severity {
-                mailent_domain::FindingSeverity::Critical => {
-                    total_score -= 25.0;
-                }
-                mailent_domain::FindingSeverity::High => {
-                    total_score -= 15.0;
-                }
-                mailent_domain::FindingSeverity::Medium => {
-                    total_score -= 8.0;
-                }
-                mailent_domain::FindingSeverity::Low => {
-                    total_score -= 3.0;
-                }
-            }
-        }
-    }
-    if total_score < 0.0 {
-        total_score = 0.0;
-    }
-
-    let grade = if total_score >= 90.0 {
-        "A"
-    } else if total_score >= 80.0 {
-        "B"
-    } else if total_score >= 70.0 {
-        "C"
-    } else if total_score >= 60.0 {
-        "D"
-    } else {
-        "F"
-    };
-
     let mut finding_candidates = Vec::new();
     let mut resolved_findings = Vec::new();
     for f_id in &finding_ids {
@@ -402,8 +367,29 @@ pub async fn analyze_capture_handler(
         }
     }
 
+    let mut resolved_sessions = Vec::new();
+    for s_id in &session_ids {
+        if let Ok(Some(s)) = state.sessions.find_by_id(*s_id).await {
+            resolved_sessions.push(s);
+        }
+    }
+
     let assessment_id = Uuid::new_v4();
     let now = OffsetDateTime::now_utc();
+
+    // Determine deterministic posture score and grade via mailent_correlation
+    let posture_input = PostureInput {
+        findings: &resolved_findings,
+        anomalies: &all_anomalies,
+        asset: None,
+        asset_sessions: &resolved_sessions,
+        certificates: &[],
+        probe_runs: &[],
+        investigation: None,
+    };
+    let posture = compute_posture(PostureSubjectKind::Session, assessment_id, &posture_input);
+    let total_score = posture.score;
+    let grade = posture.grade.to_string();
 
     let decision_ctx = mailent_domain::DecisionContext {
         session_id: session_ids.first().copied().unwrap_or_else(Uuid::new_v4),
@@ -413,6 +399,7 @@ pub async fn analyze_capture_handler(
             "capture_name": capture_name,
             "session_count": session_ids.len(),
             "asset_count": asset_ids.len(),
+            "anomalies": all_anomalies,
             "anomalies_count": all_anomalies.len(),
             "drifts_count": all_drifts.len(),
             "posture_score": total_score,
@@ -466,11 +453,26 @@ pub async fn analyze_capture_handler(
     };
     let _ = state.decisions.save_record(&decision_record).await;
 
-    let ai_risk_classification = match decision_result.risk {
-        mailent_domain::RiskLevel::Critical => "CRITICAL".to_string(),
-        mailent_domain::RiskLevel::High => "HIGH".to_string(),
-        mailent_domain::RiskLevel::Medium => "MEDIUM".to_string(),
-        mailent_domain::RiskLevel::Low => {
+    let max_finding_risk = resolved_findings
+        .iter()
+        .map(|f| RiskLevel::from(f.severity))
+        .max()
+        .unwrap_or(RiskLevel::Low);
+
+    let baseline_risk = match posture.grade {
+        PostureGrade::Strong | PostureGrade::Good => RiskLevel::Low,
+        PostureGrade::Moderate => RiskLevel::Medium,
+        PostureGrade::Weak => RiskLevel::High,
+        PostureGrade::Critical => RiskLevel::Critical,
+    };
+
+    let effective_risk = decision_result.risk.max(baseline_risk).max(max_finding_risk);
+
+    let ai_risk_classification = match effective_risk {
+        RiskLevel::Critical => "CRITICAL".to_string(),
+        RiskLevel::High => "HIGH".to_string(),
+        RiskLevel::Medium => "MEDIUM".to_string(),
+        RiskLevel::Low => {
             if session_ids.is_empty() {
                 "INCONCLUSIVE".to_string()
             } else {
@@ -490,12 +492,21 @@ pub async fn analyze_capture_handler(
         )
     };
 
-    // Synthesize Threat Prioritization Matrix and Actionable Remediation Roadmap
+    // Synthesize Threat Prioritization Matrix and Actionable Remediation Roadmap grounded in findings
+    let guidance_items = build_guidance(
+        assessment_id,
+        &resolved_findings,
+        None,
+        &resolved_sessions,
+        &all_anomalies,
+        now,
+    );
+
     let mut threat_matrix = Vec::new();
     let mut remediation_roadmap = Vec::new();
 
-    for f in &resolved_findings {
-        let (priority_tier, threat_vector, remediation_recipe) = match f.rule_id.as_str() {
+    for g in guidance_items.iter().filter(|g| g.kind == GuidanceKind::Remediation) {
+        let (priority_tier, threat_vector, mut remediation_recipe) = match g.rule_id.as_str() {
             "TLS_LEGACY_VERSION" => (
                 "P1 - Immediate",
                 "Downgrade & Cipher Interception: Attackers capable of passive or active interception can force legacy SSLv3/TLS 1.0 negotiations to exploit protocol weaknesses (e.g. POODLE, BEAST).",
@@ -559,30 +570,49 @@ pub async fn analyze_capture_handler(
                     ]
                 })
             ),
-            _ => (
-                "P3 - Medium",
-                "General Cryptographic Misconfiguration: Deviates from RFC 8461/BCP 195 compliance recommendations.",
-                serde_json::json!({
-                    "service": "general",
-                    "action": f.remediation.clone(),
-                    "commands": [],
-                    "dovecot": []
-                })
-            ),
+            _ => {
+                let tier = match g.severity {
+                    FindingSeverity::Critical => "P1 - Critical",
+                    FindingSeverity::High => "P2 - High",
+                    FindingSeverity::Medium => "P3 - Medium",
+                    FindingSeverity::Low => "P4 - Low",
+                };
+                (
+                    tier,
+                    g.why_it_matters.as_str(),
+                    serde_json::json!({
+                        "service": "general",
+                        "action": g.recommendation.clone(),
+                        "commands": [],
+                        "dovecot": []
+                    })
+                )
+            }
         };
 
+        if let Some(obj) = remediation_recipe.as_object_mut() {
+            obj.insert("observed".into(), serde_json::json!(g.observed));
+            obj.insert("recommended_state".into(), serde_json::json!(g.recommended_state));
+            obj.insert("verification".into(), serde_json::json!(g.verification));
+            if !g.compatibility_caveats.is_empty() {
+                obj.insert("caveats".into(), serde_json::json!(g.compatibility_caveats));
+            }
+        }
+
         threat_matrix.push(serde_json::json!({
-            "rule_id": f.rule_id,
-            "title": f.title,
-            "severity": f.severity.to_string(),
+            "rule_id": g.rule_id,
+            "title": g.title,
+            "severity": g.severity.to_string(),
             "priority_tier": priority_tier,
             "threat_vector": threat_vector,
-            "reference": f.reference,
+            "observed": g.observed,
+            "why_it_matters": g.why_it_matters,
+            "reference": "",
         }));
 
         remediation_roadmap.push(serde_json::json!({
-            "rule_id": f.rule_id,
-            "title": f.title,
+            "rule_id": g.rule_id,
+            "title": g.title,
             "priority": priority_tier,
             "recipe": remediation_recipe,
         }));

@@ -135,7 +135,7 @@ fn test_cli_analyze_real_pcap_json() {
         parsed["assessment"]["source"]["capture_name"],
         "smtp_starttls.pcap"
     );
-    assert_eq!(parsed["report_summary"]["risk_level"], "MEDIUM");
+    assert_eq!(parsed["report_summary"]["risk_level"], "HIGH");
 }
 
 #[test]
@@ -160,7 +160,7 @@ fn test_cli_analyze_downgrade_auth_exposed() {
     let parsed: serde_json::Value =
         serde_json::from_str(&stdout).expect("Output must be valid JSON");
     assert_eq!(parsed["report_summary"]["findings_count"], 1);
-    assert_eq!(parsed["report_summary"]["risk_level"], "MEDIUM");
+    assert_eq!(parsed["report_summary"]["risk_level"], "HIGH");
     assert_eq!(
         parsed["assessment"]["finding_ids"]
             .as_array()

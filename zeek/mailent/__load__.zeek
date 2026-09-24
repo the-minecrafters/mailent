@@ -3,6 +3,7 @@
 @load base/protocols/ssl
 @load base/files/x509
 @load policy/protocols/ssl/ssl-log-ext
+@load policy/protocols/ssl/validate-certs
 @load policy/frameworks/files/hash-all-files
 @load-sigs ./dpd.sig
 

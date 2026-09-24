@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use crate::finding::FindingCandidate;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RiskLevel {
     Low,
@@ -12,7 +12,18 @@ pub enum RiskLevel {
     Critical,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+impl From<crate::finding::FindingSeverity> for RiskLevel {
+    fn from(s: crate::finding::FindingSeverity) -> Self {
+        match s {
+            crate::finding::FindingSeverity::Low => RiskLevel::Low,
+            crate::finding::FindingSeverity::Medium => RiskLevel::Medium,
+            crate::finding::FindingSeverity::High => RiskLevel::High,
+            crate::finding::FindingSeverity::Critical => RiskLevel::Critical,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PriorityLevel {
     Low,

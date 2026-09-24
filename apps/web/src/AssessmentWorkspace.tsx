@@ -1762,7 +1762,7 @@ export function AssessmentWorkspace({
                     }}
                   >
                     <Icon name="psychology" size={20} />
-                    Jev AI Threat Prioritization & Risk Engine
+                    Risk review
                   </span>
                   <span
                     className="badge"
@@ -1774,27 +1774,23 @@ export function AssessmentWorkspace({
                     }}
                   >
                     {assessment.metadata?.ai_provider === "jev"
-                      ? "Jev Engine Online"
-                      : "Jev Deterministic Mode"}
+                      ? "AI-assisted"
+                      : "Policy-based"}
                   </span>
-                  {assessment.metadata?.jev_model && (
-                    <span className="mono" style={{ fontSize: "0.75rem", color: "var(--ink-secondary)" }}>
-                      model: {assessment.metadata.jev_model}
-                    </span>
-                  )}
+
                 </div>
                 <p
                   className="secondary-text"
                   style={{ fontSize: "0.875rem", margin: "0.35rem 0 0 0" }}
                 >
-                  Evaluates cryptographic handshakes, cipher negotiation, and protocol transition boundaries using evidence-grounded reasoning.
+                  Prioritizes the findings from this assessment. Review the supporting evidence before making changes.
                 </p>
               </div>
 
               <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
                 <div style={{ textAlign: "right" }}>
                   <div style={{ fontSize: "0.75rem", color: "var(--ink-secondary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                    AI Confidence
+                    Review confidence
                   </div>
                   <div className="mono" style={{ fontWeight: 700, fontSize: "1.125rem", color: "var(--ink)" }}>
                     {Math.round((assessment.ai_confidence ?? 0) * 100)}%

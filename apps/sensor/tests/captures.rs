@@ -1,4 +1,4 @@
-use mailent_domain::{EmailProtocol, KeyExchange, StartTlsState, TlsVersion};
+use mailent_domain::{ChainValidation, EmailProtocol, KeyExchange, StartTlsState, TlsVersion};
 use mailent_sensor::analyze::analyze;
 use std::path::{Path, PathBuf};
 
@@ -54,6 +54,8 @@ async fn test_smtp_starttls_pcap_and_pcapng() {
         );
         assert_eq!(cert.reference.subject, "CN=mail.mailent.test");
         assert_eq!(cert.reference.issuer, "CN=mail.mailent.test");
+        let crypto = cert.crypto_details.as_ref().expect("Crypto details present");
+        assert_eq!(crypto.chain_validation, ChainValidation::Failed);
 
         let capture = obs.capture.as_ref().expect("Capture evidence present");
         assert_eq!(capture.tls_established, Some(true));

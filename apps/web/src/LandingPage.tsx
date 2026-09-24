@@ -25,32 +25,32 @@ import { MailentLogo } from "./components/MailentLogo";
 
 const approaches = [
   {
-    label: "Domain",
-    icon: Globe2,
-    title: "Start with a domain.",
-    description:
-      "Find its mail servers and check DNS, encryption, and certificates.",
-    chips: ["Mail servers", "Encryption", "Certificates"],
-    action: "Check a domain",
-    href: "/workspace/overview?start=domain",
-  },
-  {
     label: "Capture",
     icon: FileSearch,
-    title: "See what really happened.",
+    title: "Inspect real email traffic.",
     description:
-      "Read a network capture and follow the connections behind each finding.",
-    chips: ["Connections", "TLS details", "Findings"],
+      "Parse PCAP captures of SMTP, IMAP, and POP3 sessions with Zeek to verify STARTTLS, TLS versions, cipher suites, and X.509 chains.",
+    chips: ["PCAP / PCAPNG", "STARTTLS & ciphers", "X.509 validation"],
     action: "Analyze a capture",
     href: "/workspace/overview?start=capture",
   },
   {
+    label: "Domain",
+    icon: Globe2,
+    title: "Assess external mail posture.",
+    description:
+      "Discover mail exchangers and inspect MTA-STS, DANE, DNSSEC, SPF, DKIM, and live port encryption across all discovered hosts.",
+    chips: ["MX Discovery", "MTA-STS & DANE", "DNSSEC & SPF"],
+    action: "Check a domain",
+    href: "/workspace/overview?start=domain",
+  },
+  {
     label: "Monitor",
     icon: Radar,
-    title: "Keep up with changes.",
+    title: "Continuous mail monitoring.",
     description:
-      "Schedule checks and compare results as your mail settings change.",
-    chips: ["Scheduled checks", "Change history", "Notifications"],
+      "Run persistent local collectors and scheduled checks to track configuration drift, certificate renewals, and protocol regressions.",
+    chips: ["Live packet capture", "Drift detection", "Forensic dossiers"],
     action: "Explore monitoring",
     href: "/workspace/captures",
   },
@@ -105,38 +105,39 @@ export function LandingPage() {
           <div className="hero-grid home-container">
             <div className="hero-copy">
               <div className="home-kicker">
-                <span className="kicker-dot" /> A clearer view of email security
+                <span className="kicker-dot" /> Email traffic analysis with Zeek
               </div>
               <h1>
-                Your mail.
+                Your mail traffic.
                 <br />
-                Every connection.
+                Its encryption.
                 <br />
-                <em>In the clear.</em>
+                <em>The evidence.</em>
               </h1>
               <p className="hero-description">
-                Check a domain, inspect your traffic, and stay on top of
-                changes. All the details you need. One place to work.
+                Analyze SMTP, IMAP, and POP3 captures to find weak TLS, expired
+                certificates, and failed encryption upgrades. Connect a collector
+                to track your mail servers over time.
               </p>
               <div className="hero-actions">
                 <Link
-                  to="/workspace/overview?start=domain"
+                  to="/workspace/overview?start=capture"
                   className="home-button"
                 >
-                  Check a domain <ArrowUpRight size={20} />
+                  Analyze a capture <ArrowUpRight size={20} />
                 </Link>
                 <Link
-                  to="/workspace/overview?start=capture"
+                  to="/workspace/overview?start=domain"
                   className="home-button home-button-light"
                 >
-                  Analyze a capture <FileSearch size={19} />
+                  Check a domain <FileSearch size={19} />
                 </Link>
               </div>
               <a className="hero-explore" href="#possibilities">
                 <span>
                   <ArrowDown size={17} />
                 </span>
-                Take a look around
+                See what Mailent checks
               </a>
             </div>
             <div className="hero-visual">
@@ -240,7 +241,7 @@ export function LandingPage() {
             </div>
           </div>
           <div className="protocol-strip home-container">
-            <span>Built around the way email works</span>
+            <span>Mail protocols and transport encryption</span>
             <div>
               <span>SMTP</span>
               <i />
@@ -260,17 +261,17 @@ export function LandingPage() {
           <div className="section-heading" data-reveal>
             <div>
               <span className="home-kicker">
-                A few ways to get the full picture
+                Captures, server checks, and monitoring
               </span>
               <h2>
-                Start anywhere.
+                Analyze traffic.
                 <br />
-                <em>See more.</em>
+                <em>Track changes.</em>
               </h2>
             </div>
             <p>
-              From a quick domain check to an ongoing view of your network,
-              Mailent keeps the findings connected to the details behind them.
+              Inspect recorded connections with Zeek, check a server’s current
+              configuration, and compare new results with previous checks.
             </p>
           </div>
           <div className="capability-grid">
@@ -294,10 +295,10 @@ export function LandingPage() {
                   <span>Certificates</span>
                 </div>
               </div>
-              <h3>Start with a domain</h3>
+              <h3>Check a mail domain</h3>
               <p>
-                Discover mail servers and check their encryption, certificates,
-                and email security settings.
+                Find mail servers through DNS and check their TLS and certificates.
+                Use a connected device for checks your cloud network cannot reach.
               </p>
               <span className="feature-link">
                 Check a domain <ArrowRight size={18} />
@@ -328,10 +329,10 @@ export function LandingPage() {
                   )}
                 </div>
               </div>
-              <h3>Follow the actual traffic</h3>
+              <h3>Analyze a PCAP file</h3>
               <p>
-                Upload a capture to see how connections behaved, what was
-                encrypted, and where issues appeared.
+                Reconstruct mail sessions with Zeek. Review STARTTLS, TLS versions,
+                cipher suites, Forward Secrecy, and captured certificates.
               </p>
               <span className="feature-link">
                 Analyze a capture <ArrowRight size={18} />
@@ -359,10 +360,10 @@ export function LandingPage() {
                   <span>Check. Compare. Repeat.</span>
                 </div>
               </div>
-              <h3>Keep an eye on changes</h3>
+              <h3>Monitor your mail servers</h3>
               <p>
-                Schedule recurring checks, compare results, and send updates to
-                the tools your team already uses.
+                Collect live traffic with Zeek and schedule server checks. Track
+                certificate changes, weaker encryption, and new findings.
               </p>
               <span className="feature-link">
                 Explore monitoring <ArrowRight size={18} />
@@ -374,15 +375,15 @@ export function LandingPage() {
         <section className="workflow-section" id="workflow">
           <div className="home-container workflow-grid">
             <div className="workflow-copy" data-reveal>
-              <span className="home-kicker">Less digging. More doing.</span>
+              <span className="home-kicker">From evidence to a verified fix</span>
               <h2>
                 A finding is
                 <br />
                 just the <em>start.</em>
               </h2>
               <p>
-                See the connection behind an issue, make the change, and check
-                the result. Your records stay together along the way.
+                Trace each finding to a connection or certificate. Review the
+                suggested fix, then run another check to verify the change.
               </p>
               <Link className="home-button" to="/workspace">
                 Open workspace <ArrowUpRight size={19} />
@@ -398,14 +399,14 @@ export function LandingPage() {
                 ],
                 [
                   "02",
-                  "Make the next move",
-                  "Review suggested fixes and run a live check when you’re ready to verify a change.",
+                  "Prioritize and fix issues",
+                  "Use severity and AI-assisted risk review to prioritize findings. Verify fixes with a new capture or server check.",
                   ShieldCheck,
                 ],
                 [
                   "03",
-                  "Keep a useful record",
-                  "Save reports and export the details for your team, your next review, or your own records.",
+                  "Export the evidence",
+                  "Download JSON, HTML, or PDF reports with findings, connection details, and the limits of the captured evidence.",
                   FileText,
                 ],
               ].map(([number, title, body, StepIcon]) => {
@@ -453,16 +454,16 @@ export function LandingPage() {
             </div>
           </div>
           <div className="network-copy" data-reveal>
-            <span className="home-kicker">A workspace that grows with you</span>
+            <span className="home-kicker">Local collection, shared results</span>
             <h2>
               Close to your mail.
               <br />
               <em>Wherever it runs.</em>
             </h2>
             <p>
-              Connect devices to run checks from your network. Add collectors
-              for ongoing traffic analysis. Bring everything back to a workspace
-              your team can use.
+              Run the CLI on your network for server checks and Zeek traffic
+              collection. Send results to your workspace to review connections,
+              findings, and changes in one place.
             </p>
             <ul>
               <li>
@@ -529,20 +530,20 @@ export function LandingPage() {
         <section className="home-final home-container" data-reveal>
           <div>
             <MailentLogo size={62} />
-            <span className="home-kicker">Your next clear step</span>
+            <span className="home-kicker">Verify your email security</span>
           </div>
           <h2>
-            Get to know
+            Passive PCAP forensic inspection
             <br />
-            <em>your mail better.</em>
+            <em>with Zeek 8+.</em>
           </h2>
-          <Link to="/workspace/overview?start=domain" className="home-button">
-            Check a domain <ArrowUpRight size={21} />
+          <Link to="/workspace/overview?start=capture" className="home-button">
+            Analyze a capture <ArrowUpRight size={21} />
           </Link>
           <p>
             Or{" "}
-            <Link to="/workspace/overview?start=capture">
-              bring a capture of your own.
+            <Link to="/workspace/overview?start=domain">
+              check an external mail domain.
             </Link>
           </p>
         </section>
@@ -552,7 +553,7 @@ export function LandingPage() {
           <MailentLogo size={34} />
           mailent
         </Link>
-        <span>A clearer view of email security.</span>
+        <span>Email traffic analysis with Zeek.</span>
         <nav aria-label="Footer">
           <Link to="/privacy">Privacy</Link>
           <Link to="/workspace">

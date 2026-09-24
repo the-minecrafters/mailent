@@ -2907,6 +2907,11 @@ main.console-main { max-width: 1540px; padding: 32px clamp(20px, 2.4vw, 40px); }
   .console-main [style*="grid-template-columns: repeat(2"] { grid-template-columns: minmax(0, 1fr) !important; }
 }
 
+.platform-selector { display: flex; gap: 8px; margin-bottom: 10px; }
+.platform-btn { display: inline-flex; align-items: center; padding: 5px 12px; font-size: 12px; font-weight: 500; border-radius: 16px; border: 1px solid var(--hairline, #e2e8f0); background: var(--surface-subtle, #f8fafc); color: var(--muted, #64748b); cursor: pointer; transition: all 0.15s ease; }
+.platform-btn:hover { border-color: var(--accent, #6366f1); color: var(--text, #0f172a); }
+.platform-btn.is-active { background: var(--accent, #6366f1); border-color: var(--accent, #6366f1); color: #ffffff; font-weight: 600; }
+
 .install-command { display: flex; align-items: center; gap: 14px; min-width: 0; padding: 16px 18px; background: var(--surface-subtle); border: 1px solid var(--hairline); border-radius: 10px; }
 .install-command > svg { flex-shrink: 0; color: var(--accent); }
 .install-command code { min-width: 0; flex: 1; font-size: 14px; line-height: 1.7; font-weight: 600; overflow-wrap: anywhere; user-select: all; }

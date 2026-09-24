@@ -32,4 +32,22 @@ describe("CLI install command", () => {
     expect(screen.getByText(INSTALL_COMMAND)).toBeVisible();
     write.mockRestore();
   });
+  it("switches between Linux and Windows install commands via the platform selector", async () => {
+    const user = userEvent.setup();
+    const write = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockResolvedValue();
+    render(<InstallCommand />);
+    expect(screen.getByText(INSTALL_COMMAND)).toBeVisible();
+    const winTab = screen.getByRole("tab", { name: /Windows/i });
+    await user.click(winTab);
+    expect(screen.getByRole("button", { name: "Copy install command" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Copy install command" }));
+    expect(write).toHaveBeenCalledWith(expect.stringContaining("install.ps1"));
+    const linuxTab = screen.getByRole("tab", { name: /Linux/i });
+    await user.click(linuxTab);
+    await user.click(screen.getByRole("button", { name: "Copy install command" }));
+    expect(write).toHaveBeenCalledWith(INSTALL_COMMAND);
+    write.mockRestore();
+  });
 });

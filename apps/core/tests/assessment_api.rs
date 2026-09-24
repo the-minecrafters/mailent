@@ -56,9 +56,9 @@ async fn test_assessments_api_lifecycle() {
     );
     assert!(!assessment.session_ids.is_empty());
     assert!(!assessment.asset_ids.is_empty());
-    assert!(assessment.posture_score >= 80.0);
-    assert!(assessment.posture_grade == "A" || assessment.posture_grade == "B");
-    assert!(!assessment.ai_risk_classification.is_empty());
+    assert_eq!(assessment.posture_score, 60.0);
+    assert_eq!(assessment.posture_grade, "Moderate");
+    assert_eq!(assessment.ai_risk_classification, "HIGH");
 
     // 3. Fetch assessment by ID
     let get_req = Request::builder()
@@ -229,8 +229,8 @@ async fn test_assessments_api_edge_cases_and_adversarial_inputs() {
         let body = res.into_body().collect().await.unwrap().to_bytes();
         let assessment: AssessmentRecord = serde_json::from_slice(&body).unwrap();
         assert_eq!(assessment.finding_ids.len(), 1);
-        assert_eq!(assessment.posture_grade, "B");
-        assert_eq!(assessment.posture_score, 85.0);
+        assert_eq!(assessment.posture_grade, "Moderate");
+        assert_eq!(assessment.posture_score, 60.0);
     }
 
     // 7. IMAPS TLS 1.3 PCAP -> CREATED, IMAPS identified

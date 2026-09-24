@@ -1366,6 +1366,35 @@
   margin: 0;
   color: var(--home-muted);
 }
+.platform-selector {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.platform-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 9999px;
+  border: 1px solid #d9d0e9;
+  background: #fbf9fe;
+  color: #645675;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.platform-btn:hover {
+  border-color: #b7a6d6;
+  color: #5545c7;
+}
+.platform-btn.is-active {
+  background: #5545c7;
+  border-color: #5545c7;
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(85, 69, 199, 0.25);
+}
 .home-install .install-command {
   padding: 20px;
   background: #fcfaff;

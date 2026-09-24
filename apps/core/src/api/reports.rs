@@ -1,5 +1,6 @@
-use crate::evidence::EvidenceSnapshot;
+use crate::{auth::ExecutionContext, evidence::EvidenceSnapshot};
 use axum::{
+    Extension,
     extract::{Path, Query, State},
     http::{HeaderValue, StatusCode, header},
     response::IntoResponse,
@@ -231,16 +232,19 @@ pub async fn get_archived_report_handler(
 
 pub async fn get_assessment_report_handler(
     State(state): State<AppState>,
+    ctx: Option<Extension<ExecutionContext>>,
     Path(id): Path<Uuid>,
     Query(query): Query<ReportQuery>,
 ) -> Result<axum::response::Response, (StatusCode, String)> {
     let format = query.format.unwrap_or(ReportFormatQuery::Json);
-    let assessment = state
-        .assessments
-        .find_by_id(id)
-        .await
-        .map_err(storage_error)?
-        .ok_or((StatusCode::NOT_FOUND, format!("assessment {id} not found")))?;
+    let org_id = ctx.as_ref().and_then(|Extension(c)| c.organization_id);
+    let assessment = if let Some(org_id) = org_id {
+        state.assessments.find_by_id_scoped(id, org_id).await
+    } else {
+        state.assessments.find_by_id(id).await
+    }
+    .map_err(storage_error)?
+    .ok_or((StatusCode::NOT_FOUND, format!("assessment {id} not found")))?;
     let evidence = EvidenceSnapshot::assessment(&state, id)
         .await
         .map_err(storage_error)?
@@ -262,7 +266,7 @@ pub async fn get_assessment_report_handler(
                 .iter()
                 .find(|d| !d.dnssec_status.is_empty())
                 .map(|d| d.dnssec_status.clone())
-                .unwrap_or_else(|| "insecure".to_string());
+                .unwrap_or_else(|| "unknown".to_string());
             let mta_sts_mode = assessment
                 .metadata
                 .get("mta_sts_mode")

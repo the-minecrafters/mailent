@@ -1461,6 +1461,34 @@ impl DeviceRepository for InMemoryStorage {
 
 #[async_trait]
 impl JobRepository for InMemoryStorage {
+    async fn cancel_active_for_device(
+        &self,
+        org_id: Uuid,
+        device_id: Uuid,
+        now: OffsetDateTime,
+    ) -> Result<u64, StorageError> {
+        let mut jobs = self.agent_jobs.write().await;
+        let mut count = 0;
+        for job in jobs.iter_mut().filter(|j| {
+            j.organization_id == org_id
+                && j.target_agent_id == Some(device_id)
+                && matches!(
+                    j.state,
+                    mailent_domain::JobState::Pending
+                        | mailent_domain::JobState::Leased
+                        | mailent_domain::JobState::Running
+                )
+        }) {
+            job.state = mailent_domain::JobState::Canceled;
+            job.completed_at = Some(now);
+            job.lease_expires_at = None;
+            job.last_error =
+                Some("Device access was revoked. Connect a device to run this check again.".into());
+            count += 1;
+        }
+        Ok(count)
+    }
+
     async fn create_job(&self, job: &mailent_domain::AgentJob) -> Result<(), StorageError> {
         let mut list = self.agent_jobs.write().await;
         list.retain(|j| j.id != job.id);

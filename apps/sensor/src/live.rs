@@ -64,13 +64,13 @@ pub async fn run_live_listener_with_client(
             .and_then(|s| s.to_str())
             .is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"));
 
-    let mut version_cmd = if is_script {
-        let mut c = Command::new("cmd.exe");
-        c.arg("/c").arg(&zeek_bin);
-        c
-    } else {
-        Command::new(&zeek_bin)
-    };
+    if is_script {
+        return Err(SensorError::Zeek(
+            "Live host packet capture is not supported via containerized Zeek on Windows (containers run in network isolation without access to Windows host interfaces). For live host packet monitoring, deploy the Mailent collector on Linux or run in WSL with root capture permissions. Offline PCAP analysis ('mailent analyze') is fully supported on Windows.".into(),
+        ));
+    }
+
+    let mut version_cmd = Command::new(&zeek_bin);
     version_cmd.arg("--version");
     version_cmd.current_dir(&work_path);
     let version_out = version_cmd.output().await.map_err(|e| {

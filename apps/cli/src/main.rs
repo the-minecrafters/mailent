@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 use mailent_correlation::{FindingCorrelator, PostureInput, build_guidance, compute_posture};
 use mailent_domain::{
     AssessmentRecord, CaptureMetadata, EmailProtocol, EmailSession, Finding, FindingSeverity,
-    PostureGrade, PostureSubjectKind, ProtocolEvidence, StartTlsState,
+    PostureGrade, PostureSubjectKind, ProtocolEvidence, RiskLevel, StartTlsState,
 };
 use mailent_integrations::LiveDomainIntelligenceResolver;
 use mailent_policy::PolicyPack;
@@ -343,8 +343,29 @@ async fn run_analyze(
         sessions.push(session);
     }
 
-    all_findings.sort_by(|a, b| (&a.rule_id, &a.title).cmp(&(&b.rule_id, &b.title)));
-    all_findings.dedup_by(|a, b| a.rule_id == b.rule_id && a.title == b.title);
+    let mut deduped_findings: Vec<Finding> = Vec::new();
+    for finding in all_findings {
+        if let Some(existing) = deduped_findings
+            .iter_mut()
+            .find(|f| f.rule_id == finding.rule_id && f.title == finding.title)
+        {
+            existing.affected_count += finding.affected_count;
+            for ev in finding.evidence {
+                if !existing.evidence.iter().any(|e| e == &ev) {
+                    existing.evidence.push(ev);
+                }
+            }
+            if finding.last_seen > existing.last_seen {
+                existing.last_seen = finding.last_seen;
+            }
+            if finding.first_seen < existing.first_seen {
+                existing.first_seen = finding.first_seen;
+            }
+        } else {
+            deduped_findings.push(finding);
+        }
+    }
+    let all_findings = deduped_findings;
 
     // 5. Compute Posture & Guidance
     let asset_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, capture_hash.as_bytes());
@@ -363,11 +384,32 @@ async fn run_analyze(
     let posture_score = posture.score;
     let posture_grade = posture.grade.to_string();
 
-    let ai_risk_classification = match posture.grade {
-        PostureGrade::Strong | PostureGrade::Good => "LOW".to_string(),
-        PostureGrade::Moderate => "MEDIUM".to_string(),
-        PostureGrade::Weak => "HIGH".to_string(),
-        PostureGrade::Critical => "CRITICAL".to_string(),
+    let baseline_risk = match posture.grade {
+        PostureGrade::Strong | PostureGrade::Good => RiskLevel::Low,
+        PostureGrade::Moderate => RiskLevel::Medium,
+        PostureGrade::Weak => RiskLevel::High,
+        PostureGrade::Critical => RiskLevel::Critical,
+    };
+
+    let max_finding_risk = all_findings
+        .iter()
+        .map(|f| RiskLevel::from(f.severity))
+        .max()
+        .unwrap_or(RiskLevel::Low);
+
+    let effective_risk = baseline_risk.max(max_finding_risk);
+
+    let ai_risk_classification = match effective_risk {
+        RiskLevel::Critical => "CRITICAL".to_string(),
+        RiskLevel::High => "HIGH".to_string(),
+        RiskLevel::Medium => "MEDIUM".to_string(),
+        RiskLevel::Low => {
+            if sessions.is_empty() {
+                "INCONCLUSIVE".to_string()
+            } else {
+                "LOW".to_string()
+            }
+        }
     };
 
     let ai_risk_rationale = if all_findings
