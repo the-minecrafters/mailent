@@ -1644,18 +1644,19 @@ function AssetDetailView({
       {/* Guidance Surfaces */}
       {postureData && (
         <div style={{ marginTop: "1.5rem" }}>
-          <div className="card">
-            <h3>
-              Fix Security Issues (
-              {
-                postureData.guidance.filter((g) => g.kind === "remediation" && Boolean(g.finding_id))
-                  .length
-              }
-              )
-            </h3>
-            {postureData.guidance
-              .filter((g) => g.kind === "remediation" && Boolean(g.finding_id))
-              .map((g) => (
+          {postureData.guidance.filter((g) => g.kind === "remediation" && Boolean(g.finding_id)).length > 0 ? (
+            <div className="card">
+              <h3>
+                Fix Security Issues (
+                {
+                  postureData.guidance.filter((g) => g.kind === "remediation" && Boolean(g.finding_id))
+                    .length
+                }
+                )
+              </h3>
+              {postureData.guidance
+                .filter((g) => g.kind === "remediation" && Boolean(g.finding_id))
+                .map((g) => (
                 <div
                   key={g.id}
                   style={{
@@ -1707,7 +1708,25 @@ function AssetDetailView({
                   </div>
                 </div>
               ))}
-          </div>
+            </div>
+          ) : (
+            <div
+              className="card"
+              style={{
+                padding: "1.25rem 1.5rem",
+                border: "1px solid #10b981",
+                background: "rgba(16, 185, 129, 0.04)",
+                marginBottom: "1rem",
+              }}
+            >
+              <h3 style={{ margin: "0 0 0.5rem 0", color: "#065f46" }}>
+                All security checks passed! (100/100)
+              </h3>
+              <p className="secondary-text" style={{ margin: 0 }}>
+                This mail server has zero vulnerabilities or compliance issues to fix.
+              </p>
+            </div>
+          )}
 
           <div className="card">
             <h3>
@@ -2751,7 +2770,9 @@ function RemediationsTab() {
 
   const assets = assetsQuery.data ?? [];
   const guidanceList =
-    postureQuery.data?.guidance.filter((g) => g.kind === "remediation") ?? [];
+    postureQuery.data?.guidance.filter(
+      (g) => g.kind === "remediation" && Boolean(g.finding_id),
+    ) ?? [];
 
   if (assetsQuery.isPending)
     return <LoadingState label="Loading mail servers…" />;
