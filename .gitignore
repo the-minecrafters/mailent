@@ -15,6 +15,7 @@ build/
 # Environment & Secrets
 .env
 .env.*
+*.env
 !.env.example
 *.pem
 *.key
@@ -40,5 +41,10 @@ deploy/compose/data/
 **/playwright-report/
 tests/stress_test_live_status.json
 
-# Local cache
-.freebuff/
+# Notes & local scratch files
+notes/
+.notes/
+agent_notes/
+*.agent.md
+scratch/
+

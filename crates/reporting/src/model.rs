@@ -51,7 +51,7 @@ pub enum ProvenanceClass {
     AnomalyContext,
     /// Evidence collected by an explicitly authorized active probe.
     ActiveVerification,
-    /// Supplemental Jev/LLM output, clearly identified, never source of truth.
+    /// Supplemental advisory output, clearly identified, never source of truth.
     AiAssessment,
 }
 

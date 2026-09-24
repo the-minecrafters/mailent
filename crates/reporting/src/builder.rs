@@ -1,5 +1,5 @@
 //! Deterministic assembly of a [`ForensicReport`] from Mailent's own
-//! persisted evidence. No LLM/Jev involvement; supplemental AI output is only
+//! persisted evidence; supplemental advisory analysis is only
 //! copied through verbatim into its labelled section.
 use crate::model::*;
 use mailent_domain::{
