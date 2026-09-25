@@ -40,7 +40,7 @@ pub async fn scan_on_device_handler(
             "Device not found in this workspace.".into(),
         ))?;
     if !super::devices::installation_online(&device, OffsetDateTime::now_utc()) {
-        return Err((StatusCode::CONFLICT, "This CLI installation is offline. Run mailent agent run on that machine to accept remote scans.".into()));
+        return Err((StatusCode::CONFLICT, "This CLI installation is offline. Run mailent companion run on that machine to accept remote scans.".into()));
     }
     if state
         .jobs

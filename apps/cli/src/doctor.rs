@@ -142,6 +142,24 @@ pub async fn run_doctor(server_override: Option<String>) -> Result<(), String> {
         }
     }
 
+    // Local execution companion check
+    let bridge_resp = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(500))
+        .build()
+    {
+        Ok(c) => c.get("http://127.0.0.1:15488/status").send().await.ok(),
+        Err(_) => None,
+    };
+    if let Some(r) = bridge_resp {
+        if r.status().is_success() {
+            println!("[✓] Local Execution Companion: Active on 127.0.0.1:15488");
+        } else {
+            println!("[!] Local Execution Companion: Returned HTTP {}", r.status());
+        }
+    } else {
+        println!("[•] Local Execution Companion: Offline (start with 'mailent companion run' when analyzing from browser)");
+    }
+
     if let Some(creds) = &creds {
         crate::installation::report_best_effort(creds, &server_url, None).await;
     }

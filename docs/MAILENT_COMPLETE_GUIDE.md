@@ -112,12 +112,14 @@ Mailent operates as a hybrid architecture:
 3. **Spooling & Resiliency**: If Core is temporarily unreachable, observations buffer in memory and overflow to a bounded local spool (`/tmp/mailent-spool`), draining automatically when connectivity resumes.
 4. **Real-Time Drift Engine**: Core unifies incoming observations into logical assets, alerting immediately when an asset loses forward secrecy, rotates a certificate, or negotiates an unexpected TLS version.
 
-### 3.4 Connected-Device & Remote Agent Workflow
+### 3.4 Connected-Device & Local Companion Workflow
 1. **Registration**: An operator runs `mailent login --server https://mailent.onrender.com` on an on-premise Linux/Windows host.
 2. **Challenge Authorization**: The CLI generates a unique device challenge (e.g. `MLT-A1B2C3D4`). The operator approves it in the web workspace (`/settings?tab=devices`).
 3. **Hashed Token Issuance**: Core returns an authentication token (`mlt_...`), storing only its SHA-256 hash in `device_tokens`.
-4. **Agent Installation**: The operator runs `mailent agent install` to register a systemd user/system service, or `mailent agent run` in the foreground.
-5. **Job Dispatch & Leasing**: When a scheduled domain check is due, Core enqueues a typed `AgentJob`. The connected agent leases the job, executes the scan locally (unimpeded by cloud port-25 blocks), and posts results back over HTTPS.
+4. **Companion Execution**: The operator runs `mailent companion install` to register a systemd user/system service, or `mailent companion run` in the foreground. This starts both the workspace job listener and the local loopback bridge on `http://127.0.0.1:15488`.
+5. **Job Dispatch & Loopback Ingestion**:
+   - For domain scans, the companion leases typed jobs from Core, executes the check locally (unimpeded by cloud port-25 blocks), and posts results back over HTTPS.
+   - For capture analysis, the web workspace streams PCAP bytes directly to the companion bridge on loopback. Zeek runs locally, and only the structured assessment syncs to Core.
 6. **Instant Revocation**: If the device is revoked in the web UI, active jobs are cancelled immediately, the token hash is deleted, and the running CLI clears credentials and halts.
 
 ### 3.5 Remediation & Active Transport Verification Workflow
@@ -402,7 +404,7 @@ Detects due schedule (Hourly / Daily / Weekly)
        │
        │ 2. Agent polls /api/v1/agent/jobs/poll
        ▼
-[ On-Premise Connected Device (mailent agent daemon) ]
+[ On-Premise Connected Device (mailent companion daemon) ]
 Leases job with distributed expiration timeout
        │
        │ 3. Executes DomainScanner locally on device
@@ -753,10 +755,10 @@ The probe engine protects internal networks:
    - **Visible Result**: Expand connection stages showing `tcp_connected` → `ehlo` → `starttls_advertised` → `starttls_accepted` → `tls_established`. Show leaf certificate details (`CN=mail.mailent.test`, expired `2021-01-01`).
    - **Component**: ProtocolLadder (`apps/web/src/components/ProtocolLadder.tsx`).
 
-4. **Stage 4: Connected Agent & Live Domain Assessment**
-   - **Action**: In the terminal on the ThinkPad, run `mailent doctor` and show the running agent daemon (`mailent agent status`). In the web console, click **Scan domain**, enter `mailent.test`, and select the ThinkPad agent.
-   - **Visible Result**: The ThinkPad agent leases the job, connects locally to Postfix on port 25, extracts STARTTLS and DNS policies, and syncs the assessment back to the cloud console over HTTPS.
-   - **Component**: Connected Agent Daemon (`apps/cli/src/agent.rs`) + Scanner (`crates/scanner`).
+4. **Stage 4: Connected Companion & Live Domain Assessment**
+   - **Action**: In the terminal on the ThinkPad, run `mailent doctor` and show the running companion daemon (`mailent companion status`). In the web console, click **Scan infrastructure**, enter `mailent.test`, and run the check through the ThinkPad companion.
+   - **Visible Result**: The ThinkPad companion leases the job, connects locally to Postfix on port 25, extracts STARTTLS and DNS policies, and syncs the assessment back to the cloud console over HTTPS.
+   - **Component**: Connected Companion Daemon (`apps/cli/src/companion.rs`) + Scanner (`crates/scanner`).
 
 5. **Stage 5: Live Cryptographic Regression & Drift Detection**
    - **Action**: On the ThinkPad Postfix lab, simulate an adversary or misconfiguration by disabling STARTTLS:
@@ -818,7 +820,7 @@ The probe engine protects internal networks:
 
 1. **Cloud Outbound Port 25 Blocking**:
    - *Limitation*: Major cloud providers (Render, AWS, GCP, Azure) block outbound TCP port 25 to prevent spam. Direct scans initiated from cloud containers to port 25 will fail or timeout.
-   - *Mailent Solution*: **Connected Device Agents**. Local machines or on-premise servers enroll as agents (`mailent agent install`), lease scan jobs from the cloud control plane, execute scans locally on unrestricted networks, and sync results back over HTTPS.
+   - *Mailent Solution*: **Connected Local Companions**. Local machines or on-premise servers enroll as companions (`mailent companion install` or `mailent companion run`), lease scan jobs from the cloud control plane, execute scans locally on unrestricted networks, and sync results back over HTTPS.
 2. **TLS 1.3 Passive Certificate Encryption**:
    - *Limitation*: In the TLS 1.3 specification (RFC 8446), the server certificate is encrypted on the wire during the handshake. In passive PCAP captures of TLS 1.3 sessions, the leaf certificate cannot be extracted or validated unless observed via cleartext STARTTLS negotiation or active probing.
    - *Impact*: Mailent honestly reports certificate fields as `NotCaptured` in pure TLS 1.3 passive captures rather than guessing or fabricating certificate data.
@@ -866,7 +868,7 @@ CORE CAPABILITIES:
 4. Deterministic Policy Engine: Evaluates compliance against RFC 8996 (legacy TLS), RFC 5280 (expired certs), BCP 195 (forward secrecy/static RSA), and RFC 3207 (STARTTLS).
 5. Posture Scoring: Version 1.0.0 composite 0-100 score across 4 weighted categories (Transport 40%, Certs 25%, Protocol 25%, Anomaly 10%). Critical/High findings strictly cap overall scores (Critical <= 29, High <= 60). Grades: Strong, Good, Moderate, Weak, Critical.
 6. Jev AI Decision Engine: Contextual risk classification (Low, Medium, High, Critical), anomaly detection, and triage priority. Uses openjev-latest via Codiv with circuit breaker (3 fails, 30s open) and deterministic fallback. NEVER alters cryptographic facts or posture scores.
-7. Connected Device Agents: CLI background daemon ('mailent agent') leases typed jobs from Core to execute scans locally, bypassing cloud outbound port 25 blocking.
+7. Connected Local Companions: CLI background companion ('mailent companion') leases typed jobs from Core to execute scans locally and exposes loopback bridge (http://127.0.0.1:15488) for local browser capture analysis.
 8. Verifiable Remediation Lifecycle: Tracks fixes from InProgress -> Applied -> Verifying -> VerifiedFixed / StillPresent / Inconclusive via active socket challenge probes.
 9. Reporting: Exports byte-deterministic forensic dossiers in JSON, standalone HTML, and native binary PDF-1.4.
 10. Training Data Collection: Freezes versioned feature snapshots ('TrainingRecord') at decision time with privacy redactions for offline ML evaluation and benchmarking.
@@ -879,7 +881,7 @@ mailent analyze <pcap> [--format table|json] [--sync]
 mailent scan <domain> [--format table|json] [--sync]
 mailent monitor --interface <iface>
 mailent login / status / logout
-mailent agent install / start / stop / status / run
+mailent companion install / start / stop / status / run
 mailent doctor
 
 AUTHENTICATION & MULTI-TENANCY:

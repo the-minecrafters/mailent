@@ -1410,3 +1410,73 @@ export async function fetchDomainHistory(
     `/api/v1/monitors/domain/${encodeURIComponent(domain)}/history`,
   )) as DomainHistoryResponse;
 }
+
+export const DEFAULT_COMPANION_PORT = 15488;
+export const COMPANION_BASE_URL = `http://127.0.0.1:${DEFAULT_COMPANION_PORT}`;
+
+export interface CompanionStatus {
+  status: "ready" | "unauthenticated" | string;
+  version: string;
+  device_name?: string | null;
+  device_id?: string | null;
+  server_url?: string | null;
+  zeek_available: boolean;
+}
+
+export async function fetchCompanionStatus(
+  port: number = DEFAULT_COMPANION_PORT,
+): Promise<CompanionStatus | null> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 2000);
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/status`, {
+      method: "GET",
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as CompanionStatus;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+export interface CompanionAnalyzeResult {
+  status: string;
+  assessment_id: string;
+  assessment: AssessmentRecord;
+  findings_count: number;
+  sessions_count: number;
+  posture_score: number;
+  posture_grade: string;
+}
+
+export async function analyzeCaptureOnCompanion(
+  file: File,
+  title?: string,
+  port: number = DEFAULT_COMPANION_PORT,
+): Promise<CompanionAnalyzeResult> {
+  const formData = new FormData();
+  formData.append("file", file, file.name);
+  if (title?.trim()) {
+    formData.append("title", title.trim());
+  }
+
+  const res = await fetch(`http://127.0.0.1:${port}/api/analyze`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!res.ok) {
+    let errMessage = `Local analysis failed with HTTP ${res.status}`;
+    try {
+      const errJson = await res.json();
+      if (errJson?.error) errMessage = errJson.error;
+    } catch {}
+    throw new Error(errMessage);
+  }
+
+  return (await res.json()) as CompanionAnalyzeResult;
+}
+

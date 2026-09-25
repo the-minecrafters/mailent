@@ -91,8 +91,14 @@ Run infrastructure checks with `mailent scan <domain> --sync` from a machine tha
 
 Revoking an installation rejects its API access. Local offline analysis remains available without signing in; syncing requires a current connection. Live monitoring stops when workspace access is revoked or cannot be verified.
 
-### Optional remote scans
+### Local companion and workspace execution
 
-For optional remote scans, keep `mailent agent run` open on a connected machine. The workspace offers that installation only while its worker heartbeat is fresh; login and status checks do not mark it online. Checks that were not picked up promptly expire instead of running unexpectedly on reconnect. Local commands remain the primary workflow. Run `mailent agent uninstall` to remove a previously installed background polling service.
+For interactive scans and capture analysis directly from the web workspace, run the local companion with `mailent companion run` (or install it as a service with `mailent companion install`). The companion binds a loopback bridge on `http://127.0.0.1:15488` protected by browser Private Network Access (PNA) and processes workspace scan jobs.
 
-The workspace accepts structured CLI results. It does not process raw PCAP uploads, scan from the cloud, or schedule cloud network checks. Assessment history and comparisons are built from synced results.
+The web workspace uses this companion as the local execution engine:
+- Packet captures selected or dropped in the web UI stream directly to the local companion bridge on loopback (`http://127.0.0.1:15488`). Zeek forensics run locally, and only the resulting structured assessment syncs to the workspace. Raw PCAPs never leave your machine.
+- Infrastructure domain checks dispatched from the web UI are leased and executed locally by the connected companion.
+- Terminal commands (`mailent analyze <file.pcap> --sync` and `mailent scan <domain> --sync`) remain available as first-class CLI alternatives.
+
+Run `mailent companion uninstall` to remove a previously installed background companion service.
+

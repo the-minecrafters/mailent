@@ -10,69 +10,74 @@ use serde_json::json;
 use tracing::warn;
 
 use crate::credentials::{self, load_credentials};
+use crate::engine::locate_zeek;
 
 #[derive(Subcommand, Debug, Clone)]
-pub enum AgentCommands {
-    /// Install the Mailent agent as a background systemd service
+pub enum CompanionCommands {
+    /// Install the Mailent companion as a background systemd service
     Install {
         /// Install as a system service (/etc/systemd/system) instead of user service (~/.config/systemd/user)
         #[arg(long, default_value_t = false)]
         system: bool,
     },
-    /// Start the Mailent agent background service
+    /// Start the Mailent companion background service
     Start {
         #[arg(long, default_value_t = false)]
         system: bool,
     },
-    /// Stop the Mailent agent background service
+    /// Stop the Mailent companion background service
     Stop {
         #[arg(long, default_value_t = false)]
         system: bool,
     },
-    /// Restart the Mailent agent background service
+    /// Restart the Mailent companion background service
     Restart {
         #[arg(long, default_value_t = false)]
         system: bool,
     },
-    /// Inspect agent service state and control plane telemetry
+    /// Inspect companion service state and workspace connectivity
     Status {
         #[arg(long, default_value_t = false)]
         system: bool,
     },
-    /// Uninstall the Mailent agent systemd service
+    /// Uninstall the Mailent companion background service
     Uninstall {
         #[arg(long, default_value_t = false)]
         system: bool,
     },
-    /// Run the agent worker daemon directly in the foreground
+    /// Run the local companion listener directly in the foreground
     Run {
-        /// Polling interval for queued jobs in seconds
+        /// Polling interval for queued workspace checks in seconds
         #[arg(long, default_value_t = 5)]
         poll_interval: u64,
         /// Heartbeat telemetry interval in seconds
         #[arg(long, default_value_t = 30)]
         heartbeat_interval: u64,
+        /// Loopback bridge port for local browser acquisition
+        #[arg(long, default_value_t = 15488)]
+        port: u16,
     },
 }
 
-pub async fn run_agent_command(cmd: AgentCommands) -> Result<(), String> {
+pub async fn run_companion_command(cmd: CompanionCommands) -> Result<(), String> {
     match cmd {
-        AgentCommands::Install { system } => run_install(system),
-        AgentCommands::Start { system } => run_start(system),
-        AgentCommands::Stop { system } => run_stop(system),
-        AgentCommands::Restart { system } => run_restart(system),
-        AgentCommands::Status { system } => run_status(system).await,
-        AgentCommands::Uninstall { system } => run_uninstall(system),
-        AgentCommands::Run {
+        CompanionCommands::Install { system } => run_install(system),
+        CompanionCommands::Start { system } => run_start(system),
+        CompanionCommands::Stop { system } => run_stop(system),
+        CompanionCommands::Restart { system } => run_restart(system),
+        CompanionCommands::Status { system } => run_status(system).await,
+        CompanionCommands::Uninstall { system } => run_uninstall(system),
+        CompanionCommands::Run {
             poll_interval,
             heartbeat_interval,
-        } => run_daemon(poll_interval, heartbeat_interval).await,
+            port,
+        } => run_daemon(poll_interval, heartbeat_interval, port).await,
     }
 }
 
 fn get_unit_path(system: bool) -> Result<PathBuf, String> {
     if system {
-        Ok(PathBuf::from("/etc/systemd/system/mailent-agent.service"))
+        Ok(PathBuf::from("/etc/systemd/system/mailent-companion.service"))
     } else {
         let home =
             std::env::var("HOME").map_err(|_| "HOME environment variable not set".to_string())?;
@@ -82,14 +87,14 @@ fn get_unit_path(system: bool) -> Result<PathBuf, String> {
             .join("user");
         fs::create_dir_all(&user_systemd_dir)
             .map_err(|e| format!("Failed to create {}: {e}", user_systemd_dir.display()))?;
-        Ok(user_systemd_dir.join("mailent-agent.service"))
+        Ok(user_systemd_dir.join("mailent-companion.service"))
     }
 }
 
 fn require_systemd() -> Result<(), String> {
     if !cfg!(target_os = "linux") {
         return Err(
-            "Service management via systemd is only supported on Linux.\nTo run the agent worker on Windows or macOS, run directly in foreground or via Task Scheduler:\n  mailent agent run".to_string()
+            "Service management via systemd is only supported on Linux.\nTo run the companion on Windows or macOS, run directly in foreground or via Task Scheduler:\n  mailent companion run".to_string()
         );
     }
     Ok(())
@@ -97,9 +102,9 @@ fn require_systemd() -> Result<(), String> {
 
 fn run_install(system: bool) -> Result<(), String> {
     require_systemd()?;
-    let zeek_path = crate::locate_zeek(None)?;
+    let zeek_path = locate_zeek(None)?;
     let creds = load_credentials().ok_or_else(|| {
-        "This device is not linked to a Mailent workspace yet.\nPlease run 'mailent login' first before installing the agent service.".to_string()
+        "This device is not linked to a Mailent workspace yet.\nPlease run 'mailent login' first before installing the companion service.".to_string()
     })?;
 
     let exe_path = std::env::current_exe()
@@ -119,14 +124,14 @@ fn run_install(system: bool) -> Result<(), String> {
     }
     let unit_content = format!(
         r#"[Unit]
-Description=Mailent mail-server monitoring
+Description=Mailent local execution companion
 Documentation=https://github.com/the-minecrafters/mailent
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart="{exe_str}" agent run
+ExecStart="{exe_str}" companion run
 Restart=on-failure
 RestartSec=5s
 UMask=0077
@@ -153,17 +158,17 @@ WantedBy=default.target
     if !system {
         enable_cmd.arg("--user");
     }
-    enable_cmd.args(["enable", "--now", "mailent-agent.service"]);
+    enable_cmd.args(["enable", "--now", "mailent-companion.service"]);
     let enable_res = enable_cmd
         .status()
         .map_err(|e| format!("Failed to enable systemd service: {e}"))?;
 
     if !enable_res.success() {
-        return Err("systemctl enable --now mailent-agent.service failed".to_string());
+        return Err("systemctl enable --now mailent-companion.service failed".to_string());
     }
 
     println!("\n╔══════════════════════════════════════════════════════════╗");
-    println!("║             MAILENT AGENT INSTALLED SUCCESSFULLY         ║");
+    println!("║          MAILENT COMPANION INSTALLED SUCCESSFULLY        ║");
     println!("╚══════════════════════════════════════════════════════════╝");
     println!("  • Service Unit:    {}", unit_path.display());
     println!(
@@ -176,30 +181,31 @@ WantedBy=default.target
     );
     println!("  • Device Name:     {}", creds.device_name);
     println!("  • Device ID:       {}", creds.device_id);
-    println!("  • Control Plane:   {}", creds.server_url);
-    println!("  • Auto-start:      Enabled (restart on connection errors)");
-    println!("\nAgent service is now active and polling for scheduled jobs.");
-    println!("Check agent status at any time with: mailent agent status\n");
+    println!("  • Workspace:       {}", creds.server_url);
+    println!("  • Local Bridge:    http://127.0.0.1:15488");
+    println!("  • Auto-start:      Enabled (restart on failure)");
+    println!("\nCompanion service is now active and ready for workspace execution.");
+    println!("Check companion status at any time with: mailent companion status\n");
 
     Ok(())
 }
 
 fn run_start(system: bool) -> Result<(), String> {
     require_systemd()?;
-    crate::locate_zeek(None)?;
+    locate_zeek(None)?;
     let mut cmd = Command::new("systemctl");
     if !system {
         cmd.arg("--user");
     }
-    cmd.args(["start", "mailent-agent.service"]);
+    cmd.args(["start", "mailent-companion.service"]);
     let res = cmd
         .status()
         .map_err(|e| format!("Failed to run systemctl: {e}"))?;
     if res.success() {
-        println!("Mailent agent service started.");
+        println!("Mailent companion service started.");
         Ok(())
     } else {
-        Err("Failed to start mailent-agent.service via systemctl".to_string())
+        Err("Failed to start mailent-companion.service via systemctl".to_string())
     }
 }
 
@@ -209,34 +215,34 @@ fn run_stop(system: bool) -> Result<(), String> {
     if !system {
         cmd.arg("--user");
     }
-    cmd.args(["stop", "mailent-agent.service"]);
+    cmd.args(["stop", "mailent-companion.service"]);
     let res = cmd
         .status()
         .map_err(|e| format!("Failed to run systemctl: {e}"))?;
     if res.success() {
-        println!("Mailent agent service stopped.");
+        println!("Mailent companion service stopped.");
         Ok(())
     } else {
-        Err("Failed to stop mailent-agent.service via systemctl".to_string())
+        Err("Failed to stop mailent-companion.service via systemctl".to_string())
     }
 }
 
 fn run_restart(system: bool) -> Result<(), String> {
     require_systemd()?;
-    crate::locate_zeek(None)?;
+    locate_zeek(None)?;
     let mut cmd = Command::new("systemctl");
     if !system {
         cmd.arg("--user");
     }
-    cmd.args(["restart", "mailent-agent.service"]);
+    cmd.args(["restart", "mailent-companion.service"]);
     let res = cmd
         .status()
         .map_err(|e| format!("Failed to run systemctl: {e}"))?;
     if res.success() {
-        println!("Mailent agent service restarted.");
+        println!("Mailent companion service restarted.");
         Ok(())
     } else {
-        Err("Failed to restart mailent-agent.service via systemctl".to_string())
+        Err("Failed to restart mailent-companion.service via systemctl".to_string())
     }
 }
 
@@ -248,7 +254,7 @@ fn run_uninstall(system: bool) -> Result<(), String> {
     if !system {
         disable_cmd.arg("--user");
     }
-    disable_cmd.args(["disable", "mailent-agent.service"]);
+    disable_cmd.args(["disable", "mailent-companion.service"]);
     let _ = disable_cmd.status();
 
     let unit_path = get_unit_path(system)?;
@@ -264,7 +270,7 @@ fn run_uninstall(system: bool) -> Result<(), String> {
     reload_cmd.arg("daemon-reload");
     let _ = reload_cmd.status();
 
-    println!("Mailent agent service uninstalled successfully.");
+    println!("Mailent companion service uninstalled successfully.");
     Ok(())
 }
 
@@ -272,15 +278,14 @@ async fn run_status(system: bool) -> Result<(), String> {
     let creds = load_credentials();
 
     println!("\n╔══════════════════════════════════════════════════════════╗");
-    println!("║                  MAILENT AGENT STATUS                    ║");
+    println!("║                MAILENT COMPANION STATUS                  ║");
     println!("╚══════════════════════════════════════════════════════════╝\n");
 
-    // 1. Service state via systemctl
     let mut is_active_cmd = Command::new("systemctl");
     if !system {
         is_active_cmd.arg("--user");
     }
-    is_active_cmd.args(["is-active", "mailent-agent.service"]);
+    is_active_cmd.args(["is-active", "mailent-companion.service"]);
     let service_state = match is_active_cmd.output() {
         Ok(out) => {
             let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -301,7 +306,6 @@ async fn run_status(system: bool) -> Result<(), String> {
         if system { "system" } else { "user" }
     );
 
-    // 2. Local credentials & Identity
     match &creds {
         Some(c) => {
             println!("  • Device Name:       {}", c.device_name);
@@ -312,9 +316,8 @@ async fn run_status(system: bool) -> Result<(), String> {
                     .map(|id| id.to_string())
                     .unwrap_or_else(|| "Default".to_string())
             );
-            println!("  • Control Plane:     {}", c.server_url);
+            println!("  • Workspace:         {}", c.server_url);
 
-            // 3. Query control plane for live agent telemetry
             let client = reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))
                 .build()
@@ -348,23 +351,23 @@ async fn run_status(system: bool) -> Result<(), String> {
                             .and_then(|t| t.as_str())
                             .unwrap_or("Never");
 
-                        println!("  • Control Status:    Connected (authenticated)");
-                        println!("  • Agent State:       {}", agent_status);
-                        println!("  • Completed Jobs:    {}", completed_jobs);
+                        println!("  • Workspace Link:    Connected (authenticated)");
+                        println!("  • Readiness:         {}", if agent_status == "idle" { "Ready" } else { agent_status });
+                        println!("  • Completed Checks:  {}", completed_jobs);
                         println!("  • Last Heartbeat:    {}", last_heartbeat);
                     }
                 }
                 Ok(resp) => {
-                    if credentials::handle_rejection(resp.status(), &c)? {
+                    if credentials::handle_rejection(resp.status(), c)? {
                         return Ok(());
                     }
                     println!(
-                        "  • Control Status:    Unavailable (HTTP {})",
+                        "  • Workspace Link:    Unavailable (HTTP {})",
                         resp.status()
                     );
                 }
                 Err(e) => {
-                    println!("  • Control Status:    Unreachable ({})", e);
+                    println!("  • Workspace Link:    Unreachable ({})", e);
                 }
             }
         }
@@ -377,56 +380,105 @@ async fn run_status(system: bool) -> Result<(), String> {
     Ok(())
 }
 
-async fn run_daemon(poll_interval: u64, heartbeat_interval: u64) -> Result<(), String> {
+pub async fn run_daemon(
+    poll_interval: u64,
+    heartbeat_interval: u64,
+    bridge_port: u16,
+) -> Result<(), String> {
     let creds = load_credentials().ok_or("Run 'mailent login' to connect this device.")?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
         .map_err(|e| e.to_string())?;
     let base_url = creds.server_url.trim_end_matches('/');
-    // Check access before starting any local work, including dependency setup.
-    let zeek = crate::locate_zeek(None)?;
+
+    let zeek = locate_zeek(None)?;
     crate::installation::report_best_effort(&creds, base_url, Some(&zeek)).await;
     if !send_heartbeat(&client, base_url, &creds, "idle").await? {
         return Ok(());
     }
 
-    println!("Mailent monitoring — {}", creds.device_name);
-    println!("Zeek: {}", zeek.display());
-    println!("Waiting for mail-server checks. Press Ctrl+C to stop.");
+    // Start local companion bridge concurrently on 127.0.0.1
+    let bridge_task = tokio::spawn(async move {
+        if let Err(e) = crate::bridge::start_bridge_server(bridge_port).await {
+            warn!("Local companion bridge error: {e}");
+        }
+    });
+
+    println!("\n╔══════════════════════════════════════════════════════════╗");
+    println!("║             MAILENT LOCAL EXECUTION COMPANION            ║");
+    println!("╚══════════════════════════════════════════════════════════╝");
+    println!("  • Device:        {}", creds.device_name);
+    println!("  • Local Bridge:  http://127.0.0.1:{}", bridge_port);
+    println!("  • Zeek:          {}", zeek.display());
+    println!("  • Workspace:     {}", creds.server_url);
+    println!("  • Readiness:     Ready (accepting workspace execution)");
+    println!("\nPress Ctrl+C to stop.\n");
+
     let mut poll = tokio::time::interval(Duration::from_secs(poll_interval.clamp(1, 30)));
     let mut heartbeat = tokio::time::interval(Duration::from_secs(heartbeat_interval.clamp(1, 30)));
     loop {
         tokio::select! {
-            _ = tokio::signal::ctrl_c() => return Ok(()),
+            _ = tokio::signal::ctrl_c() => {
+                bridge_task.abort();
+                return Ok(());
+            }
             _ = heartbeat.tick() => {
-                if !send_heartbeat(&client, base_url, &creds, "idle").await? { return Ok(()); }
+                if !send_heartbeat(&client, base_url, &creds, "idle").await? {
+                    bridge_task.abort();
+                    return Ok(());
+                }
             }
             _ = poll.tick() => {
-                if !credentials::still_current(&creds) { println!("Signed out. Monitoring stopped."); return Ok(()); }
+                if !credentials::still_current(&creds) {
+                    println!("Signed out. Execution stopped.");
+                    bridge_task.abort();
+                    return Ok(());
+                }
                 let response = client.post(format!("{base_url}/api/v1/agent/jobs/poll"))
                     .bearer_auth(&creds.device_token).json(&json!({})).send().await;
                 match response {
                     Ok(resp) => {
-                        if credentials::handle_rejection(resp.status(), &creds)? { return Ok(()); }
-                        if !resp.status().is_success() { warn!("Job check returned {}", resp.status()); continue; }
+                        if credentials::handle_rejection(resp.status(), &creds)? {
+                            bridge_task.abort();
+                            return Ok(());
+                        }
+                        if !resp.status().is_success() {
+                            warn!("Check polling returned {}", resp.status());
+                            continue;
+                        }
                         let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
                         if let Some(value) = body.get("job").filter(|v| !v.is_null()) {
                             let job: AgentJob = serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
-                            println!("Checking job {}", job.id);
+                            println!("  ↳ Executing check {}", job.id);
                             let work = execute_job(&client, base_url, &creds, job);
                             tokio::pin!(work);
                             let mut access_check = tokio::time::interval(Duration::from_secs(2));
                             loop {
                                 tokio::select! {
-                                    result = &mut work => { if !result? { return Ok(()); } break; }
-                                    _ = tokio::signal::ctrl_c() => return Ok(()),
+                                    result = &mut work => {
+                                        if !result? {
+                                            bridge_task.abort();
+                                            return Ok(());
+                                        }
+                                        break;
+                                    }
+                                    _ = tokio::signal::ctrl_c() => {
+                                        bridge_task.abort();
+                                        return Ok(());
+                                    }
                                     _ = access_check.tick() => {
-                                        if !send_heartbeat(&client, base_url, &creds, "busy").await? { return Ok(()); }
+                                        if !send_heartbeat(&client, base_url, &creds, "busy").await? {
+                                            bridge_task.abort();
+                                            return Ok(());
+                                        }
                                     }
                                 }
                             }
-                            if !send_heartbeat(&client, base_url, &creds, "idle").await? { return Ok(()); }
+                            if !send_heartbeat(&client, base_url, &creds, "idle").await? {
+                                bridge_task.abort();
+                                return Ok(());
+                            }
                         }
                     }
                     Err(e) => warn!("Cannot reach workspace: {e}"),
@@ -443,7 +495,7 @@ async fn send_heartbeat(
     status: &str,
 ) -> Result<bool, String> {
     if !credentials::still_current(creds) {
-        println!("Signed out. Monitoring stopped.");
+        println!("Signed out. Companion stopped.");
         return Ok(false);
     }
     match client.post(format!("{base_url}/api/v1/agent/heartbeat"))
@@ -472,7 +524,7 @@ async fn execute_job(
             timeout_seconds,
         } => {
             println!(
-                "  ↳ Executing infrastructure assessment for domain: {domain} (timeout: {timeout_seconds}s)"
+                "  ↳ Running infrastructure check for domain: {domain} (timeout: {timeout_seconds}s)"
             );
 
             let scanner_res = DomainScanner::new_live();
@@ -506,7 +558,7 @@ async fn execute_job(
             match result {
                 Ok(scan_result) => {
                     println!(
-                        "  [✓] Scan completed for {domain}: {} endpoints checked, {} passed, Posture Grade: {}",
+                        "  [✔] Scan completed for {domain}: {} endpoints checked, {} passed, Posture Grade: {}",
                         scan_result.endpoints_checked,
                         scan_result.endpoints_succeeded,
                         scan_result.assessment.posture_grade
@@ -536,19 +588,19 @@ async fn execute_job(
                         .await
                     {
                         Ok(resp) if resp.status().is_success() => {
-                            println!("  [✓] Job {} reported completed to control plane", job.id);
+                            println!("  [✔] Check {} reported to workspace", job.id);
                         }
                         Ok(resp) => {
                             if credentials::handle_rejection(resp.status(), creds)? {
                                 return Ok(false);
                             }
                             eprintln!(
-                                "  [!] Failed to report completion to control plane: HTTP {}",
+                                "  [!] Failed to report completion to workspace: HTTP {}",
                                 resp.status()
                             );
                         }
                         Err(e) => {
-                            eprintln!("  [!] Failed to report completion to control plane: {e}");
+                            eprintln!("  [!] Failed to report completion to workspace: {e}");
                         }
                     }
                 }

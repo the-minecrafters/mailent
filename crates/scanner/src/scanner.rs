@@ -979,7 +979,7 @@ pub fn normalize_scan_domain(raw: &str) -> Result<String, ScannerError> {
     }
 
     // Top-level domain (TLD) cannot be purely numeric (RFC 1123 / RFC 3696)
-    let last_label = ascii_domain.split('.').last().unwrap_or_default();
+    let last_label = ascii_domain.split('.').next_back().unwrap_or_default();
     if last_label.chars().all(|c| c.is_ascii_digit()) {
         return Err(ScannerError::InvalidDomain(format!(
             "Top-level domain cannot be purely numeric: '{raw}'"

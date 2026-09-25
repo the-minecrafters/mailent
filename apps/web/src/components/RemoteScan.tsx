@@ -41,7 +41,7 @@ export function RemoteScan({
     <details>
       <summary>Scan from an online installation</summary>
       <p>
-        Optional: keep <code>mailent agent run</code> open on your machine to
+        Optional: keep <code>mailent companion run</code> open on your machine to
         accept remote scans. A connected login alone does not enable remote
         execution.
       </p>

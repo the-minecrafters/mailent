@@ -1,3 +1,5 @@
+#![allow(clippy::all)]
+
 pub mod adapter;
 pub mod backup;
 pub mod dovecot;

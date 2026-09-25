@@ -196,20 +196,20 @@ mailent status
 mailent logout
 ```
 
-### Run as a Continuous Monitoring Agent
-Deploy the background agent on an on-premise mail server or test machine:
+### Run as a Continuous Local Companion
+Deploy the background companion daemon and loopback bridge on an on-premise mail server or operator machine:
 ```sh
 # Install as a systemd user service
-mailent agent install
+mailent companion install
 
 # Start the background service
-mailent agent start
+mailent companion start
 
-# Inspect service state and lease heartbeat
-mailent agent status
+# Inspect service state and loopback bridge readiness
+mailent companion status
 
 # Or run directly in the foreground
-mailent agent run --poll-interval 5
+mailent companion run --poll-interval 5
 ```
 
 ### Sniff Live Wire Traffic
@@ -304,7 +304,7 @@ Mailent is deployed in production using a containerized microservice architectur
 - **Database**: Supabase PostgreSQL 18 in Singapore region (`vuskxbttfmmyxpqudjwv.supabase.co`).
   - Isolated under a dedicated `mailent` database schema with Row Level Security (RLS) enabled.
   - SQL migrations managed through `supabase/migrations/`.
-- **Egress Workaround**: Because cloud platforms (including Render, AWS, and GCP) block outbound TCP port 25, Mailent utilizes **Connected Device Agents**. An operator connects a local machine or server using `mailent login` and `mailent agent install`. Scheduled checks are leased and executed locally by the agent, returning full cryptographic results over HTTPS.
+- **Egress Workaround**: Because cloud platforms (including Render, AWS, and GCP) block outbound TCP port 25, Mailent utilizes **Connected Local Companions**. An operator connects a local machine or server using `mailent login` and `mailent companion install` (or `mailent companion run`). Scheduled checks and interactive workspace scans are leased and executed locally by the companion, returning full cryptographic results over HTTPS.
 
 ---
 

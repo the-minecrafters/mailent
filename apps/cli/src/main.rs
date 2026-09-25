@@ -1,29 +1,28 @@
 #![allow(clippy::collapsible_if, clippy::too_many_arguments)]
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
-use mailent_correlation::{FindingCorrelator, PostureInput, build_guidance, compute_posture};
-use mailent_domain::{
-    AssessmentRecord, CaptureMetadata, EmailProtocol, EmailSession, Finding, FindingSeverity,
-    PostureGrade, PostureSubjectKind, ProtocolEvidence, RiskLevel, StartTlsState,
-};
+use mailent_domain::{EmailSession, Finding};
 use mailent_integrations::LiveDomainIntelligenceResolver;
 use mailent_policy::PolicyPack;
 use mailent_probe::ProbeLimits;
-use mailent_reporting::builder::{ReportInput, build_report};
 use mailent_scanner::{DomainScanner, DomainScannerConfig};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-mod agent;
+mod bridge;
+mod companion;
 mod credentials;
 mod doctor;
+pub mod engine;
 mod fix;
 mod installation;
 mod monitor;
+
+pub use engine::{locate_zeek, sync_assessment, validate_pcap, verified_zeek_version};
 
 #[derive(Parser)]
 #[command(
@@ -127,7 +126,7 @@ enum Commands {
         server: Option<String>,
     },
 
-    /// Monitor live mail traffic with Zeek and send results to your workspace
+    /// Manage live mail traffic with Zeek and send results to your workspace
     Monitor {
         /// Network interface that sees your mail-server traffic
         #[arg(short, long)]
@@ -137,9 +136,16 @@ enum Commands {
         zeek: Option<PathBuf>,
     },
 
-    /// Optional remote scans while this CLI stays online (agent run)
+    /// Manage the local Mailent companion for workspace execution
     #[command(subcommand, hide = true)]
-    Agent(agent::AgentCommands),
+    Companion(companion::CompanionCommands),
+
+    /// Run the local companion loopback bridge for browser acquisition
+    Bridge {
+        /// Local port for HTTP companion bridge
+        #[arg(long, default_value_t = 15488)]
+        port: u16,
+    },
 
     /// Run system and connectivity diagnostics
     Doctor {
@@ -233,7 +239,10 @@ async fn main() {
             .await
         }
         Commands::Monitor { interface, zeek } => monitor::run(interface, zeek).await,
-        Commands::Agent(agent_cmd) => agent::run_agent_command(agent_cmd).await,
+        Commands::Companion(companion_cmd) => {
+            companion::run_companion_command(companion_cmd).await
+        }
+        Commands::Bridge { port } => bridge::start_bridge_server(port).await,
         Commands::Doctor { server } => doctor::run_doctor(server).await,
         Commands::Fix {
             finding,
@@ -269,376 +278,58 @@ async fn run_analyze(
     sync: bool,
     server_override: Option<String>,
 ) -> Result<(), String> {
-    // 1. Validate capture file header and size
     let capture_name = capture_path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("capture.pcap")
         .to_string();
+
     eprintln!("  [1/4] Validating capture file: {}", capture_name);
-    let (file_size, capture_hash) = validate_pcap(&capture_path)?;
-
-    // 2. Locate and verify Zeek
-    let zeek_bin = locate_zeek(zeek_override.as_deref())?;
-
-    // 3. Execute analysis library
-    eprintln!(
-        "  [2/4] Reading captured connections with Zeek ({})...",
-        zeek_bin.display()
-    );
-    let analysis = mailent_sensor::analyze::analyze(
-        &capture_path,
-        &zeek_bin,
-        "mailent-cli",
-        !verify_checksums,
-    )
-    .await
-    .map_err(|e| format!("Capture analysis failed: {e}"))?;
-
-    // 4. Ingest and correlate observations
-    if analysis.observations.is_empty() {
-        return Err(
-            "No email connections were found in this capture. Choose traffic containing SMTP, IMAP or POP3.".to_string(),
-        );
-    }
-
-    eprintln!(
-        "  [3/4] Correlating {} email observation(s) against policy baseline...",
-        analysis.observations.len()
-    );
-
-    let policy_pack = PolicyPack::modern();
-    let mut sessions = Vec::new();
-    let mut all_findings: Vec<Finding> = Vec::new();
-    let mut protocols_set = std::collections::BTreeSet::new();
-    let mut protocol_evidence = Vec::new();
-    let now = OffsetDateTime::now_utc();
-
-    for obs in &analysis.observations {
-        let proto_name = match obs.protocol {
-            EmailProtocol::Smtp => {
-                if obs.starttls_state == Some(StartTlsState::AdvertisedAndUsed)
-                    || obs.starttls_state == Some(StartTlsState::TlsEstablished)
-                {
-                    "SMTP (STARTTLS)"
-                } else if obs.flow.dst_port == 465 {
-                    "SMTPS"
-                } else {
-                    "SMTP"
-                }
-            }
-            EmailProtocol::Imap => {
-                if obs.starttls_state == Some(StartTlsState::AdvertisedAndUsed)
-                    || obs.starttls_state == Some(StartTlsState::TlsEstablished)
-                {
-                    "IMAP (STARTTLS)"
-                } else if obs.flow.dst_port == 993 {
-                    "IMAPS"
-                } else {
-                    "IMAP"
-                }
-            }
-            EmailProtocol::Pop3 => {
-                if obs.starttls_state == Some(StartTlsState::AdvertisedAndUsed)
-                    || obs.starttls_state == Some(StartTlsState::TlsEstablished)
-                {
-                    "POP3 (STLS)"
-                } else if obs.flow.dst_port == 995 {
-                    "POP3S"
-                } else {
-                    "POP3"
-                }
-            }
-            EmailProtocol::Unknown => {
-                if obs.flow.dst_port == 465 {
-                    "SMTPS"
-                } else if obs.flow.dst_port == 993 {
-                    "IMAPS"
-                } else if obs.flow.dst_port == 995 {
-                    "POP3S"
-                } else {
-                    "Unknown Email Protocol"
-                }
-            }
-        };
-
-        if protocols_set.insert(proto_name.to_string()) {
-            let clean_ver = analysis
-                .zeek_version
-                .trim_start_matches("zeek ")
-                .trim_start_matches("Zeek ")
-                .trim_start_matches("version ")
-                .trim();
-            let proto_lower = proto_name.to_lowercase();
-            let verified_by = if clean_ver.is_empty() {
-                format!("Zeek {proto_lower} analyzer")
-            } else {
-                format!("Zeek {clean_ver} · {proto_lower} analyzer")
-            };
-            protocol_evidence.push(ProtocolEvidence {
-                protocol: proto_name.to_string(),
-                role: if obs.flow.dst_port == 25
-                    || obs.flow.dst_port == 465
-                    || obs.flow.dst_port == 587
-                {
-                    "Mail Transfer Agent / Submission Server".to_string()
-                } else {
-                    "Mailbox Access Server".to_string()
-                },
-                proof: format!(
-                    "Observed on flow {} with protocol handshake state machine",
-                    obs.flow
-                ),
-                verified_by,
-            });
-        }
-
-        let session = EmailSession::from(obs);
-        let candidates = mailent_policy::evaluate(&session, &policy_pack);
-        let correlated = FindingCorrelator::correlate_session(&session, &candidates);
-        all_findings.extend(correlated);
-        sessions.push(session);
-    }
-
-    let mut deduped_findings: Vec<Finding> = Vec::new();
-    for finding in all_findings {
-        if let Some(existing) = deduped_findings
-            .iter_mut()
-            .find(|f| f.rule_id == finding.rule_id && f.title == finding.title)
-        {
-            existing.affected_count += finding.affected_count;
-            for ev in finding.evidence {
-                if !existing.evidence.iter().any(|e| e == &ev) {
-                    existing.evidence.push(ev);
-                }
-            }
-            if finding.last_seen > existing.last_seen {
-                existing.last_seen = finding.last_seen;
-            }
-            if finding.first_seen < existing.first_seen {
-                existing.first_seen = finding.first_seen;
-            }
-        } else {
-            deduped_findings.push(finding);
-        }
-    }
-    let all_findings = deduped_findings;
-
-    // 5. Compute Posture & Guidance
-    let asset_id = Uuid::new_v5(&Uuid::NAMESPACE_OID, capture_hash.as_bytes());
-    let posture_input = PostureInput {
-        findings: &all_findings,
-        anomalies: &[],
-        asset: None,
-        asset_sessions: &sessions,
-        certificates: &[],
-        probe_runs: &[],
-        investigation: None,
-    };
-    let posture = compute_posture(PostureSubjectKind::Asset, asset_id, &posture_input);
-    let guidance = build_guidance(asset_id, &all_findings, None, &sessions, &[], now);
-
-    let posture_score = posture.score;
-    let posture_grade = posture.grade.to_string();
-
-    let baseline_risk = match posture.grade {
-        PostureGrade::Strong | PostureGrade::Good => RiskLevel::Low,
-        PostureGrade::Moderate => RiskLevel::Medium,
-        PostureGrade::Weak => RiskLevel::High,
-        PostureGrade::Critical => RiskLevel::Critical,
-    };
-
-    let max_finding_risk = all_findings
-        .iter()
-        .map(|f| RiskLevel::from(f.severity))
-        .max()
-        .unwrap_or(RiskLevel::Low);
-
-    let effective_risk = baseline_risk.max(max_finding_risk);
-
-    let ai_risk_classification = match effective_risk {
-        RiskLevel::Critical => "CRITICAL".to_string(),
-        RiskLevel::High => "HIGH".to_string(),
-        RiskLevel::Medium => "MEDIUM".to_string(),
-        RiskLevel::Low => {
-            if sessions.is_empty() {
-                "INCONCLUSIVE".to_string()
-            } else {
-                "LOW".to_string()
-            }
-        }
-    };
-
-    let ai_risk_rationale = if all_findings
-        .iter()
-        .any(|f| f.severity == FindingSeverity::Critical)
-    {
-        "Critical cryptographic non-compliances detected that expose email transport to active downgrade or interception."
-            .to_string()
-    } else if all_findings
-        .iter()
-        .any(|f| f.severity == FindingSeverity::High)
-    {
-        "High severity security non-compliance identified; prompt remediation recommended to maintain transport security."
-            .to_string()
-    } else if all_findings.is_empty() {
-        "Evaluated email transport complies with modern cryptographic baseline; no policy violations observed."
-            .to_string()
-    } else {
-        "Moderate security observations detected; review recommendations to align with modern cryptographic best practices."
-            .to_string()
-    };
-
-    eprintln!("  [4/4] Computing posture score and exporting security reports...");
-
-    // 6. Build Assessment Record
-    let time_range_start = analysis.observations.iter().map(|o| o.timestamp).min();
-    let time_range_end = analysis.observations.iter().map(|o| o.timestamp).max();
-
-    let capture_meta = CaptureMetadata {
-        capture_name: capture_name.clone(),
-        capture_hash: capture_hash.clone(),
-        capture_size_bytes: file_size,
-        time_range_start,
-        time_range_end,
-    };
-
-    let assessment_id = Uuid::new_v4();
-    let session_ids = sessions.iter().map(|s| s.session_id).collect();
-    let finding_ids = all_findings.iter().map(|f| f.id).collect();
-
-    let assessment = AssessmentRecord::new_capture(
-        assessment_id,
-        format!("Capture Analysis: {}", capture_name),
-        capture_meta,
-        now,
-        protocols_set.into_iter().collect(),
-        protocol_evidence,
-        session_ids,
-        vec![asset_id],
-        finding_ids,
-        posture_score,
-        posture_grade.clone(),
-        analysis.warnings.clone(),
-        ai_risk_classification.clone(),
-        ai_risk_rationale.clone(),
-        0.0,
-        serde_json::json!({
-            "engine": "mailent-sensor",
-            "zeek_version": analysis.zeek_version,
-            "capture_sha256": capture_hash,
-            "observations_count": analysis.observations.len(),
-        }),
-    );
-
-    // 7. Build Canonical Forensic Report
-    let report_input = ReportInput {
-        investigation: None,
-        asset: None,
-        sessions: &sessions,
-        findings: &all_findings,
-        anomalies: &[],
-        drifts: &[],
-        probe_runs: &[],
-        posture: Some(&posture),
-        guidance: &guidance,
-        remediation_records: &[],
-        policy_name: policy_pack.name.clone(),
-        policy_version: policy_pack.version.clone(),
-        assessment_source: Some("capture".to_string()),
-        target_domain: None,
-        infrastructure: None,
-    };
-
-    let report = build_report(
-        format!("Security report: {}", capture_name),
-        "0.1.0",
-        &report_input,
-        now,
-    );
-
-    // 8. Generate Report Files
-    let mut written_reports = Vec::new();
-    if !no_reports {
-        std::fs::create_dir_all(&output_dir).map_err(|e| {
-            format!(
-                "Failed to create output directory {}: {e}",
-                output_dir.display()
-            )
-        })?;
-
-        let stem = capture_path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("capture");
-
-        let json_path = output_dir.join(format!("{stem}-report.json"));
-        let json_content = mailent_reporting::to_json(&report)
-            .map_err(|e| format!("Failed to render report JSON: {e}"))?;
-        std::fs::write(&json_path, json_content)
-            .map_err(|e| format!("Failed to write {}: {e}", json_path.display()))?;
-        written_reports.push(json_path);
-
-        let html_path = output_dir.join(format!("{stem}-report.html"));
-        let html_content = mailent_reporting::render_html(&report)
-            .map_err(|e| format!("Failed to render report HTML: {e}"))?;
-        std::fs::write(&html_path, html_content)
-            .map_err(|e| format!("Failed to write {}: {e}", html_path.display()))?;
-        written_reports.push(html_path);
-
-        let pdf_path = output_dir.join(format!("{stem}-report.pdf"));
-        let pdf_bytes = mailent_reporting::render_pdf(&report)
-            .map_err(|e| format!("Failed to render report PDF: {e}"))?;
-        std::fs::write(&pdf_path, pdf_bytes)
-            .map_err(|e| format!("Failed to write {}: {e}", pdf_path.display()))?;
-        written_reports.push(pdf_path);
-    }
+    let outcome = engine::execute_capture_analysis(engine::AnalysisOptions {
+        capture_path: &capture_path,
+        capture_name: Some(capture_name.clone()),
+        title: None,
+        zeek_override: zeek_override.as_deref(),
+        verify_checksums,
+        no_reports,
+        output_dir: Some(&output_dir),
+        sync,
+        server_override,
+    })
+    .await?;
 
     eprintln!("  ✔ Analysis complete.\n");
 
-    // 9. Output formatted result
     if format == "json" {
         let output = serde_json::json!({
-            "assessment": assessment,
+            "assessment": outcome.assessment,
             "report_summary": {
-                "report_id": report.metadata.report_id,
-                "title": report.metadata.title,
-                "posture_score": posture_score,
-                "posture_grade": posture_grade,
-                "risk_level": ai_risk_classification,
-                "sessions_count": sessions.len(),
-                "findings_count": all_findings.len(),
+                "report_id": outcome.report.metadata.report_id,
+                "title": outcome.report.metadata.title,
+                "posture_score": outcome.posture_score,
+                "posture_grade": outcome.posture_grade,
+                "risk_level": outcome.ai_risk_classification,
+                "sessions_count": outcome.sessions.len(),
+                "findings_count": outcome.findings.len(),
             },
-            "written_reports": written_reports.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
+            "written_reports": outcome.written_reports.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
         });
         println!("{}", serde_json::to_string_pretty(&output).unwrap());
     } else {
         print_capture_table(
             &capture_name,
-            &capture_hash,
-            file_size,
-            &analysis.zeek_version,
-            posture_score,
-            &posture_grade,
-            &ai_risk_classification,
-            &ai_risk_rationale,
-            &sessions,
-            &all_findings,
-            &written_reports,
-            &analysis.warnings,
+            &outcome.capture_hash,
+            outcome.file_size,
+            &outcome.zeek_version,
+            outcome.posture_score,
+            &outcome.posture_grade,
+            &outcome.ai_risk_classification,
+            &outcome.ai_risk_rationale,
+            &outcome.sessions,
+            &outcome.findings,
+            &outcome.written_reports,
+            &outcome.warnings,
         );
-    }
-
-    if sync {
-        sync_assessment(
-            server_override,
-            &assessment,
-            &all_findings,
-            &[],
-            &sessions,
-            Some(&zeek_bin),
-        )
-        .await?;
     }
 
     Ok(())
@@ -765,62 +456,6 @@ async fn run_scan(
     Ok(())
 }
 
-async fn sync_assessment(
-    server_override: Option<String>,
-    assessment: &AssessmentRecord,
-    findings: &[Finding],
-    assets: &[mailent_domain::Asset],
-    sessions: &[EmailSession],
-    zeek: Option<&Path>,
-) -> Result<(), String> {
-    let creds = credentials::load_credentials().ok_or_else(|| {
-        "Not logged in. Run `mailent login` to register this device before using --sync."
-            .to_string()
-    })?;
-
-    let server_url = server_override
-        .or_else(|| std::env::var("MAILENT_SERVER_URL").ok())
-        .unwrap_or(creds.server_url.clone());
-
-    let client = reqwest::Client::new();
-    let url = format!(
-        "{}/api/v1/assessments/sync",
-        server_url.trim_end_matches('/')
-    );
-
-    let payload = serde_json::json!({
-        "client_sync_id": assessment.id.to_string(),
-        "assessment": assessment,
-        "findings": findings,
-        "assets": assets,
-        "sessions": sessions,
-    });
-
-    let resp = client
-        .post(&url)
-        .header("Authorization", format!("Bearer {}", creds.device_token))
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to connect to Mailent server at {url}: {e}"))?;
-
-    if credentials::handle_rejection(resp.status(), &creds)? {
-        return Err("Sign in again before syncing results.".into());
-    }
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Sync failed (HTTP {status}): {body}"));
-    }
-
-    installation::report_best_effort(&creds, &server_url, zeek).await;
-    println!(
-        "\x1b[32m✔ Successfully synced assessment {} to {}\x1b[0m",
-        assessment.id, server_url
-    );
-    Ok(())
-}
 
 async fn run_login(
     server_override: Option<String>,
@@ -1038,6 +673,24 @@ async fn run_status(server_override: Option<String>) -> Result<(), String> {
         credentials::credentials_path().display()
     );
 
+    let companion_ready = match reqwest::Client::builder()
+        .timeout(Duration::from_millis(500))
+        .build()
+    {
+        Ok(c) => c
+            .get("http://127.0.0.1:15488/status")
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false),
+        Err(_) => false,
+    };
+    if companion_ready {
+        println!("Companion:       \x1b[32mReady (http://127.0.0.1:15488)\x1b[0m");
+    } else {
+        println!("Companion:       \x1b[33mOffline (run 'mailent companion run' to enable)\x1b[0m");
+    }
+
     Ok(())
 }
 
@@ -1068,167 +721,6 @@ async fn run_logout(server_override: Option<String>) -> Result<(), String> {
 
     println!("\x1b[32m✔ Logged out successfully. Local credentials removed.\x1b[0m");
     Ok(())
-}
-
-fn validate_pcap(path: &Path) -> Result<(u64, String), String> {
-    if !path.exists() {
-        return Err(format!("Capture file does not exist: {}", path.display()));
-    }
-    let metadata =
-        std::fs::metadata(path).map_err(|e| format!("Failed to inspect capture file: {e}"))?;
-    let len = metadata.len();
-    if len < 24 {
-        return Err(format!(
-            "File '{}' is too small to be a valid PCAP/PCAPNG capture ({} bytes)",
-            path.display(),
-            len
-        ));
-    }
-    if len > 256 * 1024 * 1024 {
-        return Err(format!(
-            "Capture file '{}' exceeds maximum allowed size of 256 MiB",
-            path.display()
-        ));
-    }
-
-    let mut file =
-        std::fs::File::open(path).map_err(|e| format!("Failed to open capture file: {e}"))?;
-    let mut header = [0u8; 4];
-    std::io::Read::read_exact(&mut file, &mut header)
-        .map_err(|e| format!("Failed to read capture header: {e}"))?;
-
-    let valid_magic = matches!(
-        header,
-        [0xd4, 0xc3, 0xb2, 0xa1]
-            | [0xa1, 0xb2, 0xc3, 0xd4]
-            | [0x4d, 0x3c, 0xb2, 0xa1]
-            | [0xa1, 0xb2, 0x3c, 0x4d]
-            | [0x0a, 0x0d, 0x0d, 0x0a]
-    );
-
-    if !valid_magic {
-        return Err(format!(
-            "File '{}' is not a valid PCAP or PCAPNG packet capture (invalid magic header: {:02x?})",
-            path.display(),
-            header
-        ));
-    }
-
-    use sha2::{Digest, Sha256};
-    let mut file = std::fs::File::open(path)
-        .map_err(|e| format!("Failed to read capture file for hashing: {e}"))?;
-    let mut hasher = Sha256::new();
-    std::io::copy(&mut file, &mut hasher).map_err(|e| format!("Failed to hash capture: {e}"))?;
-    let hash = format!("{:x}", hasher.finalize());
-
-    Ok((len, hash))
-}
-
-fn verified_zeek_version(path: &Path) -> Result<String, String> {
-    let is_script = cfg!(windows)
-        && path
-            .extension()
-            .and_then(|s| s.to_str())
-            .is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"));
-
-    let mut cmd = if is_script {
-        let mut c = std::process::Command::new("cmd.exe");
-        c.arg("/c").arg(&path);
-        c
-    } else {
-        std::process::Command::new(&path)
-    };
-
-    let output = cmd
-        .arg("--version")
-        .output()
-        .map_err(|e| format!("Cannot start required Zeek at {}: {e}", path.display()))?;
-    if !output.status.success() {
-        return Err(format!(
-            "Zeek is not ready at {}. Run the installer again or set MAILENT_ZEEK to Zeek 8+.",
-            path.display()
-        ));
-    }
-    let version = format!(
-        "{} {}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let normalized = version
-        .split_whitespace()
-        .find(|part| {
-            part.split('.')
-                .next()
-                .is_some_and(|v| v.parse::<u32>().is_ok())
-        })
-        .unwrap_or("");
-    let major = version
-        .split_whitespace()
-        .find_map(|part| part.split('.').next()?.parse::<u32>().ok());
-    if !major.is_some_and(|v| v >= 8) {
-        return Err(format!(
-            "Mailent requires Zeek 8 or newer; found {}",
-            version.trim()
-        ));
-    }
-    Ok(normalized.to_string())
-}
-
-fn locate_zeek(user_path: Option<&Path>) -> Result<PathBuf, String> {
-    fn verified(path: PathBuf) -> Result<PathBuf, String> {
-        verified_zeek_version(&path)?;
-        Ok(if path.is_relative() && path.components().count() > 1 {
-            std::fs::canonicalize(&path).unwrap_or(path)
-        } else {
-            path
-        })
-    }
-    if let Some(path) = user_path {
-        return verified(path.to_path_buf());
-    }
-    if let Some(path) = std::env::var_os("MAILENT_ZEEK") {
-        return verified(PathBuf::from(path));
-    }
-    if let Ok(path) = verified(PathBuf::from("zeek")) {
-        return Ok(path);
-    }
-    #[cfg(windows)]
-    if let Ok(path) = verified(PathBuf::from("zeek.exe")) {
-        return Ok(path);
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            for name in [
-                "mailent-zeek",
-                "mailent-zeek.cmd",
-                "mailent-zeek.bat",
-                "zeek.exe",
-            ] {
-                let adjacent = dir.join(name);
-                if adjacent.exists() {
-                    if let Ok(verified_path) = verified(adjacent) {
-                        return Ok(verified_path);
-                    }
-                }
-            }
-        }
-    }
-    for candidate in [
-        "scripts/mailent-zeek",
-        "scripts/mailent-zeek.cmd",
-        "../scripts/mailent-zeek",
-        "../scripts/mailent-zeek.cmd",
-        "../../scripts/mailent-zeek",
-        "../../scripts/mailent-zeek.cmd",
-    ] {
-        let p = PathBuf::from(candidate);
-        if p.exists() {
-            if let Ok(verified_path) = verified(p) {
-                return Ok(verified_path);
-            }
-        }
-    }
-    Err("Zeek 8+ is required for Mailent. Run the website installer to set up Zeek, or set MAILENT_ZEEK to your Zeek executable.".into())
 }
 
 fn print_capture_table(
