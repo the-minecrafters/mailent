@@ -100,7 +100,7 @@ export function ScanInfrastructureModal({
   }
 
   function copyCompanionCommand() {
-    navigator.clipboard.writeText("mailent companion run").then(() => {
+    navigator.clipboard.writeText("mailent companion start").then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
@@ -196,11 +196,11 @@ export function ScanInfrastructureModal({
                 </span>
               </div>
               <p style={{ margin: "0.5rem 0" }}>
-                Local companion is offline. Run this in your terminal to enable scans on this machine:
+                Local companion service is offline. Start the service to enable scans on this machine:
               </p>
               <div style={{ position: "relative" }}>
                 <pre className="device-login-command" style={{ margin: "0.75rem 0" }}>
-                  <code>mailent companion run</code>
+                  <code>mailent companion start</code>
                 </pre>
                 <Button
                   variant="secondary"
@@ -218,6 +218,9 @@ export function ScanInfrastructureModal({
                   <span>{copied ? "Copied" : "Copy"}</span>
                 </Button>
               </div>
+              <p className="secondary-text" style={{ margin: "0.25rem 0 0.5rem", fontSize: "0.82rem" }}>
+                Runs as a background service. Use <code>mailent companion run</code> for foreground debugging.
+              </p>
               <div
                 className="secondary-text"
                 style={{

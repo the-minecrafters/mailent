@@ -124,9 +124,9 @@ describe("ScanInfrastructureModal - Local Companion Workflow", () => {
     expect(await screen.findByText("CLI connected")).toBeVisible();
     expect(screen.getByText("Local companion offline")).toBeVisible();
     expect(
-      screen.getByText(/Local companion is offline\. Run this in your terminal/i),
+      screen.getByText(/Local companion service is offline\. Start the service/i),
     ).toBeVisible();
-    expect(screen.getByText("mailent companion run")).toBeVisible();
+    expect(screen.getByText("mailent companion start")).toBeVisible();
     expect(
       screen.getByText(/Waiting for companion to come online…/i),
     ).toBeVisible();

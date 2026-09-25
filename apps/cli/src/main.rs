@@ -598,6 +598,33 @@ async fn run_login(
                     "  Credentials:     {}",
                     credentials::credentials_path().display()
                 );
+
+                // Automatically install and start the background companion service on Linux
+                if cfg!(target_os = "linux") {
+                    match companion::auto_install_user_service() {
+                        Ok(unit) => {
+                            println!();
+                            println!("\x1b[32m✔ Background companion service installed and started (systemd --user).\x1b[0m");
+                            println!("  Service:         {}", unit.file_name().and_then(|n| n.to_str()).unwrap_or("mailent-companion.service"));
+                            println!("  Local Bridge:    http://127.0.0.1:15488 (ready)");
+                            println!("  Auto-start:      Enabled (restarts on failure and boots with user session)");
+                            println!("\nYour workspace is now ready for local capture analysis and scans without keeping a terminal open.");
+                        }
+                        Err(e) => {
+                            println!();
+                            println!("[!] Could not auto-enable systemd user service: {e}");
+                            println!("    To start the companion service manually:");
+                            println!("      mailent companion start");
+                            println!("    Or run in foreground for debugging:");
+                            println!("      mailent companion run");
+                        }
+                    }
+                } else {
+                    println!();
+                    println!("To enable local workspace acquisition, run:");
+                    println!("  mailent companion run");
+                }
+
                 return Ok(());
             }
         } else {
@@ -659,7 +686,8 @@ async fn run_status(server_override: Option<String>) -> Result<(), String> {
     installation::report_best_effort(&creds, &server_url, None).await;
     println!("Mailent CLI Status");
     println!("------------------");
-    println!("Authentication:  \x1b[32mActive\x1b[0m");
+    println!("Workspace Link:  \x1b[32mConnected (authenticated)\x1b[0m");
+    println!("Server:          {}", server_url);
     println!("Device Name:     {}", creds.device_name);
     println!("Device ID:       {}", creds.device_id);
     if let Some(org) = status_data.get("organization") {
@@ -667,28 +695,28 @@ async fn run_status(server_override: Option<String>) -> Result<(), String> {
         let org_id = org["id"].as_str().unwrap_or("Unknown");
         println!("Organization:    {} ({})", org_name, org_id);
     }
-    println!("Server:          {}", server_url);
     println!(
         "Credentials:     {}",
         credentials::credentials_path().display()
     );
 
-    let companion_ready = match reqwest::Client::builder()
-        .timeout(Duration::from_millis(500))
-        .build()
-    {
-        Ok(c) => c
-            .get("http://127.0.0.1:15488/status")
-            .send()
-            .await
-            .map(|r| r.status().is_success())
-            .unwrap_or(false),
-        Err(_) => false,
-    };
-    if companion_ready {
-        println!("Companion:       \x1b[32mReady (http://127.0.0.1:15488)\x1b[0m");
+    let service_state = companion::check_service_state(false);
+    println!("Companion (svc): {}", service_state);
+
+    let (bridge_ready, _) = companion::check_bridge_readiness(15488).await;
+    if bridge_ready {
+        println!("Loopback Bridge: \x1b[32mReady (http://127.0.0.1:15488)\x1b[0m");
     } else {
-        println!("Companion:       \x1b[33mOffline (run 'mailent companion run' to enable)\x1b[0m");
+        println!("Loopback Bridge: \x1b[33mNot responding (port 15488)\x1b[0m");
+    }
+
+    match crate::engine::locate_zeek(None) {
+        Ok(zeek_path) => {
+            println!("Zeek 8+:         \x1b[32mReady ({})\x1b[0m", zeek_path.display());
+        }
+        Err(e) => {
+            println!("Zeek 8+:         \x1b[31m{}\x1b[0m", e);
+        }
     }
 
     Ok(())

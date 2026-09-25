@@ -100,10 +100,53 @@ fn require_systemd() -> Result<(), String> {
     Ok(())
 }
 
-fn run_install(system: bool) -> Result<(), String> {
+pub fn check_service_state(system: bool) -> &'static str {
+    if !cfg!(target_os = "linux") {
+        return "Unsupported (non-Linux)";
+    }
+    let mut cmd = Command::new("systemctl");
+    if !system {
+        cmd.arg("--user");
+    }
+    cmd.args(["is-active", "mailent-companion.service"]);
+    match cmd.output() {
+        Ok(out) => {
+            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if s == "active" {
+                "Active (running)"
+            } else if s == "inactive" {
+                "Inactive (stopped)"
+            } else if s == "failed" {
+                "Failed (error)"
+            } else {
+                "Not installed / stopped"
+            }
+        }
+        Err(_) => "systemctl unavailable",
+    }
+}
+
+pub async fn check_bridge_readiness(port: u16) -> (bool, Option<serde_json::Value>) {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(1500))
+        .build();
+    let Ok(client) = client else {
+        return (false, None);
+    };
+    let url = format!("http://127.0.0.1:{port}/status");
+    match client.get(&url).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            let val = resp.json::<serde_json::Value>().await.ok();
+            (true, val)
+        }
+        _ => (false, None),
+    }
+}
+
+pub fn auto_install_user_service() -> Result<PathBuf, String> {
     require_systemd()?;
-    let zeek_path = locate_zeek(None)?;
-    let creds = load_credentials().ok_or_else(|| {
+    let zeek_path = locate_zeek(None).unwrap_or_else(|_| PathBuf::from("/usr/bin/zeek"));
+    let _creds = load_credentials().ok_or_else(|| {
         "This device is not linked to a Mailent workspace yet.\nPlease run 'mailent login' first before installing the companion service.".to_string()
     })?;
 
@@ -114,10 +157,10 @@ fn run_install(system: bool) -> Result<(), String> {
         .to_str()
         .ok_or("Invalid executable path string")?;
 
-    let unit_path = get_unit_path(system)?;
-    let zeek_path = zeek_path.display().to_string();
+    let unit_path = get_unit_path(false)?;
+    let zeek_path_str = zeek_path.display().to_string();
     let credentials_path = credentials::credentials_path().display().to_string();
-    for value in [exe_str, &zeek_path, &credentials_path] {
+    for value in [exe_str, &zeek_path_str, &credentials_path] {
         if value.contains(['\n', '\r', '"', '%', '\\']) {
             return Err("Unsupported character in the installation path.".into());
         }
@@ -131,11 +174,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart="{exe_str}" companion run
+ExecStart="{exe_str}" companion run --port 15488
 Restart=on-failure
 RestartSec=5s
 UMask=0077
-Environment="MAILENT_ZEEK={zeek_path}"
+Environment="MAILENT_ZEEK={zeek_path_str}"
 Environment="MAILENT_CREDENTIALS_PATH={credentials_path}"
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 
@@ -148,17 +191,11 @@ WantedBy=default.target
         .map_err(|e| format!("Failed to write unit file {}: {e}", unit_path.display()))?;
 
     let mut reload_cmd = Command::new("systemctl");
-    if !system {
-        reload_cmd.arg("--user");
-    }
-    reload_cmd.arg("daemon-reload");
+    reload_cmd.args(["--user", "daemon-reload"]);
     let _ = reload_cmd.status();
 
     let mut enable_cmd = Command::new("systemctl");
-    if !system {
-        enable_cmd.arg("--user");
-    }
-    enable_cmd.args(["enable", "--now", "mailent-companion.service"]);
+    enable_cmd.args(["--user", "enable", "--now", "mailent-companion.service"]);
     let enable_res = enable_cmd
         .status()
         .map_err(|e| format!("Failed to enable systemd service: {e}"))?;
@@ -166,6 +203,76 @@ WantedBy=default.target
     if !enable_res.success() {
         return Err("systemctl enable --now mailent-companion.service failed".to_string());
     }
+
+    Ok(unit_path)
+}
+
+fn run_install(system: bool) -> Result<(), String> {
+    require_systemd()?;
+    let zeek_path = locate_zeek(None)?;
+    let creds = load_credentials().ok_or_else(|| {
+        "This device is not linked to a Mailent workspace yet.\nPlease run 'mailent login' first before installing the companion service.".to_string()
+    })?;
+
+    let unit_path = if !system {
+        auto_install_user_service()?
+    } else {
+        let exe_path = std::env::current_exe()
+            .map_err(|e| format!("Failed to determine current executable path: {e}"))?;
+        let canonical_exe = fs::canonicalize(&exe_path).unwrap_or(exe_path);
+        let exe_str = canonical_exe
+            .to_str()
+            .ok_or("Invalid executable path string")?;
+
+        let unit_path = get_unit_path(true)?;
+        let zeek_path_str = zeek_path.display().to_string();
+        let credentials_path = credentials::credentials_path().display().to_string();
+        for value in [exe_str, &zeek_path_str, &credentials_path] {
+            if value.contains(['\n', '\r', '"', '%', '\\']) {
+                return Err("Unsupported character in the installation path.".into());
+            }
+        }
+        let unit_content = format!(
+            r#"[Unit]
+Description=Mailent local execution companion
+Documentation=https://github.com/the-minecrafters/mailent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart="{exe_str}" companion run --port 15488
+Restart=on-failure
+RestartSec=5s
+UMask=0077
+Environment="MAILENT_ZEEK={zeek_path_str}"
+Environment="MAILENT_CREDENTIALS_PATH={credentials_path}"
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target
+"#
+        );
+
+        fs::write(&unit_path, unit_content)
+            .map_err(|e| format!("Failed to write unit file {}: {e}", unit_path.display()))?;
+
+        let mut reload_cmd = Command::new("systemctl");
+        reload_cmd.arg("daemon-reload");
+        let _ = reload_cmd.status();
+
+        let mut enable_cmd = Command::new("systemctl");
+        enable_cmd.args(["enable", "--now", "mailent-companion.service"]);
+        let enable_res = enable_cmd
+            .status()
+            .map_err(|e| format!("Failed to enable systemd service: {e}"))?;
+
+        if !enable_res.success() {
+            return Err("systemctl enable --now mailent-companion.service failed".to_string());
+        }
+
+        unit_path
+    };
 
     println!("\n╔══════════════════════════════════════════════════════════╗");
     println!("║          MAILENT COMPANION INSTALLED SUCCESSFULLY        ║");
@@ -281,24 +388,7 @@ async fn run_status(system: bool) -> Result<(), String> {
     println!("║                MAILENT COMPANION STATUS                  ║");
     println!("╚══════════════════════════════════════════════════════════╝\n");
 
-    let mut is_active_cmd = Command::new("systemctl");
-    if !system {
-        is_active_cmd.arg("--user");
-    }
-    is_active_cmd.args(["is-active", "mailent-companion.service"]);
-    let service_state = match is_active_cmd.output() {
-        Ok(out) => {
-            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if s == "active" {
-                "Active (running)"
-            } else if s == "inactive" {
-                "Inactive (stopped)"
-            } else {
-                "Not loaded / stopped"
-            }
-        }
-        Err(_) => "systemctl unavailable",
-    };
+    let service_state = check_service_state(system);
 
     println!("  • Service State:     {}", service_state);
     println!(

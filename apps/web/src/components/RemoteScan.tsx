@@ -41,9 +41,9 @@ export function RemoteScan({
     <details>
       <summary>Scan from an online installation</summary>
       <p>
-        Optional: keep <code>mailent companion run</code> open on your machine to
-        accept remote scans. A connected login alone does not enable remote
-        execution.
+        The Mailent companion service runs in the background to execute
+        infrastructure checks from your machine. If stopped, start it with{" "}
+        <code>mailent companion start</code>.
       </p>
       {online.length === 0 ? (
         <p>No CLI installation is online and accepting scans.</p>

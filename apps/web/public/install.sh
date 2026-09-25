@@ -85,8 +85,7 @@ main() {
   printf '\nConnect to your workspace:\n  mailent login --server https://mailent.onrender.com\n'
   printf '\nZeek is ready. Analyze a PCAP: mailent analyze capture.pcap\n'
   printf 'Monitor live mail traffic: mailent monitor --interface eth0\n'
-  printf 'Live capture requires native Zeek capture permissions or a rootful container runtime.\n'
-  printf 'Run local companion service: mailent companion install\n'
+  printf 'The companion service starts automatically in the background on login.\n'
   # Cleanup while the local variables are still in scope, including when piped to bash.
   rm -rf -- "$mailent_work_dir"
   trap - EXIT

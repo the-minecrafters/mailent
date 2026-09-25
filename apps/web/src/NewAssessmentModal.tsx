@@ -109,7 +109,7 @@ export function NewAssessmentModal({
   }
 
   function copyCompanionCommand() {
-    navigator.clipboard.writeText("mailent companion run").then(() => {
+    navigator.clipboard.writeText("mailent companion start").then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
@@ -201,11 +201,11 @@ export function NewAssessmentModal({
                 </span>
               </div>
               <p style={{ margin: "0.5rem 0" }}>
-                Start the local companion on your machine to analyze captures directly from this workspace:
+                Start the local companion service on your machine to analyze captures directly from this workspace:
               </p>
               <div style={{ position: "relative" }}>
                 <pre className="device-login-command" style={{ margin: "0.75rem 0" }}>
-                  <code>mailent companion run</code>
+                  <code>mailent companion start</code>
                 </pre>
                 <Button
                   variant="secondary"
@@ -223,6 +223,9 @@ export function NewAssessmentModal({
                   <span>{copied ? "Copied" : "Copy"}</span>
                 </Button>
               </div>
+              <p className="secondary-text" style={{ margin: "0.25rem 0 0.5rem", fontSize: "0.82rem" }}>
+                Runs as a background service. Use <code>mailent companion run</code> for foreground debugging.
+              </p>
               <div
                 className="secondary-text"
                 style={{

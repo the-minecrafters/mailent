@@ -119,9 +119,9 @@ describe("NewAssessmentModal - Local Companion Workflow", () => {
     expect(await screen.findByText("CLI connected")).toBeVisible();
     expect(screen.getByText("Local companion offline")).toBeVisible();
     expect(
-      screen.getByText(/Start the local companion on your machine/i),
+      screen.getByText(/Start the local companion service on your machine/i),
     ).toBeVisible();
-    expect(screen.getByText("mailent companion run")).toBeVisible();
+    expect(screen.getByText("mailent companion start")).toBeVisible();
     expect(
       screen.getByText(/Waiting for companion on 127.0.0.1:15488…/i),
     ).toBeVisible();

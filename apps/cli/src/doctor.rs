@@ -142,22 +142,16 @@ pub async fn run_doctor(server_override: Option<String>) -> Result<(), String> {
         }
     }
 
-    // Local execution companion check
-    let bridge_resp = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_millis(500))
-        .build()
-    {
-        Ok(c) => c.get("http://127.0.0.1:15488/status").send().await.ok(),
-        Err(_) => None,
-    };
-    if let Some(r) = bridge_resp {
-        if r.status().is_success() {
-            println!("[✓] Local Execution Companion: Active on 127.0.0.1:15488");
-        } else {
-            println!("[!] Local Execution Companion: Returned HTTP {}", r.status());
-        }
+    // Companion service state
+    let service_state = crate::companion::check_service_state(false);
+    println!("[•] Companion Service (systemd --user): {}", service_state);
+
+    // Local loopback bridge check
+    let (bridge_ready, _) = crate::companion::check_bridge_readiness(15488).await;
+    if bridge_ready {
+        println!("[✓] Loopback Bridge: Ready on http://127.0.0.1:15488");
     } else {
-        println!("[•] Local Execution Companion: Offline (start with 'mailent companion run' when analyzing from browser)");
+        println!("[•] Loopback Bridge: Offline (start service with 'mailent companion start' or debug with 'mailent companion run')");
     }
 
     if let Some(creds) = &creds {
