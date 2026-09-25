@@ -73,3 +73,73 @@ pub async fn verify(
         Json(remediation::request_verification(&state, id, req.request_id).await?),
     ))
 }
+
+#[derive(Deserialize)]
+pub struct SyncRemediationRequest {
+    pub client_sync_id: Uuid,
+    pub record: RemediationRecord,
+    pub probe: Option<mailent_domain::ProbeRun>,
+    pub device_note: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+pub struct SyncRemediationResponse {
+    pub synced: bool,
+    pub remediation_id: Uuid,
+    pub state: mailent_domain::RemediationState,
+}
+
+pub async fn sync(
+    State(state): State<AppState>,
+    Json(req): Json<SyncRemediationRequest>,
+) -> Result<Json<SyncRemediationResponse>, Error> {
+    let storage_error =
+        |e: mailent_storage::StorageError| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
+
+    let _ = state.findings.save(req.record.finding.clone()).await;
+
+    let record = req.record;
+    if let Some(existing) = state
+        .remediations
+        .find_by_id(record.id)
+        .await
+        .map_err(storage_error)?
+    {
+        let _ = state
+            .remediations
+            .update(&record, existing.revision)
+            .await
+            .map_err(storage_error)?;
+    } else {
+        let _ = state
+            .remediations
+            .create(&record)
+            .await
+            .map_err(storage_error)?;
+    }
+
+    if let Some(ref probe) = req.probe {
+        let _ = state.probes.reserve(probe, 0).await;
+        let _ = state.probes.update(probe).await;
+    }
+
+    if record.state == mailent_domain::RemediationState::VerifiedFixed {
+        crate::integrations::notify_event(
+            &state,
+            crate::integrations::EventNotification::new(
+                mailent_domain::IntegrationEventType::RemediationVerified,
+                format!("Remediation Verified: {}", record.finding.title),
+                format!("Remediation verified fixed for asset {}", record.asset_id),
+            )
+            .with_asset(record.asset_id, None)
+            .with_finding(record.finding.id)
+            .with_details(serde_json::to_value(&record).unwrap_or_default()),
+        );
+    }
+
+    Ok(Json(SyncRemediationResponse {
+        synced: true,
+        remediation_id: record.id,
+        state: record.state,
+    }))
+}

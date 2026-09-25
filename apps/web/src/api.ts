@@ -268,12 +268,6 @@ export const assessmentRecordSchema = z.object({
 });
 export type AssessmentRecord = z.infer<typeof assessmentRecordSchema>;
 
-export interface AnalyzeCaptureRequest {
-  title?: string;
-  pcap_base64?: string;
-  file_name?: string;
-}
-
 export async function fetchAssessments(): Promise<AssessmentSummary[]> {
   return z
     .array(assessmentSummarySchema)
@@ -283,22 +277,6 @@ export async function fetchAssessments(): Promise<AssessmentSummary[]> {
 export async function fetchAssessment(id: string): Promise<AssessmentRecord> {
   return assessmentRecordSchema.parse(
     await request(`/api/v1/assessments/${id}`),
-  );
-}
-
-export async function analyzeCapture(
-  req: AnalyzeCaptureRequest,
-): Promise<AssessmentRecord> {
-  return assessmentRecordSchema.parse(
-    await request(
-      "/api/v1/assessments/analyze",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(req),
-      },
-      60000,
-    ),
   );
 }
 
@@ -1298,6 +1276,10 @@ export const deviceSchema = z.object({
   revoked_at: z.string().nullable().optional(),
   capabilities: z.array(z.string()).default([]),
   version: z.string().nullable().optional(),
+  zeek_version: z.string().nullable().optional(),
+  remote_online: z.boolean().default(false),
+  readiness: z.enum(["ready", "setup_required", "unknown", "revoked"]).optional(),
+  last_sync_at: z.string().nullable().optional(),
   agent_enabled: z.boolean().default(false),
   agent_status: z.string().nullable().optional(),
   current_job_id: z.string().nullable().optional(),
@@ -1345,30 +1327,6 @@ export async function approveDeviceChallenge(
   })) as {
     status: string;
     device: Device;
-  };
-}
-
-export async function scanInfrastructure(domain: string): Promise<{
-  assessment: AssessmentRecord;
-  report: unknown;
-  endpoints_checked: number;
-  endpoints_succeeded: number;
-  endpoints_failed: number;
-}> {
-  return (await request(
-    "/api/v1/scans/infrastructure",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ domain }),
-    },
-    45000,
-  )) as {
-    assessment: AssessmentRecord;
-    report: unknown;
-    endpoints_checked: number;
-    endpoints_succeeded: number;
-    endpoints_failed: number;
   };
 }
 
@@ -1437,30 +1395,6 @@ export interface DomainHistoryResponse {
 
 export async function fetchMonitors(): Promise<InfrastructureMonitor[]> {
   return (await request("/api/v1/monitors")) as InfrastructureMonitor[];
-}
-
-export async function createMonitor(data: {
-  domain: string;
-  cadence: MonitorCadence;
-  target: MonitorExecutionTarget;
-}): Promise<InfrastructureMonitor> {
-  return (await request("/api/v1/monitors", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  })) as InfrastructureMonitor;
-}
-
-export async function runNowMonitor(
-  id: string,
-): Promise<{ status: string; job_id: string; monitor_id: string }> {
-  return (await request(`/api/v1/monitors/${id}/run_now`, {
-    method: "POST",
-  })) as {
-    status: string;
-    job_id: string;
-    monitor_id: string;
-  };
 }
 
 export async function deleteMonitor(id: string): Promise<{ deleted: boolean }> {

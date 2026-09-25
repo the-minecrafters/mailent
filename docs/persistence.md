@@ -26,8 +26,14 @@ A restart of Mailent Core no longer erases analysis history or asset state.
 
 Mailent enforces strict state partitioning across specialized storage systems:
 
-### PostgreSQL (Control Plane)
+### PostgreSQL (Control Plane & Serverless Mode)
 Stores operational entities that require relational integrity, transactions, and point lookups:
+- `organizations`: Multi-tenant organization boundaries and slugs.
+- `devices`: Registered CLI devices, public host metadata, agent status, and capabilities.
+- `device_tokens`: SHA-256 hashed persistent tokens for CLI devices.
+- `agent_jobs`: Typed job queue for scheduled monitoring and local scans.
+- `infrastructure_monitors`: Scheduled domain monitoring definitions with cadence and targets.
+- `assessments`: First-class forensic dossier records for PCAP and domain scans.
 - `sites`: Monitored environments and datacenters.
 - `sensors`: Active network probes, interfaces, modes, and heartbeat states (`Online`, `Stale`, `Offline`).
 - `assets`: Discovered email infrastructure servers and MTAs.
@@ -38,19 +44,24 @@ Stores operational entities that require relational integrity, transactions, and
 - `findings`: Active and historical policy findings with affected counts.
 - `finding_evidence`: Session and observation references backing each finding.
 - `drift_events`: Real-time cryptographic configuration changes.
+- `remediations`: Append-only fix tracking records.
+- `probe_runs`: Active probe challenge results and verification outcomes.
+- `investigations`: Correlated incident triage dossiers.
+- `training_records`: Versioned feature snapshots captured at decision time.
+- `mail_sessions` & `mail_observations`: JSONB tables storing full analytical session telemetry in single-store deployments without ClickHouse (such as Render + Supabase).
 
-### ClickHouse (Analytical Telemetry)
-Stores immutable time-series data optimized for append-only ingestion and analytics:
+### ClickHouse (High-Volume Analytical Telemetry, Optional)
+Stores immutable time-series data optimized for append-only ingestion and analytics in distributed multi-node deployments:
 - `normalized_observations`: Raw structured observations (`ReplacingMergeTree`).
 - `email_sessions`: Correlated mail transport sessions with flow and TLS state (`ReplacingMergeTree`).
 - `timeline_events`: Fine-grained protocol handshake timeline (`MergeTree`).
 - `certificate_history`: Historical log of all certificate presentations (`MergeTree`).
 - `finding_events`: Finding lifecycle events (`MergeTree`).
 
-### Object Storage (MinIO / S3)
-Stores large binary blobs:
-- Captured PCAP / PCAPNG slices and packet streams.
-- Raw parsed Zeek logs and connection evidence.
+*(Note: When `MAILENT_CLICKHOUSE_URL` is omitted, Core seamlessly operates in PostgreSQL-native mode, persisting analytical sessions directly to PostgreSQL).*
+
+### DualStorage Architecture (Authenticated vs Guest)
+Mailent employs a thread-safe `DualStorage` abstraction that routes authenticated tenant operations to durable PostgreSQL storage while isolating guest / unauthenticated requests (`X-Mailent-Guest: true`) in ephemeral `InMemoryStorage`. This allows users to test PCAPs and domain checks in live web environments without persisting data to database tables.
 
 ---
 

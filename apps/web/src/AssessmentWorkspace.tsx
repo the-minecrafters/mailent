@@ -1,5 +1,5 @@
 import { assessmentSummary, connectionSource, domainFromTitle } from "./display-copy";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import React, { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
@@ -17,7 +17,6 @@ import {
   fetchFindings,
   fetchSessions,
   type ReportFormat,
-  runNowMonitor,
 } from "./api";
 import { Icon } from "./components/Icon";
 import { MailentLogo } from "./components/MailentLogo";
@@ -25,7 +24,7 @@ import { ErrorState, LoadingState } from "./components/ui";
 import { ProbeEvidence } from "./ProbePanel";
 import { ProtocolLadder } from "./components/ProtocolLadder";
 import { RemediationWorkflow } from "./RemediationWorkflow";
-import { ScheduleMonitorModal } from "./ScheduleMonitorModal";
+import { CliWorkflowDialog } from "./components/CliWorkflow";
 
 interface AssessmentWorkspaceProps {
   assessmentId: string;
@@ -135,15 +134,6 @@ export function AssessmentWorkspace({
     queryKey: ["domainHistory", targetDomain],
     queryFn: () => fetchDomainHistory(targetDomain),
     enabled: isInfra && !!targetDomain,
-  });
-
-  const runNowMutation = useMutation({
-    mutationFn: (monitorId: string) => runNowMonitor(monitorId),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: ["domainHistory", targetDomain],
-      });
-    },
   });
 
   // Filter entities belonging to this assessment
@@ -421,7 +411,7 @@ export function AssessmentWorkspace({
             <button
               className="btn btn-secondary"
               onClick={() => setScheduleModalOpen(true)}
-              title="Schedule recurring monitoring for this domain"
+              title="Run the next scan from Mailent CLI"
               style={{
                 display: "inline-flex",
                 alignItems: "center",
@@ -429,7 +419,7 @@ export function AssessmentWorkspace({
               }}
             >
               <Icon name="schedule" size={16} />
-              <span>Schedule monitoring</span>
+              <span>Scan again with CLI</span>
             </button>
           )}
           <button
@@ -2583,173 +2573,11 @@ export function AssessmentWorkspace({
         <div
           style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}
         >
-          {/* Active Monitor Card */}
           <div className="card" style={{ padding: "1.25rem 1.5rem" }}>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: "0.75rem",
-                flexWrap: "wrap",
-                gap: "0.75rem",
-              }}
-            >
-              <div
-                style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
-              >
-                <Icon name="schedule" size={20} />
-                <h3 className="card-title" style={{ margin: 0 }}>
-                  Scheduled checks
-                </h3>
-              </div>
-              <div>
-                {historyQuery.data?.monitor ? (
-                  <button
-                    className="btn btn-primary"
-                    onClick={() =>
-                      runNowMutation.mutate(historyQuery.data.monitor!.id)
-                    }
-                    disabled={runNowMutation.isPending}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "0.4rem",
-                    }}
-                  >
-                    <Icon name="refresh" size={16} />
-                    <span>
-                      {runNowMutation.isPending ? "Queuing scan…" : "Run Now"}
-                    </span>
-                  </button>
-                ) : (
-                  <button
-                    className="btn btn-primary"
-                    onClick={() => setScheduleModalOpen(true)}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: "0.4rem",
-                    }}
-                  >
-                    <Icon name="add" size={16} />
-                    <span>Schedule Monitoring</span>
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {historyQuery.isLoading ? (
-              <LoadingState label="Loading check history…" />
-            ) : historyQuery.data?.monitor ? (
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-                  gap: "1rem",
-                  marginTop: "1rem",
-                }}
-              >
-                <div
-                  style={{
-                    background: "var(--canvas-sunken)",
-                    padding: "0.75rem 1rem",
-                    borderRadius: "6px",
-                  }}
-                >
-                  <div
-                    className="secondary-text"
-                    style={{ fontSize: "0.875rem" }}
-                  >
-                    Frequency
-                  </div>
-                  <div
-                    style={{
-                      fontWeight: 600,
-                      fontSize: "0.95rem",
-                      textTransform: "capitalize",
-                    }}
-                  >
-                    {historyQuery.data.monitor.cadence.replace(/_/g, " ")}
-                  </div>
-                </div>
-                <div
-                  style={{
-                    background: "var(--canvas-sunken)",
-                    padding: "0.75rem 1rem",
-                    borderRadius: "6px",
-                  }}
-                >
-                  <div
-                    className="secondary-text"
-                    style={{ fontSize: "0.875rem" }}
-                  >
-                    Run checks from
-                  </div>
-                  <div style={{ fontWeight: 600, fontSize: "0.95rem" }}>
-                    {historyQuery.data.monitor.execution_target.type === "cloud"
-                      ? "Mailent cloud"
-                      : "Connected device"}
-                  </div>
-                </div>
-                <div
-                  style={{
-                    background: "var(--canvas-sunken)",
-                    padding: "0.75rem 1rem",
-                    borderRadius: "6px",
-                  }}
-                >
-                  <div
-                    className="secondary-text"
-                    style={{ fontSize: "0.875rem" }}
-                  >
-                    Next Scheduled Run
-                  </div>
-                  <div style={{ fontWeight: 600, fontSize: "0.95rem" }}>
-                    {new Date(
-                      historyQuery.data.monitor.next_run_at,
-                    ).toLocaleString()}
-                  </div>
-                </div>
-                <div
-                  style={{
-                    background: "var(--canvas-sunken)",
-                    padding: "0.75rem 1rem",
-                    borderRadius: "6px",
-                  }}
-                >
-                  <div
-                    className="secondary-text"
-                    style={{ fontSize: "0.875rem" }}
-                  >
-                    Last Run Status
-                  </div>
-                  <div style={{ fontWeight: 600, fontSize: "0.95rem" }}>
-                    {historyQuery.data.monitor.last_run_at ? (
-                      historyQuery.data.monitor.last_error ? (
-                        <span style={{ color: "var(--status-danger-ink)" }}>
-                          Failed
-                        </span>
-                      ) : (
-                        <span style={{ color: "var(--status-success-ink)" }}>
-                          Success
-                        </span>
-                      )
-                    ) : (
-                      "Pending initial run"
-                    )}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <p
-                className="secondary-text"
-                style={{ margin: "0.5rem 0 0 0", fontSize: "0.875rem" }}
-              >
-                Automated continuous monitoring is not yet configured for{" "}
-                <strong>{targetDomain}</strong>. Schedule regular checks to follow changes over time.
-              </p>
-            )}
+            <h3>Compare your next scan</h3>
+            <p>Run another infrastructure scan in Mailent CLI and sync it to compare findings, certificates, and encryption with earlier results.</p>
+            <button className="btn btn-primary" onClick={() => setScheduleModalOpen(true)}>Show CLI command</button>
+            {historyQuery.data?.monitor && <p className="secondary-text">A legacy check schedule is recorded for this domain. New checks run from your CLI; previous results remain below.</p>}
           </div>
 
           {/* Historical Scans & "What Changed?" Diff Timeline */}
@@ -2957,16 +2785,11 @@ export function AssessmentWorkspace({
       )}
 
       {isInfra && (
-        <ScheduleMonitorModal
+        <CliWorkflowDialog
+          workflow="scan"
           isOpen={scheduleModalOpen}
           domain={targetDomain}
           onClose={() => setScheduleModalOpen(false)}
-          onCreated={() => {
-            setScheduleModalOpen(false);
-            void queryClient.invalidateQueries({
-              queryKey: ["domainHistory", targetDomain],
-            });
-          }}
         />
       )}
     </div>

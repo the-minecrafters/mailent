@@ -24,7 +24,7 @@ pub async fn run_doctor(server_override: Option<String>) -> Result<(), String> {
     let token_opt = match &creds {
         Some(c) => {
             println!("[•] Sign-in saved; checking workspace access…");
-            println!("    • Device Name:     {}", c.device_name);
+            println!("    • Installation:     {}", c.device_name);
             println!("    • Device ID:       {}", c.device_id);
             println!(
                 "    • Organization:    {}",
@@ -43,10 +43,7 @@ pub async fn run_doctor(server_override: Option<String>) -> Result<(), String> {
     };
 
     // 3. Control Plane Connectivity
-    print!(
-        "[*] Checking control plane connectivity ({})... ",
-        server_url
-    );
+    print!("[*] Checking workspace connectivity ({})... ", server_url);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()
@@ -58,7 +55,7 @@ pub async fn run_doctor(server_override: Option<String>) -> Result<(), String> {
         Ok(resp) if resp.status().is_success() => {
             let elapsed = start.elapsed();
             println!(
-                "\r[✓] Control plane reachable at {} ({} ms)",
+                "\r[✓] Workspace reachable at {} ({} ms)",
                 server_url,
                 elapsed.as_millis()
             );
@@ -73,7 +70,7 @@ pub async fn run_doctor(server_override: Option<String>) -> Result<(), String> {
                     .await
                 {
                     Ok(dev_resp) if dev_resp.status().is_success() => {
-                        println!("    • Device token verified with control plane");
+                        println!("    • Workspace connection verified");
                     }
                     Ok(dev_resp) => {
                         if let Some(c) = &creds {
@@ -94,17 +91,14 @@ pub async fn run_doctor(server_override: Option<String>) -> Result<(), String> {
         }
         Ok(resp) => {
             println!(
-                "\r[!] Control plane returned HTTP {} from {}",
+                "\r[!] Workspace returned HTTP {} from {}",
                 resp.status(),
                 health_url
             );
             all_ok = false;
         }
         Err(e) => {
-            println!(
-                "\r[✗] Unable to reach control plane at {}: {}",
-                server_url, e
-            );
+            println!("\r[✗] Unable to reach workspace at {}: {}", server_url, e);
             println!("    Notice: Make sure the Mailent server is running.");
             all_ok = false;
         }
@@ -148,54 +142,8 @@ pub async fn run_doctor(server_override: Option<String>) -> Result<(), String> {
         }
     }
 
-    // 7. Systemd Service Status
-    let systemctl_avail = Command::new("systemctl").arg("--version").output().is_ok();
-    if systemctl_avail {
-        let is_active = Command::new("systemctl")
-            .args(["--user", "is-active", "mailent-agent.service"])
-            .output();
-
-        match is_active {
-            Ok(out) => {
-                let status_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                if status_str == "active" {
-                    println!("[✓] Mailent Agent Service: Active (running via systemd --user)");
-                } else if status_str == "inactive" {
-                    println!(
-                        "[•] Mailent Agent Service: Installed but inactive (start with 'mailent agent start')"
-                    );
-                } else {
-                    // Try checking system level
-                    let is_sys_active = Command::new("systemctl")
-                        .args(["is-active", "mailent-agent.service"])
-                        .output();
-                    if let Ok(sys_out) = is_sys_active {
-                        let sys_status =
-                            String::from_utf8_lossy(&sys_out.stdout).trim().to_string();
-                        if sys_status == "active" {
-                            println!(
-                                "[✓] Mailent Agent Service: Active (running via systemd system service)"
-                            );
-                        } else {
-                            println!(
-                                "[•] Mailent Agent Service: Not installed (install with 'mailent agent install')"
-                            );
-                        }
-                    } else {
-                        println!(
-                            "[•] Mailent Agent Service: Not installed (install with 'mailent agent install')"
-                        );
-                    }
-                }
-            }
-            Err(_) => {
-                println!("[•] Mailent Agent Service: Not installed");
-            }
-        }
-    } else {
-        println!(
-            "[•] Service Manager: systemctl not available (direct foreground mode available via 'mailent agent run')"
-        );
+    if let Some(creds) = &creds {
+        crate::installation::report_best_effort(creds, &server_url, None).await;
     }
 
     println!("\n------------------------------------------------------------");

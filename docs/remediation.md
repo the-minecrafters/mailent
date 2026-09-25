@@ -104,3 +104,30 @@ successful tests remove only their own test storage. A failed test can leave its
 uniquely named `test_<uuid>` schema/database for debugging, but later runs never
 reuse those rows. Set `MAILENT_REQUIRE_DATABASES=1` to make missing databases a
 failure instead of skipping optional database tests.
+
+## CLI Safe Remediation (`mailent fix`)
+
+Mailent provides deterministic, CLI-first remediation for local Postfix and Dovecot mail servers. Instead of manual trial-and-error configuration editing, `mailent fix` applies validated changes atomically and verifies the outcome with active cryptographic challenges.
+
+### Supported Auto-Fixes vs. Guided Remediation
+
+- **`TLS_LEGACY_VERSION` (Supported - Auto-Fix)**:
+  - **Postfix**: Updates `/etc/postfix/main.cf` parameters `smtpd_tls_protocols` and `smtpd_tls_mandatory_protocols` to `>=TLSv1.2, !SSLv2, !SSLv3, !TLSv1, !TLSv1.1`.
+  - **Dovecot**: Updates `/etc/dovecot/dovecot.conf` parameter `ssl_min_protocol` to `TLSv1.2`.
+  - **Verification**: Actively challenges TLS 1.0 and TLS 1.1 handshakes; both must receive explicit server protocol refusal alerts.
+- **`STARTTLS_MISSING` (Conditional Auto-Fix)**:
+  - If valid certificate and private key files exist on disk, configures `smtpd_tls_security_level = may`.
+  - If no certificate is found, falls back to guided instructions (obtaining certificates via ACME/Certbot).
+- **`CERTIFICATE_EXPIRED`, `NO_FORWARD_SECRECY`, `MTA_STS_POLICY_MISSING`, `DANE_MISSING` (Strictly Guided-Only)**:
+  - Requires external CA issuance, DNS records, or PKI management. `mailent fix` outputs step-by-step administrative guidance without modifying local files.
+
+### Safety Invariants
+
+1. **Pre-Flight Plan (`--plan`)**: Always accessible without root or modifications to inspect the exact planned key-value diffs, validation command, and verification steps.
+2. **Timestamped Backup**: Prior to any file alteration, an exact copy is preserved at `<config>.mailent-backup-<timestamp>`.
+3. **Atomic Staging**: Writes are performed to a sibling temporary file, flushed to disk with `sync_all()`, and renamed atomically.
+4. **Syntax Validation Before Reload**: Runs `postfix check` or `doveconf -n`. If syntax validation fails, the configuration is immediately rolled back to the backup without executing service reload.
+5. **Active Challenge Verification**: Executes live handshake challenge probes against the target endpoint to establish `VerifiedFixed`, `StillPresent`, or `Inconclusive`.
+6. **Workspace Sync (`--sync`)**: Posts the full `RemediationRecord` and active `ProbeRun` evidence to `/api/v1/remediations/sync` for team auditability and drift tracking.
+7. **Manual Rollback**: At any time, restore a previous backup using `mailent fix --rollback <backup-path>`.
+

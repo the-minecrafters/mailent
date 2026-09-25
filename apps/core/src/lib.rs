@@ -8,8 +8,8 @@ pub mod api;
 pub mod auth;
 pub mod config;
 pub mod dual_storage;
+pub mod intelligence_refresh;
 pub mod pipeline;
-pub mod scheduler;
 pub mod state;
 pub mod training;
 

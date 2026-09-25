@@ -1,10 +1,15 @@
-use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
+use axum::{
+    Json,
+    extract::{Extension, State},
+    http::StatusCode,
+    response::IntoResponse,
+};
 use mailent_domain::{Finding, FindingCandidate, NormalizedObservation};
 use mailent_storage::StorageError;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{pipeline::process_observation, state::AppState};
+use crate::{pipeline::process_observation_scoped, state::AppState};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EvaluateResponse {
@@ -25,8 +30,11 @@ pub struct SubmitObservationResponse {
 
 pub async fn evaluate_observation_handler(
     State(state): State<AppState>,
+    ctx: Option<Extension<crate::auth::ExecutionContext>>,
     Json(observation): Json<NormalizedObservation>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let org_id = ctx.as_ref().and_then(|Extension(c)| c.organization_id);
+    let observation = scope_observation(observation, org_id);
     observation
         .validate()
         .map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, e.to_string()))?;
@@ -38,7 +46,7 @@ pub async fn evaluate_observation_handler(
     );
 
     let obs_clone = observation.clone();
-    let res = process_observation(&state, observation)
+    let res = process_observation_scoped(&state, observation, org_id)
         .await
         .map_err(storage_error)?;
 
@@ -55,6 +63,7 @@ pub async fn evaluate_observation_handler(
 
 pub async fn submit_observation_handler(
     State(state): State<AppState>,
+    ctx: Option<Extension<crate::auth::ExecutionContext>>,
     headers: axum::http::HeaderMap,
     body: axum::body::Bytes,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
@@ -79,6 +88,8 @@ pub async fn submit_observation_handler(
         })?
     };
 
+    let org_id = ctx.as_ref().and_then(|Extension(c)| c.organization_id);
+    let observation = scope_observation(observation, org_id);
     observation
         .validate()
         .map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, e.to_string()))?;
@@ -90,7 +101,7 @@ pub async fn submit_observation_handler(
         "Received observation for submission"
     );
 
-    let res = process_observation(&state, observation)
+    let res = process_observation_scoped(&state, observation, org_id)
         .await
         .map_err(storage_error)?;
 
@@ -112,4 +123,15 @@ fn storage_error(error: StorageError) -> (StatusCode, String) {
             format!("Storage operation failed: {error}"),
         ),
     }
+}
+
+fn scope_observation(
+    mut observation: NormalizedObservation,
+    org_id: Option<Uuid>,
+) -> NormalizedObservation {
+    if let Some(org) = org_id {
+        observation.observation_id = Uuid::new_v5(&org, observation.observation_id.as_bytes());
+        observation.sensor_id = format!("{org}:{}", observation.sensor_id);
+    }
+    observation
 }

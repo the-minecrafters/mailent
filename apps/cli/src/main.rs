@@ -21,13 +21,15 @@ use uuid::Uuid;
 mod agent;
 mod credentials;
 mod doctor;
+mod fix;
+mod installation;
 mod monitor;
 
 #[derive(Parser)]
 #[command(
     name = "mailent",
     version,
-    about = "Mailent — Email security from your terminal\nAnalyze local captures or check mail domains."
+    about = "Mailent — Email security from your terminal\nAnalyze captures, scan mail infrastructure, monitor live traffic, and remediate findings."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -36,7 +38,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Register and authorize this device with a Mailent workspace
+    /// Connect this CLI installation to a Mailent workspace
     Login {
         /// Mailent server URL (default: http://localhost:8080)
         #[arg(long)]
@@ -135,8 +137,8 @@ enum Commands {
         zeek: Option<PathBuf>,
     },
 
-    /// Manage scheduled mail-server checks
-    #[command(subcommand)]
+    /// Optional remote scans while this CLI stays online (agent run)
+    #[command(subcommand, hide = true)]
     Agent(agent::AgentCommands),
 
     /// Run system and connectivity diagnostics
@@ -144,6 +146,45 @@ enum Commands {
         /// Mailent server URL
         #[arg(long)]
         server: Option<String>,
+    },
+
+    /// Safely remediate supported local mail server findings (e.g. TLS_LEGACY_VERSION)
+    Fix {
+        /// Target finding ID (UUID) or rule ID (e.g. TLS_LEGACY_VERSION, STARTTLS_MISSING)
+        #[arg(default_value = "TLS_LEGACY_VERSION")]
+        finding: String,
+
+        /// Dry-run mode: show planned changes and verification steps without modifying configuration
+        #[arg(long, default_value_t = false)]
+        plan: bool,
+
+        /// Target mail service (postfix, dovecot)
+        #[arg(long)]
+        service: Option<String>,
+
+        /// Path to configuration file override (e.g. /etc/postfix/main.cf)
+        #[arg(long)]
+        config: Option<PathBuf>,
+
+        /// Target endpoint override for active verification (e.g. 127.0.0.1:25)
+        #[arg(long)]
+        target: Option<String>,
+
+        /// Automatic confirmation (skip interactive prompt)
+        #[arg(short, long, default_value_t = false)]
+        yes: bool,
+
+        /// Sync remediation record and active verification evidence to Mailent workspace
+        #[arg(long, default_value_t = false)]
+        sync: bool,
+
+        /// Mailent server URL
+        #[arg(long)]
+        server: Option<String>,
+
+        /// Revert configuration to a specified backup file
+        #[arg(long)]
+        rollback: Option<PathBuf>,
     },
 }
 
@@ -194,6 +235,22 @@ async fn main() {
         Commands::Monitor { interface, zeek } => monitor::run(interface, zeek).await,
         Commands::Agent(agent_cmd) => agent::run_agent_command(agent_cmd).await,
         Commands::Doctor { server } => doctor::run_doctor(server).await,
+        Commands::Fix {
+            finding,
+            plan,
+            service,
+            config,
+            target,
+            yes,
+            sync,
+            server,
+            rollback,
+        } => {
+            fix::run_fix(
+                finding, plan, service, config, target, yes, sync, server, rollback,
+            )
+            .await
+        }
     };
 
     if let Err(err) = result {
@@ -226,7 +283,7 @@ async fn run_analyze(
 
     // 3. Execute analysis library
     eprintln!(
-        "  [2/4] Parsing network flows with Zeek engine ({})...",
+        "  [2/4] Reading captured connections with Zeek ({})...",
         zeek_bin.display()
     );
     let analysis = mailent_sensor::analyze::analyze(
@@ -573,7 +630,15 @@ async fn run_analyze(
     }
 
     if sync {
-        sync_assessment(server_override, &assessment, &all_findings, &[], &sessions).await?;
+        sync_assessment(
+            server_override,
+            &assessment,
+            &all_findings,
+            &[],
+            &sessions,
+            Some(&zeek_bin),
+        )
+        .await?;
     }
 
     Ok(())
@@ -590,7 +655,7 @@ async fn run_scan(
 ) -> Result<(), String> {
     // Validate input before checking installed dependencies.
     let domain = mailent_scanner::normalize_scan_domain(&raw_domain).map_err(|e| e.to_string())?;
-    locate_zeek(None)?;
+    let zeek_bin = locate_zeek(None)?;
 
     // 2. Initialize live scanner engine
     let resolver = LiveDomainIntelligenceResolver::new()
@@ -627,9 +692,7 @@ async fn run_scan(
                 endpoint,
                 service,
             } => {
-                eprintln!(
-                    "  [3/4] Probing endpoint [{current}/{total}] ({service} {endpoint})..."
-                );
+                eprintln!("  [3/4] Probing endpoint [{current}/{total}] ({service} {endpoint})...");
             }
             mailent_scanner::ScanProgressEvent::AnalyzingPosture => {
                 eprintln!("  [4/4] Computing cryptographic posture and generating reports...");
@@ -694,6 +757,7 @@ async fn run_scan(
             &scan_result.findings,
             &[],
             &scan_result.sessions,
+            Some(&zeek_bin),
         )
         .await?;
     }
@@ -707,6 +771,7 @@ async fn sync_assessment(
     findings: &[Finding],
     assets: &[mailent_domain::Asset],
     sessions: &[EmailSession],
+    zeek: Option<&Path>,
 ) -> Result<(), String> {
     let creds = credentials::load_credentials().ok_or_else(|| {
         "Not logged in. Run `mailent login` to register this device before using --sync."
@@ -749,6 +814,7 @@ async fn sync_assessment(
         return Err(format!("Sync failed (HTTP {status}): {body}"));
     }
 
+    installation::report_best_effort(&creds, &server_url, zeek).await;
     println!(
         "\x1b[32m✔ Successfully synced assessment {} to {}\x1b[0m",
         assessment.id, server_url
@@ -770,7 +836,7 @@ async fn run_login(
 
     let device_name = name_override.unwrap_or_else(|| format!("Mailent CLI ({hostname})"));
 
-    println!("Initiating device registration with {}", server_url);
+    println!("Connecting Mailent CLI to {}", server_url);
     let client = reqwest::Client::new();
     let challenge_url = format!(
         "{}/api/v1/devices/authorize/challenge",
@@ -820,9 +886,9 @@ async fn run_login(
 
     println!();
     println!("========================================================");
-    println!("  Device Authorization Code: \x1b[1;36m{}\x1b[0m", code);
+    println!("  Connection code: \x1b[1;36m{}\x1b[0m", code);
     println!(
-        "  Approve in Mailent Web:    \x1b[4m{}\x1b[0m",
+        "  Approve in Mailent Workspace:    \x1b[4m{}\x1b[0m",
         full_verify_url
     );
     println!("========================================================");
@@ -885,8 +951,9 @@ async fn run_login(
                 credentials::save_credentials(&creds)
                     .map_err(|e| format!("Failed to save credentials: {e}"))?;
 
+                installation::report_best_effort(&creds, &server_url, None).await;
                 println!();
-                println!("\x1b[32m✔ Device successfully authorized!\x1b[0m");
+                println!("\x1b[32m✔ Mailent installation connected!\x1b[0m");
                 println!("  Device Name:     {}", creds.device_name);
                 println!("  Device ID:       {}", creds.device_id);
                 if let Some(oid) = creds.organization_id {
@@ -954,6 +1021,7 @@ async fn run_status(server_override: Option<String>) -> Result<(), String> {
         .await
         .map_err(|e| format!("Failed to parse status response: {e}"))?;
 
+    installation::report_best_effort(&creds, &server_url, None).await;
     println!("Mailent CLI Status");
     println!("------------------");
     println!("Authentication:  \x1b[32mActive\x1b[0m");
@@ -1056,46 +1124,59 @@ fn validate_pcap(path: &Path) -> Result<(u64, String), String> {
     Ok((len, hash))
 }
 
+fn verified_zeek_version(path: &Path) -> Result<String, String> {
+    let is_script = cfg!(windows)
+        && path
+            .extension()
+            .and_then(|s| s.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"));
+
+    let mut cmd = if is_script {
+        let mut c = std::process::Command::new("cmd.exe");
+        c.arg("/c").arg(&path);
+        c
+    } else {
+        std::process::Command::new(&path)
+    };
+
+    let output = cmd
+        .arg("--version")
+        .output()
+        .map_err(|e| format!("Cannot start required Zeek at {}: {e}", path.display()))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Zeek is not ready at {}. Run the installer again or set MAILENT_ZEEK to Zeek 8+.",
+            path.display()
+        ));
+    }
+    let version = format!(
+        "{} {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let normalized = version
+        .split_whitespace()
+        .find(|part| {
+            part.split('.')
+                .next()
+                .is_some_and(|v| v.parse::<u32>().is_ok())
+        })
+        .unwrap_or("");
+    let major = version
+        .split_whitespace()
+        .find_map(|part| part.split('.').next()?.parse::<u32>().ok());
+    if !major.is_some_and(|v| v >= 8) {
+        return Err(format!(
+            "Mailent requires Zeek 8 or newer; found {}",
+            version.trim()
+        ));
+    }
+    Ok(normalized.to_string())
+}
+
 fn locate_zeek(user_path: Option<&Path>) -> Result<PathBuf, String> {
     fn verified(path: PathBuf) -> Result<PathBuf, String> {
-        let is_script = cfg!(windows)
-            && path
-                .extension()
-                .and_then(|s| s.to_str())
-                .is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"));
-
-        let mut cmd = if is_script {
-            let mut c = std::process::Command::new("cmd.exe");
-            c.arg("/c").arg(&path);
-            c
-        } else {
-            std::process::Command::new(&path)
-        };
-
-        let output = cmd
-            .arg("--version")
-            .output()
-            .map_err(|e| format!("Cannot start required Zeek at {}: {e}", path.display()))?;
-        if !output.status.success() {
-            return Err(format!(
-                "Zeek is not ready at {}. Run the installer again or set MAILENT_ZEEK to Zeek 8+.",
-                path.display()
-            ));
-        }
-        let version = format!(
-            "{} {}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let major = version
-            .split_whitespace()
-            .find_map(|part| part.split('.').next()?.parse::<u32>().ok());
-        if !major.is_some_and(|v| v >= 8) {
-            return Err(format!(
-                "Mailent requires Zeek 8 or newer; found {}",
-                version.trim()
-            ));
-        }
+        verified_zeek_version(&path)?;
         Ok(if path.is_relative() && path.components().count() > 1 {
             std::fs::canonicalize(&path).unwrap_or(path)
         } else {

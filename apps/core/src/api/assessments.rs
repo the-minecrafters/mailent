@@ -4,690 +4,12 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use mailent_correlation::{PostureInput, build_guidance, compute_posture};
-use mailent_domain::{
-    AssessmentRecord, CaptureMetadata, EmailProtocol, FindingSeverity, GuidanceKind, PostureGrade,
-    PostureSubjectKind, ProtocolEvidence, RiskLevel, StartTlsState,
-};
+use mailent_domain::{AssessmentRecord, RiskLevel};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use std::path::PathBuf;
 use time::OffsetDateTime;
-use tokio::process::Command;
 use uuid::Uuid;
 
-use crate::{auth::ExecutionContext, pipeline::process_observation, state::AppState};
-
-#[derive(Debug, Deserialize)]
-pub struct AnalyzeCaptureRequest {
-    pub title: Option<String>,
-    pub pcap_base64: Option<String>,
-    pub file_name: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct SensorAnalysisOutput {
-    pub capture_sha256: String,
-    #[serde(default)]
-    pub zeek_version: String,
-    pub observations: Vec<mailent_domain::NormalizedObservation>,
-    #[serde(default)]
-    pub warnings: Vec<String>,
-}
-
-fn locate_sensor_binary() -> Result<PathBuf, String> {
-    if let Ok(bin) = std::env::var("MAILENT_SENSOR_BIN") {
-        let p = PathBuf::from(bin);
-        if p.exists() {
-            return Ok(p);
-        }
-    }
-    for candidate in [
-        "target/debug/mailent-sensor",
-        "target/release/mailent-sensor",
-        "../target/debug/mailent-sensor",
-        "../../target/debug/mailent-sensor",
-    ] {
-        let p = PathBuf::from(candidate);
-        if p.exists() {
-            return Ok(p);
-        }
-    }
-    // Check if in PATH
-    if let Ok(output) = std::process::Command::new("which")
-        .arg("mailent-sensor")
-        .output()
-        && output.status.success()
-    {
-        let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if !path_str.is_empty() {
-            return Ok(PathBuf::from(path_str));
-        }
-    }
-    Err("mailent-sensor binary not found. Build it with `cargo build -p mailent-sensor` or set MAILENT_SENSOR_BIN".to_string())
-}
-
-fn locate_zeek() -> PathBuf {
-    if let Ok(z) = std::env::var("MAILENT_ZEEK") {
-        let p = PathBuf::from(z);
-        if p.exists() {
-            return p;
-        }
-    }
-    for candidate in [
-        "scripts/mailent-zeek",
-        "../scripts/mailent-zeek",
-        "../../scripts/mailent-zeek",
-        "scripts/zeek-container",
-        "../scripts/zeek-container",
-        "../../scripts/zeek-container",
-    ] {
-        let p = PathBuf::from(candidate);
-        if p.exists() {
-            return p;
-        }
-    }
-    PathBuf::from("zeek")
-}
-
-pub async fn analyze_capture_handler(
-    State(state): State<AppState>,
-    ctx: Option<Extension<ExecutionContext>>,
-    Json(req): Json<AnalyzeCaptureRequest>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    use base64::Engine;
-    let b64 = req.pcap_base64.as_deref().ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            "Choose a capture file to analyze.".to_string(),
-        )
-    })?;
-    const MAX_CAPTURE_SIZE: usize = 50 * 1024 * 1024;
-    if b64.len() > MAX_CAPTURE_SIZE.div_ceil(3) * 4 {
-        return Err((
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "Capture exceeds the 50 MB limit.".into(),
-        ));
-    }
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(b64)
-        .map_err(|_| {
-            (
-                StatusCode::BAD_REQUEST,
-                "The uploaded capture could not be decoded.".to_string(),
-            )
-        })?;
-    if bytes.len() > MAX_CAPTURE_SIZE {
-        return Err((
-            StatusCode::PAYLOAD_TOO_LARGE,
-            "Capture exceeds the 50 MB limit.".into(),
-        ));
-    }
-    let valid_magic = bytes.get(..4).is_some_and(|magic| {
-        matches!(
-            magic,
-            [0xd4, 0xc3, 0xb2, 0xa1]
-                | [0xa1, 0xb2, 0xc3, 0xd4]
-                | [0x4d, 0x3c, 0xb2, 0xa1]
-                | [0xa1, 0xb2, 0x3c, 0x4d]
-                | [0x0a, 0x0d, 0x0d, 0x0a]
-        )
-    });
-    if !valid_magic || bytes.len() < 24 {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "This file is not a valid PCAP or PCAPNG capture.".into(),
-        ));
-    }
-    let mut temp_file = tempfile::Builder::new()
-        .suffix(".pcap")
-        .tempfile()
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    use std::io::Write;
-    temp_file
-        .write_all(&bytes)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let pcap_path = temp_file.path().to_path_buf();
-    let file_size = bytes.len() as u64;
-    let capture_name = req
-        .file_name
-        .as_deref()
-        .and_then(|name| std::path::Path::new(name).file_name())
-        .and_then(|name| name.to_str())
-        .unwrap_or("capture.pcap")
-        .to_string();
-
-    // Calculate SHA-256 of PCAP file
-    let mut hasher = Sha256::new();
-    hasher.update(&bytes);
-    let capture_hash = format!("{:x}", hasher.finalize());
-
-    // Execute sensor analyze binary
-    let sensor_bin = locate_sensor_binary().map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    let zeek_bin = locate_zeek();
-
-    let output = tokio::time::timeout(
-        std::time::Duration::from_secs(50),
-        Command::new(&sensor_bin)
-            .arg("analyze")
-            .arg(&pcap_path)
-            .arg("--zeek")
-            .arg(&zeek_bin)
-            .arg("--json")
-            .kill_on_drop(true)
-            .output(),
-    )
-    .await
-    .map_err(|_| {
-        (
-            StatusCode::GATEWAY_TIMEOUT,
-            "Analysis exceeded 50 seconds. Try a smaller capture.".to_string(),
-        )
-    })?
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to execute mailent-sensor: {e}"),
-        )
-    })?;
-
-    if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr);
-        let lower = err.to_lowercase();
-        if lower.contains("truncated dump")
-            || lower.contains("failed to read a packet")
-            || lower.contains("corrupt")
-            || lower.contains("bad packet")
-        {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                "The capture file is corrupted or truncated and could not be parsed.".to_string(),
-            ));
-        }
-        return Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Sensor analysis failed: {err}"),
-        ));
-    }
-
-    let stdout_str = String::from_utf8_lossy(&output.stdout);
-    // Locate JSON starting with {
-    let json_start = stdout_str.find('{').ok_or_else(|| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "No JSON output from mailent-sensor analyze".to_string(),
-        )
-    })?;
-    let analysis: SensorAnalysisOutput =
-        serde_json::from_str(&stdout_str[json_start..]).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to parse sensor JSON output: {e}"),
-            )
-        })?;
-
-    if analysis.observations.is_empty() {
-        return Err((StatusCode::UNPROCESSABLE_ENTITY, "No email connections were found in this capture. Choose traffic containing SMTP, IMAP or POP3.".into()));
-    }
-    let time_range_start = analysis.observations.iter().map(|obs| obs.timestamp).min();
-    let time_range_end = analysis.observations.iter().map(|obs| obs.timestamp).max();
-    let mut session_ids = Vec::new();
-    let mut asset_ids = Vec::new();
-    let mut finding_ids = Vec::new();
-    let mut protocols_set = std::collections::HashSet::new();
-    let mut protocol_evidence = Vec::new();
-    let mut evidence_gaps = analysis.warnings.clone();
-    let mut all_anomalies = Vec::new();
-    let mut all_drifts = Vec::new();
-
-    for obs in analysis.observations {
-        let proto_name = match obs.protocol {
-            EmailProtocol::Smtp => {
-                if obs.starttls_state == Some(StartTlsState::TlsEstablished)
-                    || obs.starttls_state == Some(StartTlsState::AdvertisedAndUsed)
-                {
-                    "SMTP (STARTTLS)"
-                } else if obs.flow.dst_port == 465 {
-                    "SMTPS"
-                } else {
-                    "SMTP"
-                }
-            }
-            EmailProtocol::Imap => {
-                if obs.starttls_state == Some(StartTlsState::TlsEstablished)
-                    || obs.starttls_state == Some(StartTlsState::AdvertisedAndUsed)
-                {
-                    "IMAP (STARTTLS)"
-                } else if obs.flow.dst_port == 993 {
-                    "IMAPS"
-                } else {
-                    "IMAP"
-                }
-            }
-            EmailProtocol::Pop3 => {
-                if obs.starttls_state == Some(StartTlsState::TlsEstablished)
-                    || obs.starttls_state == Some(StartTlsState::AdvertisedAndUsed)
-                {
-                    "POP3 (STLS)"
-                } else if obs.flow.dst_port == 995 {
-                    "POP3S"
-                } else {
-                    "POP3"
-                }
-            }
-            EmailProtocol::Unknown => {
-                if obs.flow.dst_port == 465 {
-                    "SMTPS"
-                } else if obs.flow.dst_port == 993 {
-                    "IMAPS"
-                } else if obs.flow.dst_port == 995 {
-                    "POP3S"
-                } else {
-                    "Unknown Email Protocol"
-                }
-            }
-        };
-
-        if protocols_set.insert(proto_name.to_string()) {
-            let role_desc = if obs.flow.dst_port == 25
-                || obs.flow.dst_port == 465
-                || obs.flow.dst_port == 587
-            {
-                "Mail delivery server"
-            } else {
-                "Mailbox server"
-            };
-            let clean_ver = analysis
-                .zeek_version
-                .trim_start_matches("zeek ")
-                .trim_start_matches("Zeek ")
-                .trim_start_matches("version ")
-                .trim();
-            let proto_lower = proto_name.to_lowercase();
-            let verified_by = if clean_ver.is_empty() {
-                format!("Zeek {proto_lower} analyzer")
-            } else {
-                format!("Zeek {clean_ver} · {proto_lower} analyzer")
-            };
-            protocol_evidence.push(ProtocolEvidence {
-                protocol: proto_name.to_string(),
-                role: role_desc.to_string(),
-                proof: format!(
-                    "Recorded connection {}:{} → {}:{}",
-                    obs.flow.src_ip, obs.flow.src_port, obs.flow.dst_ip, obs.flow.dst_port
-                ),
-                verified_by,
-            });
-        }
-
-        if let Some(ref cap) = obs.capture {
-            for g in &cap.gaps {
-                if !evidence_gaps.contains(g) {
-                    evidence_gaps.push(g.clone());
-                }
-            }
-        }
-
-        // Ingest observation into core pipeline
-        let proc_res = process_observation(&state, obs)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-        session_ids.push(proc_res.session_id);
-        if !asset_ids.contains(&proc_res.asset_id) {
-            asset_ids.push(proc_res.asset_id);
-        }
-        for f in proc_res.findings {
-            if !finding_ids.contains(&f.id) {
-                finding_ids.push(f.id);
-            }
-        }
-        all_anomalies.extend(proc_res.anomalies);
-        all_drifts.extend(proc_res.drift_events);
-    }
-
-    let mut finding_candidates = Vec::new();
-    let mut resolved_findings = Vec::new();
-    for f_id in &finding_ids {
-        if let Ok(Some(f)) = state.findings.find_by_id(*f_id).await {
-            resolved_findings.push(f.clone());
-            finding_candidates.push(mailent_domain::FindingCandidate {
-                rule_id: f.rule_id.clone(),
-                policy_name: f.policy_name.clone(),
-                policy_version: f.policy_version.clone(),
-                reference: f.reference.clone(),
-                severity: f.severity,
-                category: f.category,
-                title: f.title.clone(),
-                description: f.description.clone(),
-                remediation: f.remediation.clone(),
-                evidence: f.evidence.clone(),
-            });
-        }
-    }
-
-    let mut resolved_sessions = Vec::new();
-    for s_id in &session_ids {
-        if let Ok(Some(s)) = state.sessions.find_by_id(*s_id).await {
-            resolved_sessions.push(s);
-        }
-    }
-
-    let assessment_id = Uuid::new_v4();
-    let now = OffsetDateTime::now_utc();
-
-    // Determine deterministic posture score and grade via mailent_correlation
-    let posture_input = PostureInput {
-        findings: &resolved_findings,
-        anomalies: &all_anomalies,
-        asset: None,
-        asset_sessions: &resolved_sessions,
-        certificates: &[],
-        probe_runs: &[],
-        investigation: None,
-    };
-    let posture = compute_posture(PostureSubjectKind::Session, assessment_id, &posture_input);
-    let total_score = posture.score;
-    let grade = posture.grade.to_string();
-
-    let decision_ctx = mailent_domain::DecisionContext {
-        session_id: session_ids.first().copied().unwrap_or_else(Uuid::new_v4),
-        findings: finding_candidates,
-        metadata: serde_json::json!({
-            "assessment_id": assessment_id,
-            "capture_name": capture_name,
-            "session_count": session_ids.len(),
-            "asset_count": asset_ids.len(),
-            "anomalies": all_anomalies,
-            "anomalies_count": all_anomalies.len(),
-            "drifts_count": all_drifts.len(),
-            "posture_score": total_score,
-            "posture_grade": grade,
-        }),
-    };
-
-    let (decision_result, provider_name) = if session_ids.is_empty() {
-        (
-            mailent_domain::DecisionResult {
-                risk: mailent_domain::RiskLevel::Low,
-                anomalous: false,
-                human_review: false,
-                priority: mailent_domain::PriorityLevel::Low,
-                confidence: 0.0,
-                provider_info: "empty".to_string(),
-                reasons: vec!["No email connections were found in this capture to evaluate.".to_string()],
-            },
-            "none",
-        )
-    } else {
-        match state.decision_provider.assess(decision_ctx.clone()).await {
-            Ok(r) => {
-                let p = if r.provider_info.starts_with("jev:") {
-                    "jev"
-                } else {
-                    "jev-fallback"
-                };
-                (r, p)
-            }
-            Err(e) => {
-                tracing::warn!("Jev assessment failed: {e}; applying deterministic fallback");
-                (
-                    mailent_decision::JevProvider::deterministic_fallback(&decision_ctx),
-                    "jev-fallback",
-                )
-            }
-        }
-    };
-
-    // Log decision record into audit store
-    let decision_record = mailent_domain::DecisionRecord {
-        id: Uuid::new_v4(),
-        session_id: session_ids.first().copied(),
-        asset_id: asset_ids.first().copied(),
-        provider: provider_name.to_string(),
-        model: decision_result.provider_info.clone(),
-        decision: decision_result.clone(),
-        latency_ms: 0,
-        created_at: now,
-    };
-    let _ = state.decisions.save_record(&decision_record).await;
-
-    let max_finding_risk = resolved_findings
-        .iter()
-        .map(|f| RiskLevel::from(f.severity))
-        .max()
-        .unwrap_or(RiskLevel::Low);
-
-    let baseline_risk = match posture.grade {
-        PostureGrade::Strong | PostureGrade::Good => RiskLevel::Low,
-        PostureGrade::Moderate => RiskLevel::Medium,
-        PostureGrade::Weak => RiskLevel::High,
-        PostureGrade::Critical => RiskLevel::Critical,
-    };
-
-    let effective_risk = decision_result.risk.max(baseline_risk).max(max_finding_risk);
-
-    let ai_risk_classification = match effective_risk {
-        RiskLevel::Critical => "CRITICAL".to_string(),
-        RiskLevel::High => "HIGH".to_string(),
-        RiskLevel::Medium => "MEDIUM".to_string(),
-        RiskLevel::Low => {
-            if session_ids.is_empty() {
-                "INCONCLUSIVE".to_string()
-            } else {
-                "LOW".to_string()
-            }
-        }
-    };
-    let ai_confidence = decision_result.confidence;
-    let ai_risk_rationale = if decision_result.reasons.is_empty() {
-        "No cryptographic policy violations were observed in the parsed email traffic.".to_string()
-    } else {
-        format!(
-            "{} [Handling: {:?}, Human review: {}]",
-            decision_result.reasons.join("; "),
-            decision_result.priority,
-            if decision_result.human_review { "recommended" } else { "not required" }
-        )
-    };
-
-    // Synthesize Threat Prioritization Matrix and Actionable Remediation Roadmap grounded in findings
-    let guidance_items = build_guidance(
-        assessment_id,
-        &resolved_findings,
-        None,
-        &resolved_sessions,
-        &all_anomalies,
-        now,
-    );
-
-    let mut threat_matrix = Vec::new();
-    let mut remediation_roadmap = Vec::new();
-
-    for g in guidance_items.iter().filter(|g| g.kind == GuidanceKind::Remediation) {
-        let (priority_tier, threat_vector, mut remediation_recipe) = match g.rule_id.as_str() {
-            "TLS_LEGACY_VERSION" => (
-                "P1 - Immediate",
-                "Downgrade & Cipher Interception: Attackers capable of passive or active interception can force legacy SSLv3/TLS 1.0 negotiations to exploit protocol weaknesses (e.g. POODLE, BEAST).",
-                serde_json::json!({
-                    "service": "postfix",
-                    "action": "Enforce minimum TLS 1.2 on outbound and inbound listeners",
-                    "commands": [
-                        "postconf -e 'smtpd_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1'",
-                        "postconf -e 'smtpd_tls_mandatory_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1'",
-                        "postconf -e 'smtp_tls_protocols = !SSLv2, !SSLv3, !TLSv1, !TLSv1.1'",
-                        "postfix reload"
-                    ],
-                    "dovecot": [
-                        "ssl_min_protocol = TLSv1.2"
-                    ]
-                })
-            ),
-            "NO_FORWARD_SECRECY" => (
-                "P2 - High",
-                "Retrospective Decryption (Harvest Now, Decrypt Later): Static RSA key exchange allows any adversary that records ciphertexts today to decrypt all past email contents if the server's private RSA key is compromised.",
-                serde_json::json!({
-                    "service": "postfix",
-                    "action": "Require Ephemeral Diffie-Hellman (ECDHE/DHE) or TLS 1.3",
-                    "commands": [
-                        "postconf -e 'smtpd_tls_ciphers = high'",
-                        "postconf -e 'smtpd_tls_exclude_ciphers = aNULL, eNULL, EXPORT, DES, RC4, MD5, PSK, aECDH, EDH-DSS-DES-CBC3-SHA, EDH-RSA-DES-CBC3-SHA, KRB5-DES, CBC3-SHA'",
-                        "postfix reload"
-                    ],
-                    "dovecot": [
-                        "ssl_cipher_list = ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384"
-                    ]
-                })
-            ),
-            "CERTIFICATE_EXPIRED" => (
-                "P2 - High",
-                "Trust Breakdown & Delivery Failure: Remote sending MTAs enforcing MTA-STS or DANE will refuse to route incoming messages, causing delivery bounced errors and exposing users to impersonation warnings.",
-                serde_json::json!({
-                    "service": "certbot",
-                    "action": "Renew X.509 certificate immediately via ACME/Certbot",
-                    "commands": [
-                        "certbot renew --post-hook 'postfix reload && dovecot reload'",
-                        "certbot certificates"
-                    ],
-                    "dovecot": []
-                })
-            ),
-            "STARTTLS_MISSING" => (
-                "P1 - Immediate",
-                "Plaintext Eavesdropping: Authentication credentials (SASL PLAIN/LOGIN) and confidential email content transit untrusted intermediate networks completely unencrypted.",
-                serde_json::json!({
-                    "service": "postfix",
-                    "action": "Enable STARTTLS on SMTP port 25 and 587",
-                    "commands": [
-                        "postconf -e 'smtpd_tls_security_level = may'",
-                        "postconf -e 'smtpd_tls_auth_only = yes'",
-                        "postfix reload"
-                    ],
-                    "dovecot": [
-                        "ssl = yes",
-                        "disable_plaintext_auth = yes"
-                    ]
-                })
-            ),
-            _ => {
-                let tier = match g.severity {
-                    FindingSeverity::Critical => "P1 - Critical",
-                    FindingSeverity::High => "P2 - High",
-                    FindingSeverity::Medium => "P3 - Medium",
-                    FindingSeverity::Low => "P4 - Low",
-                };
-                (
-                    tier,
-                    g.why_it_matters.as_str(),
-                    serde_json::json!({
-                        "service": "general",
-                        "action": g.recommendation.clone(),
-                        "commands": [],
-                        "dovecot": []
-                    })
-                )
-            }
-        };
-
-        if let Some(obj) = remediation_recipe.as_object_mut() {
-            obj.insert("observed".into(), serde_json::json!(g.observed));
-            obj.insert("recommended_state".into(), serde_json::json!(g.recommended_state));
-            obj.insert("verification".into(), serde_json::json!(g.verification));
-            if !g.compatibility_caveats.is_empty() {
-                obj.insert("caveats".into(), serde_json::json!(g.compatibility_caveats));
-            }
-        }
-
-        threat_matrix.push(serde_json::json!({
-            "rule_id": g.rule_id,
-            "title": g.title,
-            "severity": g.severity.to_string(),
-            "priority_tier": priority_tier,
-            "threat_vector": threat_vector,
-            "observed": g.observed,
-            "why_it_matters": g.why_it_matters,
-            "reference": "",
-        }));
-
-        remediation_roadmap.push(serde_json::json!({
-            "rule_id": g.rule_id,
-            "title": g.title,
-            "priority": priority_tier,
-            "recipe": remediation_recipe,
-        }));
-    }
-
-    let title = req
-        .title
-        .filter(|title| !title.trim().is_empty())
-        .map(|title| title.trim().chars().take(160).collect())
-        .unwrap_or_else(|| capture_name.clone());
-
-    let capture_metadata = CaptureMetadata {
-        capture_name,
-        capture_hash,
-        capture_size_bytes: file_size,
-        time_range_start,
-        time_range_end,
-    };
-
-    let mut assessment = AssessmentRecord::new_capture(
-        assessment_id,
-        title,
-        capture_metadata,
-        now,
-        protocols_set.into_iter().collect(),
-        protocol_evidence,
-        session_ids,
-        asset_ids,
-        finding_ids,
-        total_score,
-        grade.to_string(),
-        evidence_gaps,
-        ai_risk_classification,
-        ai_risk_rationale,
-        ai_confidence,
-        serde_json::json!({
-            "risk_method": "jev",
-            "ai_provider": provider_name,
-            "jev_model": decision_result.provider_info,
-            "jev_priority": format!("{:?}", decision_result.priority),
-            "jev_human_review": decision_result.human_review,
-            "policy_name": state.policy_pack.name,
-            "policy_version": state.policy_pack.version,
-            "anomalies": all_anomalies.iter().map(|a| serde_json::json!({
-                "signal": a.signal,
-                "title": a.title,
-                "current_value": a.current_value,
-                "baseline_value": a.baseline_value,
-                "deviation": a.deviation,
-                "confidence": a.confidence,
-                "evidence": a.evidence,
-            })).collect::<Vec<_>>(),
-            "threat_matrix": threat_matrix,
-            "remediation_roadmap": remediation_roadmap,
-        }),
-    );
-
-    if let Some(Extension(ref c)) = ctx {
-        if let Some(org_id) = c.organization_id {
-            assessment = assessment.with_organization(org_id);
-        }
-    }
-
-    // Save assessment to persistent storage
-    state
-        .assessments
-        .save(&assessment)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    // Drop tempfile if any
-    drop(temp_file);
-
-    Ok((StatusCode::CREATED, Json(assessment)))
-}
+use crate::{auth::ExecutionContext, state::AppState};
 
 #[derive(Debug, Deserialize)]
 pub struct SyncAssessmentRequest {
@@ -715,53 +37,355 @@ pub async fn sync_assessment_handler(
     ctx: Option<Extension<ExecutionContext>>,
     Json(mut req): Json<SyncAssessmentRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let org_id = ctx
-        .as_ref()
-        .and_then(|Extension(c)| c.organization_id)
-        .or(req.assessment.organization_id);
-
-    if let Some(oid) = org_id {
-        req.assessment = req.assessment.with_organization(oid);
-        for finding in &mut req.findings {
-            finding.organization_id = Some(oid);
+    let context = ctx.as_ref().map(|Extension(c)| c);
+    let org_id = context.and_then(|c| c.organization_id).ok_or((
+        StatusCode::UNAUTHORIZED,
+        "Connect Mailent CLI before syncing results.".to_string(),
+    ))?;
+    if !matches!(
+        context.map(|c| &c.actor),
+        Some(crate::auth::Actor::Device { .. })
+    ) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Sync results from a connected Mailent CLI installation.".into(),
+        ));
+    }
+    let storage_error =
+        |e: mailent_storage::StorageError| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
+    if let Some(existing) = state
+        .assessments
+        .find_by_id(req.assessment.id)
+        .await
+        .map_err(storage_error)?
+    {
+        if existing.organization_id != Some(org_id) {
+            return Err((
+                StatusCode::CONFLICT,
+                "Assessment ID is already in use.".into(),
+            ));
         }
-        for asset in &mut req.assets {
-            asset.organization_id = Some(oid);
+        return Ok((
+            StatusCode::OK,
+            Json(SyncAssessmentResponse {
+                synced: true,
+                assessment_id: existing.id,
+                organization_id: Some(org_id),
+                findings_count: existing.finding_ids.len(),
+                assets_count: existing.asset_ids.len(),
+            }),
+        ));
+    }
+    // Namespace incoming identifiers so the same capture can be synced to separate workspaces.
+    let scoped = |id: Uuid| Uuid::new_v5(&org_id, id.as_bytes());
+    let session_ids: std::collections::HashSet<_> =
+        req.sessions.iter().map(|s| s.session_id).collect();
+    let finding_ids: std::collections::HashSet<_> = req.findings.iter().map(|f| f.id).collect();
+    let asset_ids: std::collections::HashSet<_> = req.assets.iter().map(|a| a.id).collect();
+    if req
+        .assessment
+        .session_ids
+        .iter()
+        .any(|id| !session_ids.contains(id))
+        || req
+            .assessment
+            .finding_ids
+            .iter()
+            .any(|id| !finding_ids.contains(id))
+        || (!req.assets.is_empty()
+            && req
+                .assessment
+                .asset_ids
+                .iter()
+                .any(|id| !asset_ids.contains(id)))
+    {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Sync must include the assessment's structured evidence.".into(),
+        ));
+    }
+    if req
+        .findings
+        .iter()
+        .flat_map(|f| &f.evidence)
+        .any(|e| e.session_id.is_some_and(|id| !session_ids.contains(&id)))
+    {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Finding refers to a session outside this sync.".into(),
+        ));
+    }
+    let mut observations = Vec::new();
+    for session in &mut req.sessions {
+        session.session_id = scoped(session.session_id);
+        session.sensor_id = format!("{org_id}:{}", session.sensor_id);
+        let observation = mailent_domain::NormalizedObservation {
+            observation_id: session.session_id,
+            timestamp: session.first_seen,
+            sensor_id: session.sensor_id.clone(),
+            provenance: session.provenance.clone(),
+            flow: session.flow.clone(),
+            protocol: session.protocol,
+            starttls_state: session.starttls_state,
+            tls_version: session.tls_version.clone(),
+            cipher_suite: session.cipher_suite.clone(),
+            key_exchange: session.key_exchange.clone(),
+            certificate: session.certificate.clone(),
+            capture: session.capture.clone(),
+            raw_metadata: None,
+        };
+        observation
+            .validate()
+            .map_err(|e| (StatusCode::UNPROCESSABLE_ENTITY, e.to_string()))?;
+        observations.push(observation);
+    }
+    req.assessment.organization_id = Some(org_id);
+    req.assessment.session_ids = req.sessions.iter().map(|s| s.session_id).collect();
+    req.assessment.asset_ids.clear();
+    req.assessment.finding_ids.clear();
+    if !req.assessment.metadata.is_object() {
+        req.assessment.metadata = serde_json::json!({});
+    }
+    if let Some(crate::auth::Actor::Device { device_id, .. }) = context.map(|c| &c.actor) {
+        req.assessment.metadata["source_device_id"] = serde_json::json!(device_id);
+        req.assessment.metadata["synced_at"] = serde_json::json!(
+            OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap()
+        );
+    }
+    let mut assets = Vec::new();
+    for mut asset in req.assets {
+        asset.id = scoped(asset.id);
+        asset.organization_id = Some(org_id);
+        // Keep stable workspace identity across scans of the same server.
+        for address in &asset.addresses {
+            if let Some(existing) = state
+                .assets
+                .find_by_address_or_identity_scoped(address, Some(org_id))
+                .await
+                .map_err(storage_error)?
+            {
+                asset.id = existing.id;
+                break;
+            }
+        }
+        assets.push(asset);
+    }
+    let mut findings = Vec::new();
+    let mut anomalies = Vec::new();
+    let mut drifts = Vec::new();
+    for observation in observations {
+        let result = crate::pipeline::process_observation_scoped(&state, observation, Some(org_id))
+            .await
+            .map_err(storage_error)?;
+        req.assessment.asset_ids.push(result.asset_id);
+        findings.extend(result.findings);
+        anomalies.extend(result.anomalies);
+        drifts.extend(result.drift_events);
+    }
+    // Domain policy findings and DNS-only assets may have no packet session.
+    for mut finding in req.findings {
+        finding.id = scoped(finding.id);
+        finding.organization_id = Some(org_id);
+        for evidence in &mut finding.evidence {
+            if evidence
+                .session_id
+                .is_some_and(|id| !session_ids.contains(&id))
+            {
+                return Err((
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "Finding refers to a session outside this sync.".into(),
+                ));
+            }
+            evidence.session_id = evidence.session_id.map(scoped);
+            evidence.observation_id = evidence.observation_id.map(scoped);
+        }
+        if !findings
+            .iter()
+            .any(|f| f.rule_id == finding.rule_id && f.evidence == finding.evidence)
+        {
+            findings.push(finding);
         }
     }
-
-    let assessment_id = req.assessment.id;
-    let findings_count = req.findings.len();
-    let assets_count = req.assets.len();
-
+    for asset in assets {
+        let existing = match asset.addresses.first() {
+            Some(address) => state
+                .assets
+                .find_by_address_or_identity_scoped(address, Some(org_id))
+                .await
+                .map_err(storage_error)?,
+            None => None,
+        };
+        if let Some(existing) = existing {
+            req.assessment.asset_ids.push(existing.id);
+        } else {
+            req.assessment.asset_ids.push(asset.id);
+            state.assets.upsert(asset).await.map_err(storage_error)?;
+        }
+    }
+    req.assessment.asset_ids.sort();
+    req.assessment.asset_ids.dedup();
+    for finding in &findings {
+        state
+            .findings
+            .save(finding.clone())
+            .await
+            .map_err(storage_error)?;
+        if req.assessment.asset_ids.len() == 1 {
+            state
+                .findings
+                .link_asset(finding.id, req.assessment.asset_ids[0])
+                .await
+                .map_err(storage_error)?;
+        }
+        req.assessment.finding_ids.push(finding.id);
+    }
+    if let Some(domain) = req.assessment.target_domain() {
+        let prior = state
+            .assessments
+            .list_for_org(org_id)
+            .await
+            .map_err(storage_error)?
+            .into_iter()
+            .filter(|a| {
+                a.target == domain
+                    && a.source_type == "infrastructure"
+                    && a.created_at < req.assessment.created_at
+            })
+            .max_by_key(|a| a.created_at);
+        if let Some(prior) = prior {
+            if let Some(previous) = state
+                .assessments
+                .find_by_id_scoped(prior.id, org_id)
+                .await
+                .map_err(storage_error)?
+            {
+                let mut previous_findings = Vec::new();
+                for id in &previous.finding_ids {
+                    if let Some(f) = state
+                        .findings
+                        .find_by_id(*id)
+                        .await
+                        .map_err(storage_error)?
+                    {
+                        previous_findings.push(f);
+                    }
+                }
+                let changes =
+                    mailent_correlation::drift::InfrastructureDriftCorrelator::compare_assessments(
+                        &previous,
+                        &req.assessment,
+                        &previous_findings,
+                        &findings,
+                    );
+                super::agent::sync_infrastructure_investigation(
+                    &state,
+                    &req.assessment,
+                    domain,
+                    &changes,
+                    &findings,
+                    OffsetDateTime::now_utc(),
+                )
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                drifts.extend(changes);
+            }
+        }
+    }
+    review_synced_assessment(&state, &mut req.assessment, &findings, &anomalies, &drifts).await?;
     state
         .assessments
         .save(&req.assessment)
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    for finding in req.findings {
-        let _ = state.findings.save(finding).await;
-    }
-
-    for asset in req.assets {
-        let _ = state.assets.upsert(asset).await;
-    }
-
-    for session in req.sessions {
-        let _ = state.sessions.save(session).await;
-    }
-
+        .map_err(storage_error)?;
     Ok((
         StatusCode::OK,
         Json(SyncAssessmentResponse {
             synced: true,
-            assessment_id,
-            organization_id: org_id,
-            findings_count,
-            assets_count,
+            assessment_id: req.assessment.id,
+            organization_id: Some(org_id),
+            findings_count: req.assessment.finding_ids.len(),
+            assets_count: req.assessment.asset_ids.len(),
         }),
     ))
+}
+
+pub async fn review_synced_assessment(
+    state: &AppState,
+    assessment: &mut AssessmentRecord,
+    findings: &[mailent_domain::Finding],
+    anomalies: &[mailent_domain::AnomalySignal],
+    drifts: &[mailent_domain::DriftEvent],
+) -> Result<(), (StatusCode, String)> {
+    let storage_error =
+        |e: mailent_storage::StorageError| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
+    // AI reviews structured evidence only. Local acquisition and policy facts stay unchanged.
+    let decision_context = mailent_domain::DecisionContext {
+        session_id: assessment
+            .session_ids
+            .first()
+            .copied()
+            .unwrap_or(assessment.id),
+        findings: findings
+            .iter()
+            .map(|f| mailent_domain::FindingCandidate {
+                rule_id: f.rule_id.clone(),
+                policy_name: f.policy_name.clone(),
+                policy_version: f.policy_version.clone(),
+                reference: f.reference.clone(),
+                severity: f.severity,
+                category: f.category,
+                title: f.title.clone(),
+                description: f.description.clone(),
+                remediation: f.remediation.clone(),
+                evidence: f.evidence.clone(),
+            })
+            .collect(),
+        metadata: serde_json::json!({"assessment_id": assessment.id, "anomalies": anomalies, "drifts": drifts,
+            "session_count": assessment.session_ids.len(), "posture_score": assessment.posture_score}),
+    };
+    let decision = state
+        .decision_provider
+        .assess(decision_context.clone())
+        .await
+        .unwrap_or_else(|_| {
+            mailent_decision::JevProvider::deterministic_fallback(&decision_context)
+        });
+    let provider = if decision.provider_info.starts_with("jev:") {
+        "jev"
+    } else {
+        "deterministic_fallback"
+    };
+    let finding_risk = findings
+        .iter()
+        .map(|f| RiskLevel::from(f.severity))
+        .max()
+        .unwrap_or(RiskLevel::Low);
+    if assessment.ai_risk_classification != "INCONCLUSIVE" {
+        assessment.ai_risk_classification =
+            format!("{:?}", decision.risk.max(finding_risk)).to_uppercase();
+    }
+    assessment.ai_risk_rationale = decision.reasons.join(" ");
+    assessment.ai_confidence = decision.confidence;
+    assessment.metadata["ai_provider"] = serde_json::json!(provider);
+    assessment.metadata["workspace_analysis"] =
+        serde_json::json!({"drifts": drifts.len(), "anomalies": anomalies.len()});
+    state
+        .decisions
+        .save_record(&mailent_domain::DecisionRecord {
+            id: Uuid::new_v4(),
+            session_id: assessment.session_ids.first().copied(),
+            asset_id: assessment.asset_ids.first().copied(),
+            provider: provider.into(),
+            model: decision.provider_info.clone(),
+            decision,
+            latency_ms: 0,
+            created_at: OffsetDateTime::now_utc(),
+        })
+        .await
+        .map_err(storage_error)?;
+    Ok(())
 }
 
 pub async fn list_assessments_handler(

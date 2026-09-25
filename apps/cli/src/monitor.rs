@@ -31,6 +31,7 @@ pub async fn run(interface: String, zeek: Option<PathBuf>) -> Result<(), String>
     }
     response.error_for_status().map_err(|e| e.to_string())?;
     let zeek = crate::locate_zeek(zeek.as_deref())?;
+    crate::installation::report_best_effort(&creds, &creds.server_url, Some(&zeek)).await;
     let config = mailent_sensor::SensorConfig {
         sensor_id: format!("device-{}", creds.device_id),
         site_id: creds

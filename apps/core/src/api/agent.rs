@@ -62,10 +62,31 @@ fn require_device_actor(ctx: &ExecutionContext) -> Result<(Uuid, Uuid), (StatusC
 pub async fn agent_heartbeat_handler(
     State(state): State<AppState>,
     Extension(ctx): Extension<ExecutionContext>,
-    Json(req): Json<AgentHeartbeatRequest>,
+    Json(mut req): Json<AgentHeartbeatRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let (device_id, _org_id) = require_device_actor(&ctx)?;
 
+    req.capabilities
+        .retain(|v| !v.starts_with("remote_heartbeat:"));
+    req.capabilities.push(format!(
+        "remote_heartbeat:{}",
+        OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap()
+    ));
+    if let Some(existing) = state
+        .devices
+        .find_device_by_id(device_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    {
+        req.capabilities
+            .extend(existing.capabilities.into_iter().filter(|v| {
+                v == "installation_reported"
+                    || v.starts_with("zeek:")
+                    || ["analyze", "scan", "monitor"].contains(&v.as_str())
+            }));
+    }
     let status = req.status.unwrap_or_else(|| "online".to_string());
     state
         .devices
@@ -100,6 +121,21 @@ pub async fn agent_poll_jobs_handler(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    if let Some(mut job) = job_opt.clone() {
+        if now - job.created_at > time::Duration::seconds(60) && job.started_at.is_none() {
+            job.state = JobState::Canceled;
+            job.completed_at = Some(now);
+            job.lease_expires_at = None;
+            job.last_error =
+                Some("Installation did not accept the scan while online. Start a new scan.".into());
+            state
+                .jobs
+                .update_job(&job)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            return Ok(Json(serde_json::json!({"job": null})));
+        }
+    }
     if let Some(ref job) = job_opt {
         let _ = state
             .devices
@@ -158,6 +194,14 @@ pub async fn agent_complete_job_handler(
 
     if let Some(mut assessment) = req.assessment.take() {
         assessment = assessment.with_organization(org_id);
+        if !assessment.metadata.is_object() {
+            assessment.metadata = serde_json::json!({});
+        }
+        assessment.metadata["source_device_id"] = serde_json::json!(device_id);
+        assessment.metadata["synced_at"] = serde_json::json!(
+            now.format(&time::format_description::well_known::Rfc3339)
+                .unwrap()
+        );
         assessment_id = Some(assessment.id);
 
         for finding in &mut req.findings {
@@ -166,6 +210,15 @@ pub async fn agent_complete_job_handler(
         for asset in &mut req.assets {
             asset.organization_id = Some(org_id);
         }
+
+        super::assessments::review_synced_assessment(
+            &state,
+            &mut assessment,
+            &req.findings,
+            &[],
+            &[],
+        )
+        .await?;
 
         // Save assessment
         state

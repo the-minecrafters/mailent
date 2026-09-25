@@ -1159,6 +1159,44 @@ impl ArchivedReportRepository for InMemoryStorage {
 
 #[async_trait]
 impl AssessmentRepository for InMemoryStorage {
+    async fn latest_installation_syncs(
+        &self,
+        organization_id: Uuid,
+    ) -> Result<HashMap<Uuid, String>, StorageError> {
+        let mut result = HashMap::<Uuid, String>::new();
+        for assessment in self
+            .assessments
+            .read()
+            .await
+            .iter()
+            .filter(|a| a.organization_id == Some(organization_id))
+        {
+            let Some(device_id) = assessment
+                .metadata
+                .get("source_device_id")
+                .and_then(|v| v.as_str())
+                .and_then(|v| Uuid::parse_str(v).ok())
+            else {
+                continue;
+            };
+            let Some(synced_at) = assessment
+                .metadata
+                .get("synced_at")
+                .and_then(|v| v.as_str())
+            else {
+                continue;
+            };
+            result
+                .entry(device_id)
+                .and_modify(|current| {
+                    if synced_at > current.as_str() {
+                        *current = synced_at.to_string();
+                    }
+                })
+                .or_insert_with(|| synced_at.to_string());
+        }
+        Ok(result)
+    }
     async fn save(&self, assessment: &AssessmentRecord) -> Result<(), StorageError> {
         let mut list = self.assessments.write().await;
         if let Some(pos) = list.iter().position(|a| a.id == assessment.id) {
@@ -1288,6 +1326,26 @@ impl OrganizationRepository for InMemoryStorage {
 
 #[async_trait]
 impl DeviceRepository for InMemoryStorage {
+    async fn report_installation(
+        &self,
+        device_id: Uuid,
+        version: String,
+        capabilities: Vec<String>,
+        now: OffsetDateTime,
+    ) -> Result<(), StorageError> {
+        if let Some(device) = self
+            .devices
+            .write()
+            .await
+            .iter_mut()
+            .find(|d| d.id == device_id && d.is_active())
+        {
+            device.version = Some(version);
+            device.capabilities = capabilities;
+            device.last_seen_at = now;
+        }
+        Ok(())
+    }
     async fn save_device(&self, device: &mailent_domain::Device) -> Result<(), StorageError> {
         let mut list = self.devices.write().await;
         if let Some(pos) = list.iter().position(|d| d.id == device.id) {

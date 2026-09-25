@@ -606,11 +606,9 @@ describe("observation console", () => {
     expect(screen.getByRole("button", { name: "Export JSON" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Export HTML" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Export PDF" })).toBeEnabled();
-    await user.click(screen.getByRole("button", { name: "Run check" }));
-    await waitFor(() => expect(fetcher).toHaveBeenCalledWith(
-      `/api/v1/assets/${mockAsset.id}/probe`,
-      expect.objectContaining({ method: "POST", body: JSON.stringify({ port: 993, protocol: "imap", investigation_id: null, trigger: "manual_analyst" }) }),
-    ));
+    await user.click(screen.getByRole("button", { name: "Scan with CLI" }));
+    expect(await screen.findByRole("dialog")).toHaveTextContent("Mailent CLI runs the analysis");
+    expect(fetcher.mock.calls.some(([url]) => url === `/api/v1/assets/${mockAsset.id}/probe`)).toBe(false);
   });
 
   it("renders sensors list and telemetry status", async () => {
@@ -637,7 +635,7 @@ describe("observation console", () => {
     await screen.findByText("Connected");
 
     expect(
-      await screen.findByRole("heading", { name: "Collectors" }),
+      await screen.findByRole("heading", { name: "Live traffic" }),
     ).toBeVisible();
     expect(screen.getByText("sensor-gateway-01")).toBeVisible();
     expect(screen.getByText("sensor-node.prod.internal")).toBeVisible();

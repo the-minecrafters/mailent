@@ -1,13 +1,12 @@
 import { reviewSummary, reviewTitle, liveCheckMessage } from "./display-copy";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { CliWorkflowInstructions } from "./components/CliWorkflow";
 import {
   type Asset,
   fetchAssetProbes,
   fetchInvestigation,
   fetchInvestigations,
   type ProbeRun,
-  triggerAssetProbe,
 } from "./api";
 
 export function ProbeEvidence({ run }: { run: ProbeRun }) {
@@ -135,12 +134,6 @@ function InvestigationRemediationContext({ id }: { id: string }) {
 }
 
 export function ProbePanel({ asset }: { asset: Asset }) {
-  const client = useQueryClient();
-  const [port, setPort] = useState(asset.endpoints[0]?.port ?? 25);
-  const [protocol, setProtocol] = useState(
-    asset.endpoints[0]?.protocol ?? "smtp",
-  );
-  const [investigationId, setInvestigationId] = useState("");
   const probes = useQuery({
     queryKey: ["asset-probes", asset.id],
     queryFn: () => fetchAssetProbes(asset.id),
@@ -153,69 +146,11 @@ export function ProbePanel({ asset }: { asset: Asset }) {
   });
   const related =
     investigations.data?.filter((i) => i.asset_id === asset.id) ?? [];
-  const trigger = useMutation({
-    mutationFn: () =>
-      triggerAssetProbe(asset.id, port, protocol, investigationId || undefined),
-    onSuccess: () => {
-      void client.invalidateQueries({ queryKey: ["asset-probes", asset.id] });
-    },
-  });
   return (
-    <section aria-label="Live connection check">
-      <h3>Live check</h3>
-      <p>
-        Check this server’s current encryption and certificate. This does not send an email.
-      </p>
-      <label>
-        Protocol{" "}
-        <select value={protocol} onChange={(e) => setProtocol(e.target.value)}>
-          <option value="smtp">SMTP / STARTTLS</option>
-          <option value="imap">IMAPS</option>
-          <option value="pop3">POP3S</option>
-        </select>
-      </label>
-      <label>
-        Port{" "}
-        <input
-          type="number"
-          min="1"
-          max="65535"
-          value={port}
-          onChange={(e) => setPort(Number(e.target.value))}
-        />
-      </label>
-      <label>
-        Review{" "}
-        <select
-          value={investigationId}
-          onChange={(e) => setInvestigationId(e.target.value)}
-        >
-          <option value="">No linked review</option>
-          {related.map((i) => (
-            <option key={i.id} value={i.id}>
-              {reviewTitle(i.title)}
-            </option>
-          ))}
-        </select>
-      </label>
-      <button
-        type="button"
-        disabled={
-          !asset.probe_authorized ||
-          trigger.isPending ||
-          probes.data?.some((p) => !p.finished_at)
-        }
-        onClick={() => trigger.mutate()}
-      >
-        Run check
-      </button>
-      {!asset.probe_authorized && (
-        <p>Live checks are not enabled for this server.</p>
-      )}
-      {trigger.isError && <p role="alert">{trigger.error.message}</p>}
-      {trigger.isSuccess && (
-        <p role="status">Check started: {trigger.data.probe_id}</p>
-      )}
+    <section aria-label="Infrastructure scan results">
+      <h3>Check current infrastructure</h3>
+      <CliWorkflowInstructions workflow="scan" />
+      <h3>Saved connection checks</h3>
       {probes.isError && <p role="alert">{probes.error.message}</p>}
       {probes.data?.map((run) => (
         <ProbeEvidence key={run.id} run={run} />
@@ -232,9 +167,7 @@ export function ProbePanel({ asset }: { asset: Asset }) {
           <p>{reviewSummary(i.summary)}</p>
           <InvestigationRemediationContext id={i.id} />
           <p>Unusual changes: {i.anomaly_ids.join(", ") || "None"}</p>
-          <button type="button" onClick={() => setInvestigationId(i.id)}>
-            Link the next check to this review
-          </button>
+
           {Object.values(
             i.external_intelligence.active_verifications ?? {},
           ).map((run) => (

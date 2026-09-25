@@ -19,13 +19,18 @@ The repository includes real network captures extracted from Postfix and Dovecot
 
 ---
 
-## 2. Terminal Demonstration: Sensor CLI
+## 2. Terminal Demonstration: Mailent CLI
 
-You can execute the passive capture analysis directly via the command line without opening a browser.
+You can execute the passive capture analysis directly via the unified `mailent` command line or the underlying sensor binary without opening a browser.
 
 ### A. Analyze Weak/Legacy SMTP Capture
 ```bash
-# Analyze smtp_legacy.pcap and output structured forensic JSON
+# Using the unified mailent CLI (renders formatted tables or outputs JSON)
+mailent analyze fixtures/pcap/smtp_legacy.pcap
+mailent analyze fixtures/pcap/smtp_legacy.pcap --format json --output-dir /tmp/reports
+
+# Or run directly via compiled binary / sensor:
+./target/debug/mailent analyze fixtures/pcap/smtp_legacy.pcap
 ./target/debug/mailent-sensor analyze fixtures/pcap/smtp_legacy.pcap --json
 ```
 

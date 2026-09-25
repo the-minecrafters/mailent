@@ -25,34 +25,34 @@ import { MailentLogo } from "./components/MailentLogo";
 
 const approaches = [
   {
-    label: "Capture",
+    label: "Analyze",
     icon: FileSearch,
-    title: "Inspect real email traffic.",
+    title: "Analyze captures on your machine.",
     description:
-      "Parse PCAP captures of SMTP, IMAP, and POP3 sessions with Zeek to verify STARTTLS, TLS versions, cipher suites, and X.509 chains.",
-    chips: ["PCAP / PCAPNG", "STARTTLS & ciphers", "X.509 validation"],
-    action: "Analyze a capture",
-    href: "/workspace/overview?start=capture",
+      "Run mailent analyze to reconstruct SMTP, IMAP, and POP3 sessions with Zeek. Review TLS, STARTTLS, ciphers, and captured certificates; sync the results when you need a shared view.",
+    chips: ["PCAP / PCAPNG", "STARTTLS & ciphers", "Captured certificates"],
+    action: "Install Mailent CLI",
+    href: "#install",
   },
   {
-    label: "Domain",
+    label: "Scan",
     icon: Globe2,
-    title: "Assess external mail posture.",
+    title: "Scan mail infrastructure from your network.",
     description:
-      "Discover mail exchangers and inspect MTA-STS, DANE, DNSSEC, SPF, DKIM, and live port encryption across all discovered hosts.",
+      "Run mailent scan to discover mail servers, check DNS policies, and test their TLS and certificates. Connections originate from your machine.",
     chips: ["MX Discovery", "MTA-STS & DANE", "DNSSEC & SPF"],
-    action: "Check a domain",
-    href: "/workspace/overview?start=domain",
+    action: "Install Mailent CLI",
+    href: "#install",
   },
   {
     label: "Monitor",
     icon: Radar,
-    title: "Continuous mail monitoring.",
+    title: "Monitor live traffic with Zeek.",
     description:
-      "Run persistent local collectors and scheduled checks to track configuration drift, certificate renewals, and protocol regressions.",
-    chips: ["Live packet capture", "Drift detection", "Forensic dossiers"],
-    action: "Explore monitoring",
-    href: "/workspace/captures",
+      "Run mailent monitor on a local network interface to continuously observe mail connections. Sync the evidence to review new findings and changes over time.",
+    chips: ["Live traffic", "Local Zeek analysis", "Synced evidence"],
+    action: "Install Mailent CLI",
+    href: "#install",
   },
 ];
 
@@ -60,7 +60,7 @@ export function LandingPage() {
   const [active, setActive] = useState(0);
   const approach = approaches[active];
   useEffect(() => {
-    document.title = "Mailent — Clearer email security";
+    document.title = "Mailent — Local mail analysis. Shared analyst workspace.";
     if (!window.location.hash) window.scrollTo(0, 0);
     if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const elements = document.querySelectorAll(".marketing-site [data-reveal]");
@@ -96,41 +96,38 @@ export function LandingPage() {
           <a href="#install">CLI</a>
           <Link to="/privacy">Privacy</Link>
         </nav>
-        <Link to="/workspace" className="home-button home-button-small">
-          Open workspace <ArrowUpRight size={18} />
-        </Link>
+        <a href="#install" className="home-button home-button-small">
+          Install CLI <ArrowUpRight size={18} />
+        </a>
       </header>
       <main id="home-main">
         <section className="home-hero">
           <div className="hero-grid home-container">
             <div className="hero-copy">
               <div className="home-kicker">
-                <span className="kicker-dot" /> Email traffic analysis with Zeek
+                <span className="kicker-dot" /> Mailent CLI + Analyst Workspace
               </div>
               <h1>
-                Your mail traffic.
+                Analyze locally.
                 <br />
-                Its encryption.
+                Review together.
                 <br />
-                <em>The evidence.</em>
+                <em>See what changed.</em>
               </h1>
               <p className="hero-description">
-                Analyze SMTP, IMAP, and POP3 captures to find weak TLS, expired
-                certificates, and failed encryption upgrades. Connect a collector
-                to track your mail servers over time.
+                Analyze captures, scan mail infrastructure, and monitor live
+                traffic with Mailent CLI. Sync structured results to your workspace
+                for AI-assisted review, investigations, and reports.
               </p>
               <div className="hero-actions">
+                <a href="#install" className="home-button">
+                  Install Mailent CLI <ArrowUpRight size={20} />
+                </a>
                 <Link
-                  to="/workspace/overview?start=capture"
-                  className="home-button"
-                >
-                  Analyze a capture <ArrowUpRight size={20} />
-                </Link>
-                <Link
-                  to="/workspace/overview?start=domain"
+                  to="/workspace"
                   className="home-button home-button-light"
                 >
-                  Check a domain <FileSearch size={19} />
+                  Open workspace <FileSearch size={19} />
                 </Link>
               </div>
               <a className="hero-explore" href="#possibilities">
@@ -155,7 +152,7 @@ export function LandingPage() {
                     <MailentLogo size={28} />
                     mailent
                   </span>
-                  <span className="window-label">The whole connection</span>
+                  <span className="window-label">Analysis starts in your terminal</span>
                   <span className="window-dots" aria-hidden="true">
                     <i />
                     <i />
@@ -195,7 +192,7 @@ export function LandingPage() {
                   </svg>
                   <div className="connection-source">
                     <MailentLogo size={96} />
-                    <span>mailent</span>
+                    <span>Mailent CLI</span>
                   </div>
                   <div className="connection-destinations" key={active}>
                     {approach.chips.map((chip, index) => (
@@ -222,10 +219,10 @@ export function LandingPage() {
                 >
                   <h2>{approach.title}</h2>
                   <p>{approach.description}</p>
-                  <Link to={approach.href}>
+                  <a href={approach.href}>
                     {approach.action}
                     <ArrowRight size={17} />
-                  </Link>
+                  </a>
                 </div>
               </div>
               <div className="floating-note">
@@ -233,9 +230,9 @@ export function LandingPage() {
                   <Layers3 size={20} />
                 </span>
                 <div>
-                  From a single check
+                  Local analysis.
                   <br />
-                  <strong>to the bigger picture.</strong>
+                  <strong>Shared evidence.</strong>
                 </div>
               </div>
             </div>
@@ -261,51 +258,22 @@ export function LandingPage() {
           <div className="section-heading" data-reveal>
             <div>
               <span className="home-kicker">
-                Captures, server checks, and monitoring
+                Three workflows. One CLI.
               </span>
               <h2>
-                Analyze traffic.
+                Run it locally.
                 <br />
-                <em>Track changes.</em>
+                <em>Keep the evidence.</em>
               </h2>
             </div>
             <p>
-              Inspect recorded connections with Zeek, check a server’s current
-              configuration, and compare new results with previous checks.
+              Your machine handles packet analysis and network connections.
+              Choose a capture, a domain, or a live interface to get started.
             </p>
           </div>
           <div className="capability-grid">
-            <Link
-              to="/workspace/overview?start=domain"
-              className="capability-card capability-domain"
-              data-reveal
-            >
-              <span className="feature-topline">
-                <Globe2 size={24} />
-                <ArrowUpRight size={23} />
-              </span>
-              <div className="domain-art" aria-hidden="true">
-                <span>
-                  <Globe2 size={32} />
-                </span>
-                <i />
-                <div>
-                  <span>DNS</span>
-                  <span>TLS</span>
-                  <span>Certificates</span>
-                </div>
-              </div>
-              <h3>Check a mail domain</h3>
-              <p>
-                Find mail servers through DNS and check their TLS and certificates.
-                Use a connected device for checks your cloud network cannot reach.
-              </p>
-              <span className="feature-link">
-                Check a domain <ArrowRight size={18} />
-              </span>
-            </Link>
-            <Link
-              to="/workspace/overview?start=capture"
+            <a
+              href="#install"
               className="capability-card capability-capture"
               data-reveal
             >
@@ -329,17 +297,46 @@ export function LandingPage() {
                   )}
                 </div>
               </div>
-              <h3>Analyze a PCAP file</h3>
+              <h3>Analyze captures</h3>
               <p>
-                Reconstruct mail sessions with Zeek. Review STARTTLS, TLS versions,
-                cipher suites, Forward Secrecy, and captured certificates.
+                Investigate captured SMTP, IMAP, and POP3 traffic with Zeek.
+                Inspect STARTTLS, TLS versions, ciphers, and certificates locally.
               </p>
               <span className="feature-link">
-                Analyze a capture <ArrowRight size={18} />
+                mailent analyze <ArrowRight size={18} />
               </span>
-            </Link>
-            <Link
-              to="/workspace/captures"
+            </a>
+            <a
+              href="#install"
+              className="capability-card capability-domain"
+              data-reveal
+            >
+              <span className="feature-topline">
+                <Globe2 size={24} />
+                <ArrowUpRight size={23} />
+              </span>
+              <div className="domain-art" aria-hidden="true">
+                <span>
+                  <Globe2 size={32} />
+                </span>
+                <i />
+                <div>
+                  <span>DNS</span>
+                  <span>TLS</span>
+                  <span>Certificates</span>
+                </div>
+              </div>
+              <h3>Scan mail infrastructure</h3>
+              <p>
+                Discover mail servers through DNS, then actively check their
+                policies, TLS, and certificates from your network.
+              </p>
+              <span className="feature-link">
+                mailent scan <ArrowRight size={18} />
+              </span>
+            </a>
+            <a
+              href="#install"
               className="capability-card capability-monitor"
               data-reveal
             >
@@ -357,33 +354,34 @@ export function LandingPage() {
                 </div>
                 <div className="monitor-event">
                   <RefreshCw size={19} />
-                  <span>Check. Compare. Repeat.</span>
+                  <span>Observe. Sync. Compare.</span>
                 </div>
               </div>
-              <h3>Monitor your mail servers</h3>
+              <h3>Monitor live traffic</h3>
               <p>
-                Collect live traffic with Zeek and schedule server checks. Track
-                certificate changes, weaker encryption, and new findings.
+                Continuously observe mail traffic on a local network interface.
+                Send new evidence to the workspace as connections arrive.
               </p>
               <span className="feature-link">
-                Explore monitoring <ArrowRight size={18} />
+                mailent monitor <ArrowRight size={18} />
               </span>
-            </Link>
+            </a>
           </div>
         </section>
 
         <section className="workflow-section" id="workflow">
           <div className="home-container workflow-grid">
             <div className="workflow-copy" data-reveal>
-              <span className="home-kicker">From evidence to a verified fix</span>
+              <span className="home-kicker">Mailent Workspace</span>
               <h2>
-                A finding is
+                Your analysis,
                 <br />
-                just the <em>start.</em>
+                <em>in context.</em>
               </h2>
               <p>
-                Trace each finding to a connection or certificate. Review the
-                suggested fix, then run another check to verify the change.
+                Sync results from the CLI into a shared analyst view. Compare
+                assessments, investigate findings, track fixes, and report on
+                the evidence behind each decision.
               </p>
               <Link className="home-button" to="/workspace">
                 Open workspace <ArrowUpRight size={19} />
@@ -393,14 +391,14 @@ export function LandingPage() {
               {[
                 [
                   "01",
-                  "See what needs attention",
-                  "Findings are linked to the connections, certificates, and settings that produced them.",
+                  "Review history and drift",
+                  "Compare assessments over time. See which certificates, encryption settings, and findings have changed.",
                   FileSearch,
                 ],
                 [
                   "02",
-                  "Prioritize and fix issues",
-                  "Use severity and AI-assisted risk review to prioritize findings. Verify fixes with a new capture or server check.",
+                  "Investigate and track fixes",
+                  "Use AI-assisted analysis to prioritize findings, correlate evidence, and track remediation. Sync another CLI assessment to verify a change.",
                   ShieldCheck,
                 ],
                 [
@@ -446,7 +444,7 @@ export function LandingPage() {
             </div>
             <div className="network-node node-three">
               <Radar size={24} />
-              <span>Connected devices</span>
+              <span>Mailent CLI</span>
             </div>
             <div className="network-node node-four">
               <FileText size={24} />
@@ -456,31 +454,31 @@ export function LandingPage() {
           <div className="network-copy" data-reveal>
             <span className="home-kicker">Local collection, shared results</span>
             <h2>
-              Close to your mail.
+              CLI for analysis.
               <br />
-              <em>Wherever it runs.</em>
+              <em>Workspace for answers.</em>
             </h2>
             <p>
-              Run the CLI on your network for server checks and Zeek traffic
-              collection. Send results to your workspace to review connections,
-              findings, and changes in one place.
+              PCAP processing and live network work stay on your machine.
+              The workspace receives structured assessments and evidence so
+              analysts can review the results together.
             </p>
             <ul>
               <li>
                 <Check size={18} />
-                Domain checks and uploaded captures
+                Local captures, active scans, and live monitoring
               </li>
               <li>
                 <Check size={18} />
-                Scheduled checks from cloud or connected devices
+                Assessment history, drift, and investigations
               </li>
               <li>
                 <Check size={18} />
-                Webhooks, syslog, and downloadable reports
+                AI-assisted review, remediation, and reports
               </li>
             </ul>
-            <Link className="home-text-link" to="/workspace/devices">
-              Connect your workspace <ChevronRight size={20} />
+            <Link className="home-text-link" to="/workspace/installations">
+              Connect a Mailent installation <ChevronRight size={20} />
             </Link>
           </div>
         </section>
@@ -494,14 +492,14 @@ export function LandingPage() {
             <div>
               <span className="home-kicker">Mailent, from your terminal</span>
               <h2>
-                One command.
+                Install the CLI.
                 <br />
-                <em>Your own network.</em>
+                <em>Connect your workspace.</em>
               </h2>
             </div>
             <p>
-              Check domains, analyze captures, and run scheduled checks from
-              your machine. Connect the CLI to keep your results in the
+              Install Mailent and sign in to connect this installation. Run
+              analysis locally, then sync results whenever you need the shared
               workspace.
             </p>
           </div>
@@ -519,8 +517,20 @@ export function LandingPage() {
             </a>
           </div>
           <div className="install-next">
-            <span>Then connect your device</span>
+            <span>Connect your installation</span>
             <code>mailent login --server https://mailent.onrender.com</code>
+          </div>
+          <div className="install-next">
+            <span>Analyze a capture and sync</span>
+            <code>mailent analyze &lt;capture.pcap&gt; --sync</code>
+          </div>
+          <div className="install-next">
+            <span>Scan mail infrastructure and sync</span>
+            <code>mailent scan &lt;domain&gt; --sync</code>
+          </div>
+          <div className="install-next">
+            <span>Monitor live traffic</span>
+            <code>mailent monitor --interface &lt;iface&gt;</code>
           </div>
           <p className="install-note">
             Installs Mailent CLI and verifies required Zeek 8+. Uses your native Zeek or sets up the container runner with Docker or Podman.
@@ -530,21 +540,19 @@ export function LandingPage() {
         <section className="home-final home-container" data-reveal>
           <div>
             <MailentLogo size={62} />
-            <span className="home-kicker">Verify your email security</span>
+            <span className="home-kicker">Start with Mailent CLI</span>
           </div>
           <h2>
-            Passive PCAP forensic inspection
+            Analyze. Scan. Monitor.
             <br />
-            <em>with Zeek 8+.</em>
+            <em>Review it all together.</em>
           </h2>
-          <Link to="/workspace/overview?start=capture" className="home-button">
-            Analyze a capture <ArrowUpRight size={21} />
-          </Link>
+          <a href="#install" className="home-button">
+            Install Mailent CLI <ArrowUpRight size={21} />
+          </a>
           <p>
             Or{" "}
-            <Link to="/workspace/overview?start=domain">
-              check an external mail domain.
-            </Link>
+            <Link to="/workspace">open your analyst workspace.</Link>
           </p>
         </section>
       </main>
@@ -553,7 +561,7 @@ export function LandingPage() {
           <MailentLogo size={34} />
           mailent
         </Link>
-        <span>Email traffic analysis with Zeek.</span>
+        <span>Local mail analysis. Shared evidence.</span>
         <nav aria-label="Footer">
           <Link to="/privacy">Privacy</Link>
           <Link to="/workspace">

@@ -2933,3 +2933,9 @@ main.console-main { max-width: 1540px; padding: 32px clamp(20px, 2.4vw, 40px); }
 .devices-table td { vertical-align: top; }
 .devices-table td:first-child strong { display: block; max-width: 22rem; }
 .devices-table time { display: grid; gap: .2rem; }
+
+/* CLI guidance stays readable beside long install URLs and workspace controls. */
+.cli-workflow-content { min-width: 0; display: grid; gap: 1rem; margin-top: 1rem; }
+.cli-workflow-content p { margin: 0; }
+.cli-workflow-content pre { max-width: 100%; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.cli-workflow-content > .badge { justify-self: start; }

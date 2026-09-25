@@ -51,6 +51,7 @@ macro_rules! delegate {
 
 delegate! {
     AssetRepository,
+    async fn find_by_address_or_identity_scoped(&self, identity: &str, organization_id: Option<Uuid>) -> Result<Option<Asset>, StorageError>;
     async fn find_by_id(&self, id: Uuid) -> Result<Option<Asset>, StorageError>;
     async fn find_by_address_or_identity(&self, identity: &str) -> Result<Option<Asset>, StorageError>;
     async fn upsert(&self, asset: Asset) -> Result<(), StorageError>;
@@ -201,6 +202,7 @@ delegate! {
 
 delegate! {
     AssessmentRepository,
+    async fn latest_installation_syncs(&self, organization_id: Uuid) -> Result<std::collections::HashMap<Uuid, String>, StorageError>;
     async fn save(&self, assessment: &mailent_domain::AssessmentRecord) -> Result<(), StorageError>;
     async fn find_by_id(&self, id: Uuid) -> Result<Option<mailent_domain::AssessmentRecord>, StorageError>;
     async fn list_all(&self) -> Result<Vec<mailent_domain::AssessmentSummary>, StorageError>;
@@ -220,6 +222,7 @@ delegate! {
 
 delegate! {
     DeviceRepository,
+    async fn report_installation(&self, device_id: Uuid, version: String, capabilities: Vec<String>, now: time::OffsetDateTime) -> Result<(), StorageError>;
     async fn save_device(&self, device: &mailent_domain::Device) -> Result<(), StorageError>;
     async fn find_device_by_id(&self, id: Uuid) -> Result<Option<mailent_domain::Device>, StorageError>;
     async fn list_devices_for_org(&self, organization_id: Uuid) -> Result<Vec<mailent_domain::Device>, StorageError>;

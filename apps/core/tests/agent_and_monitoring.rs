@@ -3,7 +3,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use http_body_util::BodyExt;
-use mailent_core::{AppState, api::create_router, auth::protect};
+use mailent_core::{AppState, auth::protect};
 use mailent_domain::{
     AgentJob, AssessmentRecord, DEFAULT_ORG_ID, DiscoveredEndpoint, Finding, FindingCategory,
     FindingSeverity, InfrastructureMetadata, InvestigationStatus, JobState, Organization,
@@ -15,7 +15,11 @@ use uuid::Uuid;
 
 async fn setup_test_app() -> (AppState, axum::Router) {
     let state = AppState::new();
-    let app = protect(create_router(state.clone()), None, state.clone());
+    let app = protect(
+        mailent_core::api::create_router(state.clone()),
+        None,
+        state.clone(),
+    );
     (state, app)
 }
 
@@ -161,135 +165,55 @@ async fn test_agent_heartbeat_and_status() {
 }
 
 #[tokio::test]
-async fn test_monitor_creation_and_run_now() {
-    let (_state, app) = setup_test_app().await;
-    let (token, device_id) = create_and_approve_device(&app, "Lab-Scanner", DEFAULT_ORG_ID).await;
-
-    // 1. Create a monitor for example.com
-    let create_req = serde_json::json!({
-        "domain": "example.com",
-        "cadence": "daily",
-        "target": {
-            "type": "agent",
-            "agent_id": device_id
-        }
-    });
-
-    let res = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/monitors")
-                .header("Authorization", format!("Bearer {token}"))
-                .header("Content-Type", "application/json")
-                .body(Body::from(serde_json::to_vec(&create_req).unwrap()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(res.status(), StatusCode::CREATED);
-    let bytes = res.into_body().collect().await.unwrap().to_bytes();
-    let monitor_res: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    let monitor_id = monitor_res["id"].as_str().unwrap();
-
-    // 2. Trigger run now
-    let res = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/api/v1/monitors/{monitor_id}/run_now"))
-                .header("Authorization", format!("Bearer {token}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(res.status(), StatusCode::OK);
-    let bytes = res.into_body().collect().await.unwrap().to_bytes();
-    let run_res: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    let job_id = run_res["job_id"].as_str().unwrap();
-
-    // 3. Agent polls for jobs
-    let res = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/agent/jobs/poll")
-                .header("Authorization", format!("Bearer {token}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(res.status(), StatusCode::OK);
-    let bytes = res.into_body().collect().await.unwrap().to_bytes();
-    let poll_res: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert!(!poll_res["job"].is_null());
-    assert_eq!(poll_res["job"]["id"].as_str().unwrap(), job_id);
-
-    // 4. Agent completes job with assessment
-    let assessment = create_sample_infra_assessment(
-        "example.com",
-        95.0,
-        "A",
-        vec![DiscoveredEndpoint {
-            service: "smtp".into(),
-            host: "mail.example.com".into(),
-            port: 25,
-            priority: Some(10),
-            resolved_ips: vec!["198.51.100.1".into()],
-        }],
-        OffsetDateTime::now_utc(),
+async fn cloud_scheduling_returns_cli_guidance_without_creating_jobs() {
+    let (state, app) = setup_test_app().await;
+    let (token, device_id) =
+        create_and_approve_device(&app, "CLI installation", DEFAULT_ORG_ID).await;
+    for uri in [
+        "/api/v1/monitors".to_string(),
+        format!("/api/v1/monitors/{}/run_now", Uuid::new_v4()),
+        format!("/api/v1/monitors/{}/run-now", Uuid::new_v4()),
+        "/api/v1/scans/infrastructure".to_string(),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(uri)
+                    .header("Authorization", format!("Bearer {token}"))
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"domain": "example.com", "device_id": device_id})
+                            .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body: serde_json::Value =
+            serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(body["code"], "cli_required");
+        assert_eq!(body["setup_url"], "/workspace/installations");
+    }
+    assert!(
+        state
+            .jobs
+            .list_for_org(DEFAULT_ORG_ID, 100)
+            .await
+            .unwrap()
+            .is_empty()
     );
-
-    let complete_req = serde_json::json!({
-        "assessment": assessment,
-        "output_summary": { "status": "ok" }
-    });
-
-    let res = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(format!("/api/v1/agent/jobs/{job_id}/complete"))
-                .header("Authorization", format!("Bearer {token}"))
-                .header("Content-Type", "application/json")
-                .body(Body::from(serde_json::to_vec(&complete_req).unwrap()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(res.status(), StatusCode::OK);
-
-    // 5. Verify history shows the completed assessment
-    let res = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("GET")
-                .uri("/api/v1/monitors/domain/example.com/history")
-                .header("Authorization", format!("Bearer {token}"))
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(res.status(), StatusCode::OK);
-    let bytes = res.into_body().collect().await.unwrap().to_bytes();
-    let hist_res: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(hist_res["domain"], "example.com");
-    let history_items = hist_res["history"].as_array().unwrap();
-    assert_eq!(history_items.len(), 1);
-    assert_eq!(history_items[0]["posture_score"], 95.0);
+    assert!(
+        state
+            .monitors
+            .list_for_org(DEFAULT_ORG_ID)
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -479,7 +403,7 @@ async fn test_multi_tenant_agent_and_monitor_isolation() {
         .await
         .unwrap();
 
-    let (token_a, device_a) = create_and_approve_device(&app, "Agent-Org-A", org_a).await;
+    let (_token_a, device_a) = create_and_approve_device(&app, "Agent-Org-A", org_a).await;
 
     // Register Device B directly for Org B
     let device_b_id = Uuid::new_v4();
@@ -511,34 +435,25 @@ async fn test_multi_tenant_agent_and_monitor_isolation() {
         .await
         .unwrap();
 
-    // Create monitor in Org A
-    let create_req = serde_json::json!({
-        "domain": "tenant-a.corp",
-        "cadence": "hourly",
-        "target": {
-            "type": "agent",
-            "agent_id": device_a
-        }
-    });
-
-    let res = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/v1/monitors")
-                .header("Authorization", format!("Bearer {token_a}"))
-                .header("Content-Type", "application/json")
-                .body(Body::from(serde_json::to_vec(&create_req).unwrap()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(res.status(), StatusCode::CREATED);
-    let bytes = res.into_body().collect().await.unwrap().to_bytes();
-    let mon_a: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    let mon_id_a = mon_a["id"].as_str().unwrap();
+    // Seed a retained historical monitor directly; new cloud schedules are unavailable.
+    let monitor_a = mailent_domain::InfrastructureMonitor::new(
+        org_a,
+        "tenant-a.corp".into(),
+        mailent_domain::MonitorExecutionTarget::Agent(device_a),
+        mailent_domain::MonitorCadence::Hourly,
+        false,
+    );
+    state.monitors.save(&monitor_a).await.unwrap();
+    let mon_id_a = monitor_a.id;
+    let job_a = AgentJob::new_infrastructure_assessment(
+        org_a,
+        "tenant-a.corp".into(),
+        120,
+        Some(device_a),
+        None,
+        None,
+    );
+    state.jobs.create_job(&job_a).await.unwrap();
 
     // Agent B tries to access Monitor A -> 403 Forbidden
     let res = app

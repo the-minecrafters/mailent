@@ -84,6 +84,23 @@ impl PostgresStorage {
 
 #[async_trait]
 impl AssetRepository for PostgresStorage {
+    async fn find_by_address_or_identity_scoped(
+        &self,
+        identity: &str,
+        organization_id: Option<Uuid>,
+    ) -> Result<Option<Asset>, StorageError> {
+        let Some(org_id) = organization_id else {
+            return self.find_by_address_or_identity(identity).await;
+        };
+        let id = sqlx::query_scalar::<_, Uuid>("SELECT a.id FROM assets a WHERE a.organization_id = $2 AND ($1 = ANY(a.addresses) OR $1 = ANY(a.hostnames) OR EXISTS (SELECT 1 FROM asset_identities i WHERE i.asset_id = a.id AND i.value = $1)) LIMIT 1")
+            .bind(identity).bind(org_id).fetch_optional(&*self.pool).await
+            .map_err(|e| StorageError::Backend(format!("scoped asset lookup: {e}")))?;
+        match id {
+            Some(id) => AssetRepository::find_by_id(self, id).await,
+            None => Ok(None),
+        }
+    }
+
     async fn find_by_id(&self, id: Uuid) -> Result<Option<Asset>, StorageError> {
         let row = sqlx::query(
             "SELECT id, primary_name, addresses, hostnames, tls_versions, cipher_suites, certificate_fingerprints, active_findings_count, first_seen, last_seen, organization_id FROM assets WHERE id = $1"
@@ -151,8 +168,8 @@ impl AssetRepository for PostgresStorage {
         let raw_tls: Vec<String> = asset.tls_versions.iter().map(|v| v.to_string()).collect();
 
         sqlx::query(
-            r#"INSERT INTO assets (id, primary_name, addresses, hostnames, tls_versions, cipher_suites, certificate_fingerprints, active_findings_count, first_seen, last_seen)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            r#"INSERT INTO assets (id, primary_name, addresses, hostnames, tls_versions, cipher_suites, certificate_fingerprints, active_findings_count, first_seen, last_seen, organization_id)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                ON CONFLICT (id) DO UPDATE SET
                    primary_name = COALESCE(EXCLUDED.primary_name, assets.primary_name),
                    addresses = EXCLUDED.addresses,
@@ -173,6 +190,7 @@ impl AssetRepository for PostgresStorage {
         .bind(asset.active_findings_count as i32)
         .bind(asset.first_seen)
         .bind(asset.last_seen)
+        .bind(asset.organization_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| StorageError::Backend(format!("upsert asset error: {e}")))?;
@@ -2818,6 +2836,24 @@ impl ArchivedReportRepository for PostgresStorage {
 
 #[async_trait]
 impl AssessmentRepository for PostgresStorage {
+    async fn latest_installation_syncs(
+        &self,
+        organization_id: Uuid,
+    ) -> Result<std::collections::HashMap<Uuid, String>, StorageError> {
+        let rows = sqlx::query("SELECT metadata->>'source_device_id' AS device_id, MAX(metadata->>'synced_at') AS synced_at FROM assessments WHERE organization_id = $1 AND metadata->>'source_device_id' IS NOT NULL AND metadata->>'synced_at' IS NOT NULL GROUP BY metadata->>'source_device_id'")
+            .bind(organization_id).fetch_all(&*self.pool).await
+            .map_err(|e| StorageError::Backend(format!("installation sync history error: {e}")))?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| {
+                let id: String = row.get("device_id");
+                Some((
+                    Uuid::parse_str(&id).ok()?,
+                    row.get::<String, _>("synced_at"),
+                ))
+            })
+            .collect())
+    }
     async fn save(&self, assessment: &AssessmentRecord) -> Result<(), StorageError> {
         let protocols_json = serde_json::to_value(&assessment.protocols_identified)
             .map_err(|e| StorageError::Backend(e.to_string()))?;
@@ -3243,6 +3279,18 @@ impl OrganizationRepository for PostgresStorage {
 
 #[async_trait]
 impl DeviceRepository for PostgresStorage {
+    async fn report_installation(
+        &self,
+        device_id: Uuid,
+        version: String,
+        capabilities: Vec<String>,
+        now: OffsetDateTime,
+    ) -> Result<(), StorageError> {
+        sqlx::query("UPDATE devices SET version = $2, capabilities = $3, last_seen_at = $4 WHERE id = $1 AND revoked_at IS NULL")
+            .bind(device_id).bind(version).bind(capabilities).bind(now).execute(&*self.pool).await
+            .map_err(|e| StorageError::Backend(format!("installation status error: {e}")))?;
+        Ok(())
+    }
     async fn save_device(&self, device: &Device) -> Result<(), StorageError> {
         sqlx::query(
             r#"

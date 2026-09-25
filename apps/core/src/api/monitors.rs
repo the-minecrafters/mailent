@@ -4,24 +4,11 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use mailent_domain::{
-    AgentJob, DriftEvent, InfrastructureMonitor, MonitorCadence, MonitorExecutionTarget,
-};
-use serde::{Deserialize, Serialize};
-use time::OffsetDateTime;
+use mailent_domain::{DriftEvent, InfrastructureMonitor};
+use serde::Serialize;
 use uuid::Uuid;
 
 use crate::{auth::ExecutionContext, state::AppState};
-
-#[derive(Debug, Deserialize)]
-pub struct CreateMonitorRequest {
-    pub domain: String,
-    pub cadence: MonitorCadence,
-    pub target: MonitorExecutionTarget,
-    pub notify_on_drift: Option<bool>,
-    pub notify_on_regression: Option<bool>,
-    pub auto_investigate: Option<bool>,
-}
 
 #[derive(Debug, Serialize)]
 pub struct DomainHistoryEntry {
@@ -58,39 +45,6 @@ pub async fn list_monitors_handler(
     Ok(Json(monitors))
 }
 
-pub async fn create_monitor_handler(
-    State(state): State<AppState>,
-    Extension(ctx): Extension<ExecutionContext>,
-    Json(req): Json<CreateMonitorRequest>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let org_id = ctx
-        .organization_id
-        .unwrap_or(mailent_domain::DEFAULT_ORG_ID);
-    let domain = req.domain.trim().to_lowercase();
-    if domain.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "Domain cannot be empty".to_string(),
-        ));
-    }
-
-    let monitor = InfrastructureMonitor::new(
-        org_id,
-        domain,
-        req.target,
-        req.cadence,
-        true, // Start immediately on creation
-    );
-
-    state
-        .monitors
-        .save(&monitor)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    Ok((StatusCode::CREATED, Json(monitor)))
-}
-
 pub async fn get_monitor_handler(
     State(state): State<AppState>,
     Extension(ctx): Extension<ExecutionContext>,
@@ -114,64 +68,6 @@ pub async fn get_monitor_handler(
     }
 
     Ok(Json(monitor))
-}
-
-pub async fn run_now_monitor_handler(
-    State(state): State<AppState>,
-    Extension(ctx): Extension<ExecutionContext>,
-    Path(id): Path<Uuid>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let org_id = ctx
-        .organization_id
-        .unwrap_or(mailent_domain::DEFAULT_ORG_ID);
-    let mut monitor = state
-        .monitors
-        .find_by_id(id)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or_else(|| (StatusCode::NOT_FOUND, "Monitor not found".to_string()))?;
-
-    if monitor.organization_id != org_id {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "Monitor belongs to another organization".to_string(),
-        ));
-    }
-
-    let now = OffsetDateTime::now_utc();
-    monitor.next_run_at = now;
-    monitor.updated_at = now;
-    state
-        .monitors
-        .save(&monitor)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    let target_agent_id = match monitor.execution_target {
-        MonitorExecutionTarget::Cloud => None,
-        MonitorExecutionTarget::Agent(dev_id) => Some(dev_id),
-    };
-
-    let job = AgentJob::new_infrastructure_assessment(
-        org_id,
-        monitor.domain.clone(),
-        120,
-        target_agent_id,
-        Some(format!(
-            "manual-run-{}-{}",
-            monitor.id,
-            now.unix_timestamp()
-        )),
-        Some(monitor.id),
-    );
-
-    let _ = state.jobs.create_job(&job).await;
-
-    Ok(Json(serde_json::json!({
-        "status": "queued",
-        "job_id": job.id,
-        "monitor_id": monitor.id,
-    })))
 }
 
 pub async fn delete_monitor_handler(

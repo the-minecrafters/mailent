@@ -74,7 +74,6 @@ import {
   simulatePolicy,
   type TimelineEvent,
   testIntegration,
-  triggerAssetProbe,
   updateIntegration,
   type VerificationFreshness,
 } from "./api";
@@ -89,6 +88,7 @@ import {
   PageHeader,
   SearchField,
 } from "./components/ui";
+import { CliWorkflowDialog, CliWorkflowInstructions } from "./components/CliWorkflow";
 import { DevicesTab } from "./DevicesTab";
 import { LandingPage } from "./LandingPage";
 import { PrivacyPage } from "./PrivacyPage";
@@ -283,7 +283,7 @@ const navigation = [
       {
         key: "assessments",
         path: "/workspace/captures",
-        label: "Captures",
+        label: "Assessments",
         icon: "folder_open",
       },
       {
@@ -312,7 +312,7 @@ const navigation = [
       {
         key: "investigations",
         path: "/workspace/reviews",
-        label: "Reviews",
+        label: "Investigations",
         icon: "search",
       },
       {
@@ -347,13 +347,13 @@ const navigation = [
       {
         key: "sensors",
         path: "/workspace/collectors",
-        label: "Collectors",
+        label: "Live traffic",
         icon: "sensors",
       },
       {
         key: "devices",
-        path: "/workspace/devices",
-        label: "Devices",
+        path: "/workspace/installations",
+        label: "Installations",
         icon: "devices",
       },
     ],
@@ -415,6 +415,7 @@ function Workspace() {
   const queryClient = useQueryClient();
   const [uploadOpen, setUploadOpen] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
+  const [monitorOpen, setMonitorOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
@@ -447,6 +448,9 @@ function Workspace() {
   useEffect(() => {
     document.title = `${page?.label ?? "Mailent"} · Mailent`;
     setMenuOpen(false);
+    setScanOpen(false);
+    setUploadOpen(false);
+    setMonitorOpen(false);
     mainRef.current?.focus({ preventScroll: true });
     window.scrollTo({ top: 0, behavior: "instant" });
   }, [location.pathname, page?.label]);
@@ -454,15 +458,16 @@ function Workspace() {
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const start = params.get("start");
-    if (start !== "domain" && start !== "capture") return;
+    if (start !== "domain" && start !== "capture" && start !== "monitor") return;
     if (start === "domain") setScanOpen(true);
+    else if (start === "monitor") setMonitorOpen(true);
     else setUploadOpen(true);
     params.delete("start");
     navigate({ pathname: location.pathname, search: params.toString() }, { replace: true });
   }, [location.pathname, location.search, navigate]);
 
-  if (location.pathname.startsWith("/settings")) {
-    return <Navigate to={`/workspace/devices${location.search}`} replace />;
+  if (["/workspace/devices", "/workspace/settings", "/settings"].includes(location.pathname)) {
+    return <Navigate to={`/workspace/installations${location.search}`} replace />;
   }
 
   const open = (path: string, entityId?: string) =>
@@ -620,9 +625,10 @@ function Workspace() {
             >
               <Icon name="refresh" className={refreshing ? "spin" : ""} />
             </Button>
+            <Button variant="secondary" onClick={() => setMonitorOpen(true)}>Monitor traffic</Button>
             <Button variant="secondary" onClick={() => setScanOpen(true)}>
               <Icon name="search" size={17} />
-              <span>Check domain</span>
+              <span>Scan infrastructure</span>
             </Button>
             <Button
               ref={captureButtonRef}
@@ -651,7 +657,7 @@ function Workspace() {
             <div className="storage-notice">
               <Icon name="info" size={16} />
               <span>
-                Guest results are temporary and are not saved to your account.
+                Sign in and connect Mailent CLI to sync results to your workspace.
               </span>
             </div>
           )}
@@ -729,20 +735,13 @@ function Workspace() {
             setUploadOpen(false);
             captureButtonRef.current?.focus();
           }}
-          onCreated={(assessment) => {
-            void queryClient.invalidateQueries();
-            open("/workspace/captures", assessment.id);
-          }}
         />
       )}
+      {monitorOpen && <CliWorkflowDialog workflow="monitor" isOpen onClose={() => setMonitorOpen(false)} />}
       {scanOpen && (
         <ScanInfrastructureModal
           isOpen
           onClose={() => setScanOpen(false)}
-          onCreated={(assessment) => {
-            void queryClient.invalidateQueries();
-            open("/workspace/captures", assessment.id);
-          }}
         />
       )}
     </div>
@@ -791,7 +790,7 @@ function AssessmentsTab({
   return (
     <div className="assessments-view">
       <PageHeader
-        title="Captures"
+        title="Assessments"
         description="Analyze network recordings and review your email security results."
       />
       <div className="list-toolbar">
@@ -832,7 +831,7 @@ function AssessmentsTab({
             description={
               search
                 ? "Try a different title or filename."
-                : "Use Analyze capture to upload a PCAP or PCAPNG file and review its results."
+                : "Connect Mailent CLI, analyze a capture locally with --sync, then review the results here."
             }
           />
         </div>
@@ -1017,7 +1016,7 @@ function OverviewTab({
     <div className="overview-page">
       <PageHeader
         title="Overview"
-        description="Track your mail servers, review findings, and verify what needs attention."
+        description="Review synced assessments, compare changes, and track findings across your mail infrastructure."
       />
       {failed && (
         <ErrorState
@@ -1047,14 +1046,14 @@ function OverviewTab({
             to: "/workspace/findings",
           },
           {
-            label: "Analyzed captures",
+            label: "Synced assessments",
             value: count(capturesQuery, captures.length),
-            detail: "Uploaded network recordings",
+            detail: "Results from Mailent CLI",
             icon: "folder_open",
             to: "/workspace/captures",
           },
           {
-            label: "Open reviews",
+            label: "Open investigations",
             value: count(
               investigationsQuery,
               (investigationsQuery.data ?? []).filter(
@@ -1080,35 +1079,35 @@ function OverviewTab({
       {empty && (
         <section className="getting-started">
           <div className="getting-started-copy">
-            <h2>No captures yet</h2>
+            <h2>Bring your first results into the workspace</h2>
             <p>
-              Use <strong>Analyze capture</strong> to upload a network recording
-              and check its email connections.
+              Install and connect Mailent CLI. Analyze captures, scan infrastructure,
+              or monitor traffic on your machine, then review the synced evidence here.
             </p>
             <span className="supported-formats">
-              PCAP, PCAPNG or CAP · Up to 50 MB
+              PCAP analysis · Infrastructure scans · Live traffic
             </span>
           </div>
           <ol className="onboarding-steps">
             <li>
               <span>01</span>
               <div>
-                <strong>Upload a capture</strong>
-                <p>Choose a recording from your network.</p>
+                <strong>Connect Mailent CLI</strong>
+                <p><Link to="/workspace/installations">Set up an installation</Link> on your machine.</p>
               </div>
             </li>
             <li>
               <span>02</span>
               <div>
-                <strong>Review the evidence</strong>
-                <p>Inspect connections, encryption and certificates.</p>
+                <strong>Analyze and sync</strong>
+                <p>Run analyze or scan with --sync, or start monitor.</p>
               </div>
             </li>
             <li>
               <span>03</span>
               <div>
-                <strong>Verify a fix</strong>
-                <p>Resolve findings and verify your changes.</p>
+                <strong>Review and compare</strong>
+                <p>Investigate findings, track fixes, and export reports.</p>
               </div>
             </li>
           </ol>
@@ -1118,8 +1117,8 @@ function OverviewTab({
         <section className="card overview-captures">
           <div className="card-header">
             <div>
-              <h2 className="card-title">Recent captures</h2>
-              <p className="card-description">Your latest network analyses</p>
+              <h2 className="card-title">Recent assessments</h2>
+              <p className="card-description">Your latest synced results</p>
             </div>
             <Link className="text-link" to="/workspace/captures">
               View all <Icon name="chevron_right" size={14} />
@@ -1161,7 +1160,7 @@ function OverviewTab({
           ) : (
             <EmptyState
               title="No captures analyzed yet"
-              description="Your capture history and results will appear here after an upload."
+              description="Assessments and results will appear here after a CLI sync."
             />
           )}
         </section>
@@ -1213,7 +1212,7 @@ function OverviewTab({
               description={
                 assets.length
                   ? "No current findings are linked to your discovered mail servers."
-                  : "Upload a capture or connect a collector to discover mail servers."
+                  : "Sync a CLI assessment or start local traffic monitoring to discover mail servers."
               }
             />
           )}
@@ -1339,7 +1338,7 @@ function AssetsTab({
                   style={{ textAlign: "center", padding: "2rem" }}
                 >
                   <span className="secondary-text">
-                    No matching mail servers. Upload a capture or connect a
+                    No matching mail servers. Sync CLI results or connect a
                     collector to discover servers.
                   </span>
                 </td>
@@ -1455,23 +1454,7 @@ function AssetDetailView({
     queryFn: () => fetchAssetDrift(assetId),
   });
 
-  const probeMutation = useMutation({
-    mutationFn: () => {
-      const endpoint = assetQuery.data?.endpoints[0];
-      return triggerAssetProbe(assetId, endpoint?.port ?? 25, endpoint?.protocol ?? "smtp");
-    },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
-        queryKey: ["asset-verification", assetId],
-      });
-      void queryClient.invalidateQueries({
-        queryKey: ["asset-posture", assetId],
-      });
-      void queryClient.invalidateQueries({
-        queryKey: ["asset-posture-history", assetId],
-      });
-    },
-  });
+  const [checkOpen, setCheckOpen] = useState(false);
 
   const handleArchiveReport = async () => {
     setIsArchiving(true);
@@ -1566,8 +1549,8 @@ function AssetDetailView({
             <div className="metric-tile-sub">
               {verification?.consecutive_failures &&
               verification.consecutive_failures >= 3
-                ? "Checks are spaced out after repeated failures"
-                : "Normal check schedule"}
+                ? "Repeated failures in saved check history"
+                : "From saved check history"}
             </div>
           </div>
         </div>
@@ -1580,20 +1563,8 @@ function AssetDetailView({
             marginTop: "1rem",
           }}
         >
-          <button
-            className="btn-primary"
-            onClick={() => probeMutation.mutate()}
-            disabled={probeMutation.isPending || !asset?.probe_authorized}
-          >
-            {probeMutation.isPending
-              ? "Checking…"
-              : "Run check"}
-          </button>
-          {!asset?.probe_authorized && (
-            <span className="secondary-text" style={{ fontSize: "0.875rem" }}>
-              Live checks are not enabled for this server.
-            </span>
-          )}
+          <Button variant="primary" onClick={() => setCheckOpen(true)}>Scan with CLI</Button>
+          <CliWorkflowDialog workflow="scan" isOpen={checkOpen} onClose={() => setCheckOpen(false)} />
           {verification?.drift_detected_since_verification && (
             <span className="badge stale">
               Settings have changed since the last check.
@@ -1979,7 +1950,7 @@ function SessionsTab({
                   style={{ textAlign: "center", padding: "2rem" }}
                 >
                   <span className="secondary-text">
-                    No sessions found. Upload a capture or connect a collector
+                    No sessions found. Sync CLI results or start local monitoring
                     to start recording email connections.
                   </span>
                 </td>
@@ -3674,15 +3645,15 @@ function SensorsTab() {
   });
   const sensors = sensorsQuery.data ?? [];
 
-  if (isGuest) return <div className="tab-page"><PageHeader title="Collectors" description="Monitor mail traffic with Zeek." /><section className="card device-sign-in"><h2>Sign in to connect a collector</h2><p className="secondary-text">Live traffic results are saved to your workspace.</p><Button variant="primary" onClick={openSignIn}>Sign in</Button></section></div>;
+  if (isGuest) return <div className="tab-page"><PageHeader title="Live traffic" description="Monitor mail traffic with Zeek." /><section className="card device-sign-in"><h2>Sign in to connect a collector</h2><p className="secondary-text">Live traffic results are saved to your workspace.</p><Button variant="primary" onClick={openSignIn}>Sign in</Button></section></div>;
 
   return (
     <div>
       <div style={{ marginBottom: "1.5rem" }}>
-        <h1>Collectors</h1>
+        <h1>Live traffic</h1>
         <p className="secondary-text">
-          Collectors monitor email traffic on your network and send connection
-          details to this workspace.
+          Mailent CLI observes traffic on your network with Zeek and syncs
+          connection evidence for analysis here.
         </p>
       </div>
 
@@ -3694,17 +3665,8 @@ function SensorsTab() {
       )}
 
       <details className="collector-help">
-        <summary>Connect a collector</summary>
-        <p>
-          On the machine that sees your mail traffic, choose the network
-          interface, sign in with the CLI, and start Zeek monitoring.
-        </p>
-        <pre>
-          <code>
-            mailent monitor --interface &lt;network-interface&gt;
-          </code>
-        </pre>
-        <p>Zeek 8+ and packet-capture permissions are required. Once connected, its status and last update appear below. Revoke the device to stop its workspace access.</p>
+        <summary>Start monitoring with Mailent CLI</summary>
+        <CliWorkflowInstructions workflow="monitor" />
       </details>
       <div className="table-container">
         <table className="data-table">

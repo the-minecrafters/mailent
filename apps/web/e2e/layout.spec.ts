@@ -35,7 +35,7 @@ test("workspace pages stay within desktop bounds and use product language", asyn
     "policies",
     "integrations",
     "collectors",
-    "devices",
+    "installations",
   ];
   for (const width of [1280, 1920]) {
     await page.setViewportSize({ width, height: 1000 });
@@ -46,7 +46,7 @@ test("workspace pages stay within desktop bounds and use product language", asyn
       await expectPageFits(page);
       const copy = await page.getByRole("main").innerText();
       expect(copy, route).not.toMatch(
-        /\b(Jev|forensic|investigation|probe|engine|PostgreSQL|persistent|non-persistent)\b/i,
+        /\b(Jev|forensic|probe|engine|PostgreSQL|persistent|non-persistent)\b/i,
       );
     }
   }
@@ -55,13 +55,13 @@ test("workspace pages stay within desktop bounds and use product language", asyn
   await expect(
     page.getByRole("heading", { name: "Reviews", exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Check domain", exact: true }).click();
+  await page.getByRole("button", { name: "Scan infrastructure", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
   await expectPageFits(page);
   await expect(
-    dialog.getByRole("button", { name: "Run check" }),
-  ).toBeDisabled();
+    dialog.getByRole("button", { name: "Sign in", exact: true }),
+  ).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(dialog).not.toBeVisible();
 });
@@ -126,46 +126,29 @@ test("homepage preview, entry actions, and reduced motion work", async ({
     await page.setViewportSize({ width, height: 1080 });
     await page.goto("/");
     await expect(page.getByRole("heading", { level: 1 })).toHaveText(
-      "Your mail.Every connection.In the clear.",
+      "Analyze locally.Review together.See what changed.",
     );
     await expectPageFits(page);
-    await page.getByRole("button", { name: "Capture", exact: true }).click();
+    await page.getByRole("button", { name: "Analyze", exact: true }).click();
     await expect(
-      page.getByRole("heading", { name: "See what really happened." }),
+      page.getByRole("heading", { name: "Analyze captures on your machine." }),
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Capture", exact: true }),
+      page.getByRole("button", { name: "Analyze", exact: true }),
     ).toHaveAttribute("aria-pressed", "true");
     await page.getByRole("button", { name: "Monitor", exact: true }).click();
     await expect(
-      page.getByRole("heading", { name: "Keep up with changes." }),
+      page.getByRole("heading", { name: "Monitor live traffic with Zeek." }),
     ).toBeVisible();
     await page.locator(".home-final").scrollIntoViewIfNeeded();
     await expect(page.locator(".home-final")).toHaveCSS("opacity", "1");
     await expectPageFits(page);
   }
   await page.goto("/");
-  await page
-    .getByRole("link", { name: "Check a domain", exact: true })
-    .first()
-    .click();
-  await expect(page.getByRole("dialog")).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Check a domain", exact: true }),
-  ).toBeVisible();
-  await page.keyboard.press("Escape");
-  await page.reload();
+  await page.getByRole("link", { name: "Install Mailent CLI", exact: true }).first().click();
+  await expect(page).toHaveURL(/#install$/);
+  await expect(page.getByRole("button", { name: "Copy install command" })).toBeVisible();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await page.goto("/");
-  await page
-    .getByRole("link", { name: "Analyze a capture", exact: true })
-    .first()
-    .click();
-  await expect(page.getByRole("dialog")).toBeVisible();
-  await expect(
-    page.getByRole("dialog").locator("input[type=file]"),
-  ).toHaveCount(1);
-  await page.keyboard.press("Escape");
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/");
   await expect(page.locator(".home-final")).toHaveCSS("opacity", "1");

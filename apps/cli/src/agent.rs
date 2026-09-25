@@ -385,10 +385,12 @@ async fn run_daemon(poll_interval: u64, heartbeat_interval: u64) -> Result<(), S
         .map_err(|e| e.to_string())?;
     let base_url = creds.server_url.trim_end_matches('/');
     // Check access before starting any local work, including dependency setup.
+    let zeek = crate::locate_zeek(None)?;
+    crate::installation::report_best_effort(&creds, base_url, Some(&zeek)).await;
     if !send_heartbeat(&client, base_url, &creds, "idle").await? {
         return Ok(());
     }
-    let zeek = crate::locate_zeek(None)?;
+
     println!("Mailent monitoring — {}", creds.device_name);
     println!("Zeek: {}", zeek.display());
     println!("Waiting for mail-server checks. Press Ctrl+C to stop.");

@@ -31,6 +31,18 @@ use tower_http::trace::TraceLayer;
 
 use crate::state::AppState;
 
+async fn cli_acquisition_required() -> (axum::http::StatusCode, axum::Json<serde_json::Value>) {
+    (
+        axum::http::StatusCode::CONFLICT,
+        axum::Json(serde_json::json!({
+            "code": "cli_required",
+            "message": "Run Mailent CLI on your machine and sync results to this workspace.",
+            "commands": ["mailent analyze <capture.pcap> --sync", "mailent scan <domain> --sync", "mailent monitor --interface <iface>"],
+            "setup_url": "/workspace/installations"
+        })),
+    )
+}
+
 pub fn create_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health::health_handler))
@@ -49,12 +61,11 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route(
             "/api/v1/assessments/analyze",
-            post(assessments::analyze_capture_handler)
-                .layer(axum::extract::DefaultBodyLimit::max(70 * 1024 * 1024)),
+            post(cli_acquisition_required),
         )
         .route(
             "/api/v1/scans/infrastructure",
-            post(scans::scan_infrastructure_handler),
+            post(cli_acquisition_required),
         )
         .route("/api/v1/scans/device", post(scans::scan_on_device_handler))
         .route("/api/v1/scans/jobs/{id}", get(scans::get_scan_job_handler))
@@ -87,6 +98,7 @@ pub fn create_router(state: AppState) -> Router {
             "/api/v1/assets/{id}/remediations",
             get(remediation::list).post(remediation::start),
         )
+        .route("/api/v1/remediations/sync", post(remediation::sync))
         .route("/api/v1/remediations/{id}", get(remediation::get))
         .route(
             "/api/v1/remediations/{id}/applied",
@@ -94,7 +106,7 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route(
             "/api/v1/remediations/{id}/verify",
-            post(remediation::verify),
+            post(cli_acquisition_required),
         )
         .route("/api/v1/assets/{id}", get(assets::get_asset_handler))
         .route(
@@ -158,10 +170,7 @@ pub fn create_router(state: AppState) -> Router {
             get(baselines::list_asset_anomalies_handler),
         )
         // Active probe routes
-        .route(
-            "/api/v1/assets/{id}/probe",
-            post(probes::trigger_probe_handler),
-        )
+        .route("/api/v1/assets/{id}/probe", post(cli_acquisition_required))
         .route(
             "/api/v1/assets/{id}/probes",
             get(probes::list_probes_for_asset_handler),
@@ -270,7 +279,7 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route(
             "/api/v1/devices/status",
-            get(devices::device_status_handler),
+            get(devices::device_status_handler).post(devices::report_installation_handler),
         )
         .route(
             "/api/v1/devices/logout",
@@ -312,7 +321,7 @@ pub fn create_router(state: AppState) -> Router {
         // Infrastructure monitoring & scheduled runs
         .route(
             "/api/v1/monitors",
-            get(monitors::list_monitors_handler).post(monitors::create_monitor_handler),
+            get(monitors::list_monitors_handler).post(cli_acquisition_required),
         )
         .route(
             "/api/v1/monitors/{id}",
@@ -320,11 +329,11 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route(
             "/api/v1/monitors/{id}/run_now",
-            post(monitors::run_now_monitor_handler),
+            post(cli_acquisition_required),
         )
         .route(
             "/api/v1/monitors/{id}/run-now",
-            post(monitors::run_now_monitor_handler),
+            post(cli_acquisition_required),
         )
         .route(
             "/api/v1/monitors/domain/{domain}/history",

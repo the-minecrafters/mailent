@@ -41,21 +41,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Starting Mailent Core control plane service"
     );
 
-    mailent_core::scheduler::start_intelligence_refresh_scheduler(state.clone());
-    mailent_core::scheduler::start_verification_scheduler(state.clone());
-    mailent_core::scheduler::start_infrastructure_monitoring_scheduler(state.clone());
-
-    mailent_core::probes::recover_stale_probes(&state).await?;
-    let recovery_state = state.clone();
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
-        loop {
-            interval.tick().await;
-            if let Err(e) = mailent_core::probes::recover_stale_probes(&recovery_state).await {
-                tracing::error!(error = %e, "Probe recovery failed");
-            }
-        }
-    });
     let mut app = mailent_core::auth::protect(create_router(state.clone()), auth, state);
     if let Ok(directory) = std::env::var("MAILENT_WEB_DIR") {
         use tower_http::services::{ServeDir, ServeFile};

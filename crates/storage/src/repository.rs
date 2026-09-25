@@ -9,6 +9,22 @@ use crate::error::StorageError;
 
 #[async_trait]
 pub trait AssetRepository: Send + Sync {
+    async fn find_by_address_or_identity_scoped(
+        &self,
+        identity: &str,
+        organization_id: Option<Uuid>,
+    ) -> Result<Option<Asset>, StorageError> {
+        if organization_id.is_none() {
+            return self.find_by_address_or_identity(identity).await;
+        }
+        Ok(self.list_all().await?.into_iter().find(|a| {
+            a.organization_id == organization_id
+                && (a.addresses.iter().any(|v| v == identity)
+                    || a.hostnames.iter().any(|v| v == identity)
+                    || a.identities.iter().any(|v| v.value == identity))
+        }))
+    }
+
     async fn find_by_id(&self, id: Uuid) -> Result<Option<Asset>, StorageError>;
     async fn find_by_address_or_identity(
         &self,
@@ -357,6 +373,10 @@ pub trait ArchivedReportRepository: Send + Sync {
 
 #[async_trait]
 pub trait AssessmentRepository: Send + Sync {
+    async fn latest_installation_syncs(
+        &self,
+        organization_id: Uuid,
+    ) -> Result<std::collections::HashMap<Uuid, String>, StorageError>;
     async fn save(&self, assessment: &mailent_domain::AssessmentRecord)
     -> Result<(), StorageError>;
     async fn find_by_id(
@@ -403,6 +423,14 @@ pub trait OrganizationRepository: Send + Sync {
 
 #[async_trait]
 pub trait DeviceRepository: Send + Sync {
+    /// Update reported local capabilities without enabling remote execution or restoring revoked access.
+    async fn report_installation(
+        &self,
+        device_id: Uuid,
+        version: String,
+        capabilities: Vec<String>,
+        now: time::OffsetDateTime,
+    ) -> Result<(), StorageError>;
     async fn save_device(&self, device: &mailent_domain::Device) -> Result<(), StorageError>;
     async fn find_device_by_id(
         &self,

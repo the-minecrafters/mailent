@@ -375,7 +375,7 @@ async fn next_decision_receives_verified_context_and_automatic_change_is_dedupli
 }
 
 #[tokio::test]
-async fn certificate_change_automatically_verifies_same_investigation() {
+async fn certificate_change_creates_review_without_cloud_network_execution() {
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -410,13 +410,9 @@ async fn certificate_change_automatically_verifies_same_investigation() {
         .unwrap();
     let inv = processed.investigation.unwrap();
     let runs = state.probes.list_for_asset(asset.id, 10).await.unwrap();
-    assert_eq!(runs.len(), 1);
-    let run = completed(&state, runs[0].id).await;
-    assert_eq!(run.trigger, ProbeTrigger::CertificateChange);
-    assert_eq!(run.investigation_id, Some(inv.id));
-    assert_eq!(
-        run.result.unwrap().starttls,
-        ProbeStartTlsResult::NotAdvertised
+    assert!(
+        runs.is_empty(),
+        "Workspace correlation must not initiate network checks by default"
     );
     assert!(
         state
@@ -424,9 +420,7 @@ async fn certificate_change_automatically_verifies_same_investigation() {
             .find_by_id(inv.id)
             .await
             .unwrap()
-            .unwrap()
-            .external_intelligence["active_verifications"][run.id.to_string()]
-        .is_object()
+            .is_some()
     );
-    server.await.unwrap();
+    server.abort();
 }

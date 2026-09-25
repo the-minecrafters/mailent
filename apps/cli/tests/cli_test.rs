@@ -9,9 +9,12 @@ fn test_cli_help() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Analyze local captures or check mail domains"));
+    assert!(
+        stdout.contains("Analyze captures, scan mail infrastructure, monitor live traffic, and remediate findings.")
+    );
     assert!(stdout.contains("analyze"));
     assert!(stdout.contains("scan"));
+    assert!(stdout.contains("fix"));
 }
 
 #[test]

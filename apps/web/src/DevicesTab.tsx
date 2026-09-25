@@ -2,7 +2,7 @@ import { InstallCommand } from "./components/InstallCommand";
 import { useAuth } from "./auth";
 import { workspaceName } from "./display-copy";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   approveDeviceChallenge,
@@ -20,6 +20,27 @@ import {
   PageHeader,
 } from "./components/ui";
 
+function InstallationReadiness({ installation }: { installation: Device }) {
+  if (installation.revoked_at || installation.readiness === "revoked") {
+    return <span className="badge critical">Access revoked</span>;
+  }
+  if (installation.readiness === "ready") {
+    return <span className="badge fresh">Ready</span>;
+  }
+  return (
+    <div>
+      <span className="badge">
+        {installation.readiness === "setup_required"
+          ? "Setup required"
+          : "Not checked yet"}
+      </span>
+      <p className="secondary-text" style={{ margin: "0.4rem 0 0" }}>
+        Run <code>mailent doctor</code> on this machine.
+      </p>
+    </div>
+  );
+}
+
 export function DevicesTab() {
   const { user, openSignIn } = useAuth();
   const [params, setParams] = useSearchParams();
@@ -31,9 +52,7 @@ export function DevicesTab() {
   const [revokingId, setRevokingId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (urlCode) {
-      setChallengeCode(urlCode);
-    }
+    if (urlCode) setChallengeCode(urlCode);
   }, [urlCode]);
 
   const orgQuery = useQuery({
@@ -41,82 +60,99 @@ export function DevicesTab() {
     queryFn: fetchCurrentOrganization,
     enabled: !!user,
   });
-
   const devicesQuery = useQuery({
     queryKey: ["devices"],
     queryFn: fetchDevices,
     enabled: !!user,
     refetchInterval: user ? 10000 : false,
   });
-
   const approveMutation = useMutation({
     mutationFn: (code: string) =>
       approveDeviceChallenge(code.trim().toUpperCase()),
     onSuccess: (data) => {
       setApprovalMessage(
-        `Device "${data.device.name}" authorized successfully.`,
+        `“${data.device.hostname}” is connected. Run mailent doctor to check this installation.`,
       );
       setApprovalError(null);
       setChallengeCode("");
       if (params.has("code")) {
-        params.delete("code");
-        setParams(params);
+        const next = new URLSearchParams(params);
+        next.delete("code");
+        setParams(next);
       }
       void queryClient.invalidateQueries({ queryKey: ["devices"] });
     },
-    onError: (err: any) => {
+    onError: (error: Error) => {
       setApprovalError(
-        err?.message ||
-          "Failed to approve device. Check the code and try again.",
+        error.message ||
+          "Could not connect this installation. Check the code and try again.",
       );
       setApprovalMessage(null);
     },
   });
-
   const revokeMutation = useMutation({
-    mutationFn: (id: string) => revokeDevice(id),
+    mutationFn: revokeDevice,
     onSuccess: () => {
       setRevokingId(null);
       void queryClient.invalidateQueries({ queryKey: ["devices"] });
     },
-    onError: (err: any) => {
-      setApprovalError(err?.message || "Failed to revoke device.");
+    onError: (error: Error) => {
+      setApprovalError(
+        error.message || "Could not revoke access. Please try again.",
+      );
       setRevokingId(null);
     },
   });
 
-  const handleApprove = (e: React.FormEvent) => {
-    e.preventDefault();
+  function handleApprove(event: FormEvent) {
+    event.preventDefault();
     if (!user || !challengeCode.trim()) return;
     setApprovalMessage(null);
     setApprovalError(null);
     approveMutation.mutate(challengeCode);
-  };
-
-  const handleRevoke = (id: string, name: string) => {
+  }
+  function handleRevoke(installation: Device) {
     if (
       window.confirm(
-        `Are you sure you want to revoke credentials for device "${name}"? It will immediately lose access.`,
+        `Revoke workspace access for “${installation.hostname}”? This installation will need to sign in again before it can sync results.`,
       )
     ) {
-      setRevokingId(id);
-      revokeMutation.mutate(id);
+      setApprovalMessage(null);
+      setApprovalError(null);
+      setRevokingId(installation.id);
+      revokeMutation.mutate(installation.id);
     }
-  };
+  }
 
-  const devices = devicesQuery.data ?? [];
+  const installations = devicesQuery.data ?? [];
+  const activeCount = installations.filter(
+    (installation) => !installation.revoked_at,
+  ).length;
   const orgName = user ? workspaceName(orgQuery.data) : "your workspace";
 
   if (!user) {
     return (
       <div className="tab-page">
-        <PageHeader title="Devices" description="Connect a machine to analyze captures and monitor your mail servers." />
+        <PageHeader
+          title="Mailent installations"
+          description="Connect your CLI to sync results into the workspace."
+        />
         <section className="card device-sign-in">
           <Icon name="phonelink_lock" size={28} />
-          <h2>Sign in to connect a device</h2>
-          <p className="secondary-text">Devices need an account to send results to your workspace and receive scheduled checks.</p>
-          {urlCode && <p>Your device code is saved here. You can approve it after signing in.</p>}
-          <Button variant="primary" onClick={openSignIn}>Sign in</Button>
+          <h2>Sign in to connect Mailent CLI</h2>
+          <p className="secondary-text">
+            Analyze captures, scan mail infrastructure, and monitor traffic on
+            your machine. Sign in to review synced results here.
+          </p>
+          {urlCode && (
+            <p>
+              Your connection code is saved here. You can approve it after
+              signing in.
+            </p>
+          )}
+          <Button variant="primary" onClick={openSignIn}>
+            Sign in
+          </Button>
         </section>
       </div>
     );
@@ -125,58 +161,40 @@ export function DevicesTab() {
   return (
     <div className="tab-page">
       <PageHeader
-        title="Devices"
-        description={`Manage devices connected to ${orgName}.`}
+        title="Mailent installations"
+        description={`Manage CLI access to ${orgName}. Analysis runs on your machine; structured results sync here.`}
       />
-
-      {/* Authorize New Device Card */}
-      <div
+      <section
         className="card"
-        style={{ marginBottom: "1.5rem", padding: "1.25rem 1.5rem" }}
+        style={{ marginBottom: "1.5rem", padding: "1.5rem" }}
       >
-        <h3
-          className="card-title"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "0.5rem",
-            marginBottom: "0.5rem",
-          }}
-        >
-          <Icon name="phonelink_lock" size={20} />
-          <span>Connect a device</span>
-        </h3>
-        <p
-          className="secondary-text"
-          style={{ fontSize: "0.875rem", margin: "0 0 1rem 0" }}
-        >
-          Install Mailent with Zeek, then sign in from your terminal and enter the device code below.
+        <h2 className="card-title">
+          <Icon name="phonelink_lock" size={20} /> Connect Mailent CLI
+        </h2>
+        <p className="secondary-text">
+          Install the CLI with Zeek, sign in from your terminal, then enter the
+          connection code below.
         </p>
-
         <InstallCommand />
-        <pre className="device-login-command"><code>mailent login --server {window.location.origin}</code></pre>
-
+        <pre className="device-login-command">
+          <code>mailent login --server {window.location.origin}</code>
+        </pre>
         {approvalMessage && (
-          <div
+          <p
             className="badge fresh"
+            role="status"
             style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "0.4rem",
-              padding: "0.6rem 0.85rem",
-              marginBottom: "1rem",
-              borderRadius: "4px",
+              display: "block",
+              whiteSpace: "normal",
+              padding: "0.8rem",
             }}
           >
-            <Icon name="check_circle" size={16} />
-            <span>{approvalMessage}</span>
-          </div>
+            {approvalMessage}
+          </p>
         )}
-
         {approvalError && (
-          <ErrorState title="Authorization error" description={approvalError} />
+          <ErrorState title="Connection error" description={approvalError} />
         )}
-
         <form
           onSubmit={handleApprove}
           style={{
@@ -190,11 +208,14 @@ export function DevicesTab() {
             type="text"
             className="input text-input mono"
             placeholder="MLT-XXXXXXXX"
-            aria-label="Device code"
+            aria-label="Connection code"
             value={challengeCode}
-            onChange={(e) => setChallengeCode(e.target.value.toUpperCase())}
+            onChange={(event) =>
+              setChallengeCode(event.target.value.toUpperCase())
+            }
             style={{
               width: "240px",
+              maxWidth: "100%",
               textTransform: "uppercase",
               letterSpacing: "1px",
               fontWeight: 600,
@@ -206,196 +227,157 @@ export function DevicesTab() {
             type="submit"
             disabled={approveMutation.isPending || !challengeCode.trim()}
           >
-            {approveMutation.isPending ? "Approving…" : "Connect device"}
+            {approveMutation.isPending ? "Connecting…" : "Connect CLI"}
           </Button>
         </form>
-      </div>
+      </section>
 
-      {/* Devices List Table */}
-      <div className="card" style={{ padding: "1.25rem 1.5rem" }}>
+      {activeCount > 0 && (
+        <section
+          className="card"
+          style={{ marginBottom: "1.5rem", padding: "1.5rem" }}
+        >
+          <h2 className="card-title">Run locally. Review here.</h2>
+          <p className="secondary-text">
+            Use your terminal to collect evidence. Add <code>--sync</code> for
+            capture and infrastructure assessments; monitoring sends
+            observations while it runs.
+          </p>
+          <pre
+            className="device-login-command"
+            style={{ marginBottom: "0.75rem" }}
+          >
+            <code>
+              {
+                "mailent analyze <capture.pcap> --sync\nmailent scan <domain> --sync\nmailent monitor --interface <iface>"
+              }
+            </code>
+          </pre>
+          <p className="secondary-text" style={{ marginBottom: 0 }}>
+            Review results in assessment history, compare changes, investigate
+            findings, and track fixes in this workspace.
+          </p>
+        </section>
+      )}
+
+      <section className="card" style={{ padding: "1.5rem" }}>
         <div
           style={{
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
+            flexWrap: "wrap",
+            gap: "0.75rem",
             marginBottom: "1rem",
           }}
         >
-          <h3 className="card-title" style={{ margin: 0 }}>
-            Connected devices
-          </h3>
-          <span className="secondary-text" style={{ fontSize: "0.875rem" }}>
-            {devices.length} registered{" "}
-            {devices.length === 1 ? "device" : "devices"}
-          </span>
+          <h2 className="card-title" style={{ margin: 0 }}>
+            Your installations
+          </h2>
+          <span className="secondary-text">{activeCount} connected</span>
         </div>
-
         {devicesQuery.isLoading ? (
-          <LoadingState label="Loading registered devices…" />
+          <LoadingState label="Loading installations…" />
         ) : devicesQuery.isError ? (
           <ErrorState
-            title="Could not load devices"
-            description={
-              devicesQuery.error?.message ||
-              "Failed to fetch registered devices."
-            }
+            title="Could not load installations"
+            description={devicesQuery.error.message}
             onRetry={() => void devicesQuery.refetch()}
           />
-        ) : devices.length === 0 ? (
+        ) : installations.length === 0 ? (
           <EmptyState
             icon="devices"
-            title="No devices registered"
-            description="Install the Mailent CLI locally and run 'mailent login' to register your machine."
+            title="Connect your first installation"
+            description="Install Mailent CLI and sign in above. Your machine will appear here once connected."
           />
         ) : (
-          <div className="table-container device-table-scroll" role="region" aria-label="Connected devices" tabIndex={0}>
+          <div
+            className="table-container device-table-scroll"
+            role="region"
+            aria-label="Mailent installations"
+            tabIndex={0}
+          >
             <table className="data-table devices-table">
               <thead>
                 <tr>
-                  <th>Device Name</th>
-                  <th>System</th>
-                  <th>Activity</th>
-                  <th>Last Seen</th>
-                  <th>Status</th>
-                  <th style={{ textAlign: "right" }}>Actions</th>
+                  <th>Installation</th>
+                  <th>Software</th>
+                  <th>Readiness</th>
+                  <th>Last assessment sync</th>
+                  <th style={{ textAlign: "right" }}>Access</th>
                 </tr>
               </thead>
               <tbody>
-                {devices.map((device) => {
-                  const isRevoked = !!device.revoked_at;
-                  return (
-                    <tr key={device.id}>
-                      <td>
-                        <strong>{device.name}</strong>
-                        <div
-                          className="mono secondary-text"
-                          style={{ fontSize: "0.875rem" }}
-                        >
-                          ID: {device.id.slice(0, 8)}…
-                        </div>
-                      </td>
-                      <td>
-                        <span className="mono">{device.hostname}</span>
-                        <div
-                          className="secondary-text"
-                          style={{ fontSize: "0.875rem" }}
-                        >
-                          {device.platform} ({device.architecture})
-                        </div>
-                      </td>
-                      <td>
-                        {isRevoked ? <span className="secondary-text">Access removed</span> : device.agent_enabled || device.agent_status ? (
-                          <div>
-                            <div
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: "0.4rem",
-                                flexWrap: "wrap",
-                              }}
-                            >
-                              <span
-                                className={`badge ${
-                                  device.agent_status === "busy"
-                                    ? "high"
-                                    : device.agent_status === "idle" ||
-                                        device.agent_status === "online"
-                                      ? "fresh"
-                                      : ""
-                                }`}
-                                style={{
-                                  fontSize: "0.875rem",
-                                  padding: "0.15rem 0.4rem",
-                                }}
-                              >
-                                {Date.now() - new Date(device.last_seen_at).getTime() > 300000 ? "Offline" : device.agent_status === "busy" ? "Checking" : "Ready"}
-                              </span>
-                              {device.version && (
-                                <span
-                                  className="secondary-text mono device-version"
-                                  style={{ fontSize: "0.875rem" }}
-                                >
-                                  v{device.version}
-                                </span>
-                              )}
-                            </div>
-                            <div
-                              className="secondary-text"
-                              style={{
-                                fontSize: "0.875rem",
-                                marginTop: "0.2rem",
-                              }}
-                            >
-                              {device.completed_jobs_count ?? 0} jobs completed
-                              {device.current_job_id && (
-                                <span
-                                  className="mono"
-                                  style={{ marginLeft: "0.3rem" }}
-                                >
-                                  (active: {device.current_job_id.slice(0, 8)}…)
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        ) : (
-                          <div>
-                            <span
-                              className="secondary-text"
-                              style={{ fontSize: "0.875rem" }}
-                            >
-                              CLI instance
-                            </span>
-                            <div
-                              className="secondary-text"
-                              style={{ fontSize: "0.875rem" }}
-                            >
-                              Run &lsquo;mailent agent install&rsquo; to enable
-                            </div>
-                          </div>
-                        )}
-                      </td>
-                      <td
-                        className="secondary-text"
-                        style={{ fontSize: "0.875rem" }}
-                      >
-                        <time dateTime={device.last_seen_at}>
-                          <span>{new Date(device.last_seen_at).toLocaleDateString()}</span>
-                          <span>{new Date(device.last_seen_at).toLocaleTimeString()}</span>
+                {installations.map((installation) => (
+                  <tr key={installation.id}>
+                    <td>
+                      <strong>
+                        {installation.hostname || installation.name}
+                      </strong>
+                      <div className="secondary-text">
+                        {installation.platform} · {installation.architecture}
+                      </div>
+                    </td>
+                    <td>
+                      <div>
+                        CLI{" "}
+                        <span className="mono device-version">
+                          {installation.version || "Not reported"}
+                        </span>
+                      </div>
+                      <div>
+                        Zeek{" "}
+                        <span className="mono device-version">
+                          {installation.zeek_version || "Not reported"}
+                        </span>
+                      </div>
+                    </td>
+                    <td>
+                      <InstallationReadiness installation={installation} />
+                      {installation.remote_online && <span className="badge fresh">Online for remote scans</span>}
+                    </td>
+                    <td>
+                      {installation.last_sync_at ? (
+                        <time dateTime={installation.last_sync_at}>
+                          <span>
+                            {new Date(
+                              installation.last_sync_at,
+                            ).toLocaleDateString()}
+                          </span>
+                          <span>
+                            {new Date(
+                              installation.last_sync_at,
+                            ).toLocaleTimeString()}
+                          </span>
                         </time>
-                      </td>
-                      <td>
-                        {isRevoked ? (
-                          <span className="badge critical">Revoked</span>
-                        ) : (
-                          <span className="badge fresh">Active</span>
-                        )}
-                      </td>
-                      <td style={{ textAlign: "right" }}>
-                        {!isRevoked && (
+                      ) : (
+                        <span className="secondary-text">No sync recorded</span>
+                      )}
+                    </td>
+                    <td style={{ textAlign: "right" }}>
+                      {!installation.revoked_at &&
+                        installation.readiness !== "revoked" && (
                           <Button
                             variant="secondary"
-                            onClick={() => handleRevoke(device.id, device.name)}
-                            disabled={revokingId === device.id}
-                            title="Revoke device access"
+                            onClick={() => handleRevoke(installation)}
+                            disabled={revokingId === installation.id}
+                            title={`Revoke access for ${installation.hostname}`}
                             style={{ color: "var(--status-danger-ink)" }}
                           >
                             <Icon name="block" size={15} />
-                            <span>
-                              {revokingId === device.id
-                                ? "Revoking…"
-                                : "Revoke"}
-                            </span>
+                            {revokingId === installation.id
+                              ? "Revoking…"
+                              : "Revoke access"}
                           </Button>
                         )}
-                      </td>
-                    </tr>
-                  );
-                })}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }

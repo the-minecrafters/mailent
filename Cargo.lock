@@ -1075,7 +1075,7 @@ checksum = "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f"
 
 [[package]]
 name = "mailent"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "clap",
  "mailent-correlation",
@@ -1101,7 +1101,7 @@ dependencies = [
 
 [[package]]
 name = "mailent-baseline"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "mailent-domain",
  "serde",
@@ -1113,7 +1113,7 @@ dependencies = [
 
 [[package]]
 name = "mailent-core"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "async-trait",
  "axum",
@@ -1150,7 +1150,7 @@ dependencies = [
 
 [[package]]
 name = "mailent-correlation"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "mailent-domain",
  "serde_json",
@@ -1163,7 +1163,7 @@ dependencies = [
 
 [[package]]
 name = "mailent-decision"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "async-trait",
  "mailent-domain",
@@ -1179,7 +1179,7 @@ dependencies = [
 
 [[package]]
 name = "mailent-domain"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -1191,7 +1191,7 @@ dependencies = [
 
 [[package]]
 name = "mailent-events"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "async-trait",
  "mailent-domain",
@@ -1208,7 +1208,7 @@ dependencies = [
 
 [[package]]
 name = "mailent-integrations"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "async-trait",
  "mailent-domain",
@@ -1225,7 +1225,7 @@ dependencies = [
 
 [[package]]
 name = "mailent-policy"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "mailent-domain",
  "serde",
@@ -1240,7 +1240,7 @@ dependencies = [
 
 [[package]]
 name = "mailent-probe"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "clap",
  "ipnet",
@@ -1262,7 +1262,7 @@ dependencies = [
 
 [[package]]
 name = "mailent-reporting"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "mailent-domain",
  "serde",
@@ -1275,7 +1275,7 @@ dependencies = [
 
 [[package]]
 name = "mailent-scanner"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "async-trait",
  "idna",
@@ -1298,7 +1298,7 @@ dependencies = [
 
 [[package]]
 name = "mailent-sensor"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "mailent-domain",
  "mailent-events",
@@ -1318,7 +1318,7 @@ dependencies = [
 
 [[package]]
 name = "mailent-storage"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "async-trait",
  "mailent-domain",

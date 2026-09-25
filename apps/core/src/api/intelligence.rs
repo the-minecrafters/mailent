@@ -11,7 +11,7 @@ use mailent_domain::{
 use mailent_storage::StorageError;
 use serde::{Deserialize, Serialize};
 
-use crate::{scheduler::refresh_domain_intelligence, state::AppState};
+use crate::{intelligence_refresh::refresh_domain_intelligence, state::AppState};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DomainIntelligenceResponse {

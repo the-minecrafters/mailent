@@ -26,6 +26,14 @@ pub async fn process_observation(
     state: &AppState,
     observation: NormalizedObservation,
 ) -> Result<ProcessedObservationResult, StorageError> {
+    process_observation_scoped(state, observation, None).await
+}
+
+pub async fn process_observation_scoped(
+    state: &AppState,
+    observation: NormalizedObservation,
+    organization_id: Option<Uuid>,
+) -> Result<ProcessedObservationResult, StorageError> {
     let session = EmailSession::from(&observation);
 
     // 1. Analytical persistence: Store observation and session
@@ -34,7 +42,10 @@ pub async fn process_observation(
 
     // 2. Policy evaluation & finding correlation
     let candidates = evaluate(&session, &state.policy_pack);
-    let findings = FindingCorrelator::correlate_session(&session, &candidates);
+    let mut findings = FindingCorrelator::correlate_session(&session, &candidates);
+    for finding in &mut findings {
+        finding.organization_id = organization_id;
+    }
 
     // 3. Asset discovery & correlation
     let target_ip = session.flow.dst_ip.clone();
@@ -65,10 +76,17 @@ pub async fn process_observation(
     }
 
     // Look up existing asset by IP or hostname
-    let mut existing_asset = state.assets.find_by_address_or_identity(&target_ip).await?;
+    let mut existing_asset = state
+        .assets
+        .find_by_address_or_identity_scoped(&target_ip, organization_id)
+        .await?;
     if existing_asset.is_none() {
         for h in &hostname_candidates {
-            if let Some(a) = state.assets.find_by_address_or_identity(h).await? {
+            if let Some(a) = state
+                .assets
+                .find_by_address_or_identity_scoped(h, organization_id)
+                .await?
+            {
                 existing_asset = Some(a);
                 break;
             }
@@ -96,7 +114,7 @@ pub async fn process_observation(
                     session_id: Some(session.session_id),
                     assessment_id: None,
                     domain: None,
-                    organization_id: None,
+                    organization_id,
                 });
                 a.tls_versions.push(tls_ver.clone());
             }
@@ -117,7 +135,7 @@ pub async fn process_observation(
                     session_id: Some(session.session_id),
                     assessment_id: None,
                     domain: None,
-                    organization_id: None,
+                    organization_id,
                 });
                 a.cipher_suites.push(cs.name.clone());
             }
@@ -147,7 +165,7 @@ pub async fn process_observation(
                         session_id: Some(session.session_id),
                         assessment_id: None,
                         domain: None,
-                        organization_id: None,
+                        organization_id,
                     });
                 }
             }
@@ -170,7 +188,7 @@ pub async fn process_observation(
                     session_id: Some(session.session_id),
                     assessment_id: None,
                     domain: None,
-                    organization_id: None,
+                    organization_id,
                 });
                 a.certificate_fingerprints.push(fp.clone());
 
@@ -187,7 +205,7 @@ pub async fn process_observation(
                         session_id: Some(session.session_id),
                         assessment_id: None,
                         domain: None,
-                        organization_id: None,
+                        organization_id,
                     });
                 }
             }
@@ -210,7 +228,7 @@ pub async fn process_observation(
                     session_id: Some(session.session_id),
                     assessment_id: None,
                     domain: None,
-                    organization_id: None,
+                    organization_id,
                 });
                 a.endpoints.push(AssetEndpoint {
                     protocol,
@@ -298,7 +316,7 @@ pub async fn process_observation(
                 active_findings_count: findings.len(),
                 first_seen: now,
                 last_seen: now,
-                organization_id: None,
+                organization_id,
             }
         }
     };
@@ -496,6 +514,12 @@ pub async fn process_observation(
         .list_for_asset(target_ip.as_str(), 100)
         .await
         .unwrap_or_default();
+    if organization_id.is_some() {
+        historical.retain(|s| {
+            s.sensor_id
+                .starts_with(&format!("{}:", organization_id.unwrap()))
+        });
+    }
     if !historical
         .iter()
         .any(|s| s.session_id == session.session_id)
@@ -537,6 +561,7 @@ pub async fn process_observation(
                     "dane_status": p.result.as_ref().map(|r| r.dane_status),
                     "mta_sts_result": p.result.as_ref().and_then(|r| r.mta_sts_result.as_ref()),
                 })),
+                "anomalies": anomalies,
                 "anomalies_count": anomalies.len(),
                 "drifts_count": drift_events.len(),
                 "dane_status": dane_status,
@@ -631,36 +656,6 @@ pub async fn process_observation(
         };
         if let Err(e) = crate::training::capture_training(state, &capture_ctx).await {
             tracing::warn!(%asset_id, "training capture skipped: {e}");
-        }
-        let trigger = if drift_events
-            .iter()
-            .any(|d| d.kind == mailent_domain::DriftKind::CertificateChanged)
-        {
-            Some(mailent_domain::ProbeTrigger::CertificateChange)
-        } else if anomalies
-            .iter()
-            .any(|a| a.signal == "StarttlsSuccessRateDrop")
-        {
-            Some(mailent_domain::ProbeTrigger::StartTlsRegression)
-        } else if anomalies
-            .iter()
-            .any(|a| a.signal == "InternalExternalInconsistency")
-        {
-            Some(mailent_domain::ProbeTrigger::InternalExternalInconsistency)
-        } else {
-            None
-        };
-        if let Some(trigger) = trigger {
-            let req = mailent_domain::ProbeRequest {
-                port: Some(session.flow.dst_port),
-                protocol: Some(session.protocol),
-                trigger: Some(trigger),
-                investigation_id: Some(inv.id),
-            };
-            if let Err((status, reason)) = crate::probes::schedule_probe(state, asset_id, req).await
-            {
-                tracing::info!(%asset_id, %status, %reason, "Automatic verification was not scheduled");
-            }
         }
     }
 

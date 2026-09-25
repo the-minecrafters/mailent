@@ -7,8 +7,8 @@ import {
   type RemediationGuidance,
   type RemediationRecord,
   startRemediation,
-  verifyRemediation,
 } from "./api";
+import { CliWorkflowDialog } from "./components/CliWorkflow";
 import { ProbeEvidence } from "./ProbePanel";
 
 export function RemediationWorkflow({
@@ -28,8 +28,7 @@ export function RemediationWorkflow({
   const [selectedSession, setSelectedSession] = useState(
     sessionId ?? initial?.before.session_id ?? "",
   );
-  // Retain the idempotency key through network errors/retries; a new completed attempt gets a new key.
-  const [requestId, setRequestId] = useState(() => crypto.randomUUID());
+  const [verifyOpen, setVerifyOpen] = useState(false);
   const base = created ?? initial;
   const query = useQuery({
     queryKey: ["remediation", base?.id],
@@ -41,7 +40,7 @@ export function RemediationWorkflow({
   });
   const record = query.data ?? base;
   const mutation = useMutation({
-    mutationFn: async (action: "start" | "apply" | "verify") => {
+    mutationFn: async (action: "start" | "apply") => {
       if (action === "start")
         return startRemediation(
           assetId,
@@ -49,13 +48,12 @@ export function RemediationWorkflow({
           selectedSession || undefined,
         );
       if (!record) throw new Error("Start a fix first");
-      if (action === "apply") return applyRemediation(record.id, note);
-      return verifyRemediation(record.id, requestId);
+      return applyRemediation(record.id, note);
     },
-    onSuccess: (value, action) => {
+    onSuccess: (value) => {
       setCreated(value);
       client.setQueryData(["remediation", value.id], value);
-      if (action === "verify") setRequestId(crypto.randomUUID());
+
       void client.invalidateQueries({ queryKey: ["asset-posture", assetId] });
       void client.invalidateQueries({ queryKey: ["session-posture"] });
     },
@@ -220,9 +218,9 @@ export function RemediationWorkflow({
                     type="button"
                     className="btn-primary"
                     disabled={mutation.isPending}
-                    onClick={() => mutation.mutate("verify")}
+                    onClick={() => setVerifyOpen(true)}
                   >
-                    Test fix now
+                    Check with CLI
                   </button>
                 )}
               </div>
@@ -340,6 +338,7 @@ export function RemediationWorkflow({
           {query.error.message}
         </p>
       )}
+    <CliWorkflowDialog workflow="scan" isOpen={verifyOpen} onClose={() => setVerifyOpen(false)} />
     </section>
   );
 }

@@ -70,7 +70,7 @@ pub async fn create_challenge_handler(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let verification_url = format!("/settings?tab=devices&code={}", code);
+    let verification_url = format!("/workspace/installations?code={}", code);
     let expires_at_str = expires_at
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_default();
@@ -152,7 +152,7 @@ pub async fn approve_challenge_handler(
         created_at: now,
         last_seen_at: now,
         revoked_at: None,
-        capabilities: vec!["scan".into(), "analyze".into()],
+        capabilities: vec![],
         version: None,
         agent_enabled: false,
         agent_status: None,
@@ -235,7 +235,130 @@ pub async fn list_devices_handler(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    Ok(Json(devices))
+    let syncs = state
+        .assessments
+        .latest_installation_syncs(org_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let installations: Vec<_> = devices
+        .iter()
+        .map(|device| {
+            let zeek_version = device
+                .capabilities
+                .iter()
+                .find_map(|c| c.strip_prefix("zeek:"));
+            let readiness = if !device.is_active() {
+                "revoked"
+            } else if zeek_version.is_some()
+                && ["analyze", "scan", "monitor"]
+                    .iter()
+                    .all(|c| device.capabilities.iter().any(|v| v == c))
+            {
+                "ready"
+            } else if device
+                .capabilities
+                .iter()
+                .any(|c| c == "installation_reported")
+            {
+                "setup_required"
+            } else {
+                "unknown"
+            };
+            let mut value = serde_json::to_value(device).unwrap_or_default();
+            value["zeek_version"] = serde_json::json!(zeek_version);
+            value["readiness"] = serde_json::json!(readiness);
+            value["remote_online"] =
+                serde_json::json!(installation_online(device, OffsetDateTime::now_utc()));
+            value["last_sync_at"] = serde_json::json!(syncs.get(&device.id));
+            value
+        })
+        .collect();
+    Ok(Json(installations))
+}
+
+/// A login/status request is not proof that a worker is accepting remote work.
+pub fn installation_online(device: &mailent_domain::Device, now: OffsetDateTime) -> bool {
+    device.is_active()
+        && device.agent_enabled
+        && matches!(
+            device.agent_status.as_deref(),
+            Some("idle" | "busy" | "online")
+        )
+        && device
+            .capabilities
+            .iter()
+            .any(|v| v == "infrastructure_scan")
+        && device
+            .capabilities
+            .iter()
+            .filter_map(|v| v.strip_prefix("remote_heartbeat:"))
+            .filter_map(|v| {
+                OffsetDateTime::parse(v, &time::format_description::well_known::Rfc3339).ok()
+            })
+            .any(|at| now >= at && now - at <= time::Duration::seconds(45))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InstallationStatusRequest {
+    pub version: String,
+    pub zeek_version: Option<String>,
+}
+
+/// Records local CLI setup; it never opts an installation into remote work.
+pub async fn report_installation_handler(
+    State(state): State<AppState>,
+    Extension(ctx): Extension<ExecutionContext>,
+    Json(req): Json<InstallationStatusRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let Actor::Device { device_id, .. } = ctx.actor else {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "Connect Mailent CLI before reporting installation status.".into(),
+        ));
+    };
+    if req.version.is_empty()
+        || req.version.len() > 64
+        || req.zeek_version.as_ref().is_some_and(|v| v.len() > 64)
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Invalid installation version.".into(),
+        ));
+    }
+    let mut capabilities = vec!["installation_reported".to_string()];
+    if let Some(version) = req.zeek_version.filter(|v| {
+        v.split('.')
+            .next()
+            .and_then(|n| n.parse::<u32>().ok())
+            .is_some_and(|major| major >= 8)
+    }) {
+        capabilities.extend(["analyze", "scan", "monitor"].map(str::to_string));
+        capabilities.push(format!("zeek:{version}"));
+    }
+    if let Some(existing) = state
+        .devices
+        .find_device_by_id(device_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+    {
+        capabilities.extend(
+            existing
+                .capabilities
+                .into_iter()
+                .filter(|v| v == "infrastructure_scan" || v.starts_with("remote_heartbeat:")),
+        );
+    }
+    state
+        .devices
+        .report_installation(
+            device_id,
+            req.version,
+            capabilities,
+            OffsetDateTime::now_utc(),
+        )
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(serde_json::json!({"status": "ok"})))
 }
 
 pub async fn revoke_device_handler(
