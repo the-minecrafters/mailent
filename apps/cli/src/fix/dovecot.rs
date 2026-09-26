@@ -78,6 +78,29 @@ impl DovecotAdapter {
 
         (output, changes, modified_keys)
     }
+
+    pub fn sync_to_container_if_running(config_path: &Path) {
+        let path_str = config_path.to_string_lossy();
+        if path_str.contains(".tmp") || path_str.contains("temp") || path_str.contains("/tmp/tmp") {
+            return;
+        }
+        for engine in &["podman", "docker"] {
+            if let Ok(output) = Command::new(engine).args(&["ps", "--format", "{{.Names}}"]).output() {
+                let names = String::from_utf8_lossy(&output.stdout);
+                for target_container in &["mail-server", "dovecot", "mail"] {
+                    if names.lines().any(|l| l.trim() == *target_container) {
+                        let _ = Command::new(engine)
+                            .args(&[
+                                "cp",
+                                &config_path.to_string_lossy(),
+                                &format!("{target_container}:/etc/dovecot/dovecot.conf"),
+                            ])
+                            .output();
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl Default for DovecotAdapter {
@@ -229,6 +252,8 @@ impl ServiceAdapter for DovecotAdapter {
             return Err(e);
         }
 
+        Self::sync_to_container_if_running(&plan.config_path);
+
         Ok(AppliedDiff {
             service_kind: ServiceKind::Dovecot,
             config_path: plan.config_path.clone(),
@@ -278,20 +303,38 @@ impl ServiceAdapter for DovecotAdapter {
     }
 
     fn reload_service(&self) -> Result<(), String> {
-        let output = Command::new("doveadm").arg("reload").output().map_err(|e| {
-            format!("Failed to execute `doveadm reload`: {e}")
-        })?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("`doveadm reload` failed: {stderr}"));
+        // 1. Try host doveadm
+        if let Ok(output) = Command::new("doveadm").arg("reload").output() {
+            if output.status.success() {
+                return Ok(());
+            }
         }
 
-        Ok(())
+        // 2. Try container engines
+        for engine in &["podman", "docker"] {
+            if let Ok(output) = Command::new(engine).args(&["ps", "--format", "{{.Names}}"]).output() {
+                let names = String::from_utf8_lossy(&output.stdout);
+                for target_container in &["mail-server", "dovecot", "mail"] {
+                    if names.lines().any(|l| l.trim() == *target_container) {
+                        let rel = Command::new(engine)
+                            .args(&["exec", target_container, "doveadm", "reload"])
+                            .output();
+                        if let Ok(rel_out) = rel {
+                            if rel_out.status.success() {
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Err("`doveadm reload` failed (neither host dovecot nor container reloaded successfully)".to_string())
     }
 
     fn rollback(&self, backup_path: &Path, config_path: &Path) -> Result<(), String> {
         restore_backup(backup_path, config_path)?;
+        Self::sync_to_container_if_running(config_path);
         let _ = self.reload_service();
         Ok(())
     }

@@ -47,4 +47,8 @@ notes/
 agent_notes/
 *.agent.md
 scratch/
+*-report.html
+*-report.json
+*-report.pdf
+.freebuff/
 

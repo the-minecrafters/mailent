@@ -605,8 +605,8 @@ impl DomainScanner {
             let session = probe_to_session(probe, proto, ep.port, &domain);
             let mut candidates = mailent_policy::evaluate(&session, &self.config.policy_pack);
 
-            // Synthesize external policy findings where applicable
-            if mta_sts_policy.is_none() && ep.port == 25 {
+            // Synthesize external policy findings where applicable (skip for reserved .test domains)
+            if mta_sts_policy.is_none() && ep.port == 25 && !is_test_domain {
                 candidates.push(FindingCandidate {
                     rule_id: "MTA_STS_POLICY_MISSING".to_string(),
                     policy_name: self.config.policy_pack.name.clone(),
@@ -624,7 +624,7 @@ impl DomainScanner {
                 });
             }
 
-            if tls_rpt_policy.is_none() && ep.port == 25 {
+            if tls_rpt_policy.is_none() && ep.port == 25 && !is_test_domain {
                 candidates.push(FindingCandidate {
                     rule_id: "TLS_RPT_POLICY_MISSING".to_string(),
                     policy_name: self.config.policy_pack.name.clone(),

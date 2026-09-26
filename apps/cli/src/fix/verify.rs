@@ -16,17 +16,41 @@ fn classify_challenge(
     response: Result<ProbeResult, SmtpProbeError>,
     expected_ip: Option<&str>,
 ) -> TlsChallenge {
-    let evidence = match response {
-        Ok(evidence) => evidence,
-        Err(SmtpProbeError::Partial { evidence, .. }) => *evidence,
+    let (evidence, root_err) = match response {
+        Ok(evidence) => (evidence, None),
+        Err(SmtpProbeError::Partial { evidence, source }) => (*evidence, Some(source.to_string())),
         Err(error) => {
+            let err_str = error.to_string().to_ascii_lowercase();
+            let is_refused = err_str.contains("protocol version")
+                || err_str.contains("alert number 70")
+                || err_str.contains("alert number 40")
+                || err_str.contains("handshake failure")
+                || err_str.contains("handshakefailed")
+                || err_str.contains("unsupported protocol")
+                || err_str.contains("tls alert")
+                || err_str.contains("connection reset")
+                || err_str.contains("broken pipe");
+
+            let outcome = if is_refused {
+                ChallengeOutcome::Rejected
+            } else {
+                ChallengeOutcome::Unavailable
+            };
             return TlsChallenge {
                 version,
-                outcome: ChallengeOutcome::Unavailable,
+                outcome,
                 detail: error.to_string(),
             };
         }
     };
+
+    let err_str = evidence
+        .error
+        .as_deref()
+        .or(root_err.as_deref())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
     let (outcome, detail) =
         if evidence.resolved_ip.as_deref() != expected_ip || expected_ip.is_none() {
             (
@@ -38,21 +62,32 @@ fn classify_challenge(
                 ChallengeOutcome::Accepted,
                 "Constrained legacy TLS handshake established".into(),
             )
-        } else if evidence
-            .error
-            .as_ref()
-            .is_some_and(|e| e.contains("alert protocol version") || e.contains("alert number 70"))
+        } else if err_str.contains("alert protocol version")
+            || err_str.contains("alert number 70")
+            || err_str.contains("alert number 40")
+            || err_str.contains("handshake failure")
+            || err_str.contains("handshakefailed")
+            || err_str.contains("protocol version")
+            || err_str.contains("tls alert")
+            || err_str.contains("connection reset")
+            || err_str.contains("broken pipe")
         {
             (
                 ChallengeOutcome::Rejected,
-                evidence.error.unwrap_or_default(),
+                if !err_str.is_empty() {
+                    err_str
+                } else {
+                    "Server refused legacy handshake".into()
+                },
             )
         } else {
             (
                 ChallengeOutcome::Unavailable,
-                evidence
-                    .error
-                    .unwrap_or_else(|| "No explicit protocol refusal captured".into()),
+                if !err_str.is_empty() {
+                    err_str
+                } else {
+                    "No explicit protocol refusal captured".into()
+                },
             )
         };
     TlsChallenge {
@@ -83,7 +118,7 @@ pub async fn run_active_verification(
         ..Default::default()
     };
 
-    println!("[5/5] Running active verification probe against {host}:{port}...");
+    println!("  [5/5] 󱐋 Running active verification challenge probes against {host}:{port}…");
 
     // Primary probe
     let response = match plan.protocol {
@@ -101,10 +136,16 @@ pub async fn run_active_verification(
 
     let (outcome, mut result) = match response {
         Ok(res) => {
-            let outcome = if res.error.is_some() {
-                ProbeOutcome::HandshakeError
-            } else {
+            let is_cert_only_error = res.error.as_ref().map_or(false, |e| {
+                e.contains("certificate")
+                    || e.contains("unknown issuer")
+                    || e.contains("self-signed")
+                    || e.contains("expired")
+            });
+            let outcome = if res.error.is_none() || (is_cert_only_error && res.tls_version.is_some()) {
                 ProbeOutcome::Success
+            } else {
+                ProbeOutcome::HandshakeError
             };
             (outcome, res)
         }
@@ -131,8 +172,10 @@ pub async fn run_active_verification(
         _ => RemediationCondition::CertificateValid,
     };
 
-    // If LegacyTlsDisabled and primary succeeded, run explicit TLS 1.0 and 1.1 challenges
-    if condition == RemediationCondition::LegacyTlsDisabled && outcome == ProbeOutcome::Success {
+    // If LegacyTlsDisabled and primary succeeded (or TLS negotiated), run explicit TLS 1.0 and 1.1 challenges
+    if condition == RemediationCondition::LegacyTlsDisabled
+        && (outcome == ProbeOutcome::Success || result.tls_version.is_some())
+    {
         for version in [TlsVersion::Tls10, TlsVersion::Tls11] {
             let challenge_limits = ProbeLimits {
                 forced_tls_version: Some(version.clone()),
@@ -168,11 +211,11 @@ pub async fn run_active_verification(
             );
 
             let status_desc = match challenge.outcome {
-                ChallengeOutcome::Rejected => "REJECTED (server refused protocol)",
-                ChallengeOutcome::Accepted => "ACCEPTED (server allowed legacy version)",
-                ChallengeOutcome::Unavailable => "INCONCLUSIVE",
+                ChallengeOutcome::Rejected => "\x1b[32m󰄬 REJECTED (server refused legacy protocol)\x1b[0m",
+                ChallengeOutcome::Accepted => "\x1b[31m󰅖 ACCEPTED (server allowed legacy version)\x1b[0m",
+                ChallengeOutcome::Unavailable => "\x1b[33m󰀦 INCONCLUSIVE\x1b[0m",
             };
-            println!("      • {version:?} challenge: {status_desc}");
+            println!("        • {version:?} challenge: {status_desc}");
 
             result.tls_challenges.push(challenge);
         }

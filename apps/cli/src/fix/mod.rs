@@ -153,7 +153,7 @@ pub async fn run_fix(
     // Interactive confirmation unless --yes
     if !yes {
         print_remediation_plan(&plan);
-        print!("\nApply this remediation to {}? [y/N]: ", plan.config_path.display());
+        print!("Apply this remediation to {}? [y/N]: ", plan.config_path.display());
         io::stdout().flush().map_err(|e| e.to_string())?;
 
         let mut input = String::new();
@@ -163,34 +163,47 @@ pub async fn run_fix(
             println!("Remediation cancelled by user.");
             return Ok(());
         }
+    } else {
+        println!("\n── 󰒓 Mailent Remediation Plan ──");
+        println!("  󰀦 Finding:   {} ({})", plan.finding_title, plan.rule_id);
+        println!("  󰒋 Service:   {} ({})", plan.service_kind, plan.config_path.display());
+        println!("  󰒓 Changes:");
+        for change in &plan.changes {
+            if let Some(ref old) = change.old_value {
+                println!("    ~ {}: \"{}\" -> \"{}\"", change.parameter, old, change.new_value);
+            } else {
+                println!("    + {} = \"{}\"", change.parameter, change.new_value);
+            }
+        }
+        println!();
     }
 
-    println!("\nApplying remediation...");
-    println!("[1/5] Backing up configuration...");
+    println!("Applying remediation...");
+    println!("  [1/5] 󰈙 Backing up configuration…");
     let diff = adapter.apply(&plan)?;
-    println!("      \x1b[32m✔\x1b[0m Created backup at {}", diff.backup_path.display());
+    println!("        󰄬 Created backup at {}", diff.backup_path.display());
 
-    println!("[2/5] Applying structured changes...");
+    println!("  [2/5] 󰒓 Applying structured changes…");
     for change in &plan.changes {
-        println!("      • {} = {}", change.parameter, change.new_value);
+        println!("        • {} = {}", change.parameter, change.new_value);
     }
-    println!("      \x1b[32m✔\x1b[0m Updated configuration atomically");
+    println!("        󰄬 Updated configuration atomically");
 
-    println!("[3/5] Validating configuration syntax ({})...", plan.validation_cmd);
+    println!("  [3/5] 󰞀 Validating configuration syntax ({})...", plan.validation_cmd);
     if let Err(val_err) = adapter.validate_config(&plan.config_path) {
-        println!("      \x1b[31m✘\x1b[0m Validation failed: {val_err}");
-        println!("      [!] Automatically rolling back to backup...");
+        println!("        󰅖 Validation failed: {val_err}");
+        println!("        󰀦 Automatically rolling back to backup…");
         let _ = adapter.rollback(&diff.backup_path, &plan.config_path);
-        println!("      \x1b[32m✔\x1b[0m Reverted configuration to initial state.");
+        println!("        󰄬 Reverted configuration to initial state.");
         return Err(format!("Configuration validation check failed: {val_err}"));
     }
-    println!("      \x1b[32m✔\x1b[0m Syntax validation passed");
+    println!("        󰄬 Syntax validation passed");
 
-    println!("[4/5] Reloading service ({})...", plan.reload_cmd);
+    println!("  [4/5] 󰑓 Reloading service ({})...", plan.reload_cmd);
     if let Err(reload_err) = adapter.reload_service() {
-        println!("      \x1b[33m[!] Service reload returned: {reload_err}\x1b[0m");
+        println!("        󰀦 Service reload returned: {reload_err}");
     } else {
-        println!("      \x1b[32m✔\x1b[0m Service reloaded successfully");
+        println!("        󰄬 Service reloaded successfully");
     }
 
     // Active verification
@@ -199,24 +212,17 @@ pub async fn run_fix(
 
     match outcome {
         RemediationState::VerifiedFixed => {
-            println!("\n\x1b[1;32m==================================================");
-            println!("RESULT: FIX VERIFIED");
-            println!("==================================================\x1b[0m");
-            println!("{explanation}\n");
+            println!("\n── 󰄬 Fix Verified ──");
+            println!("  {explanation}\n");
         }
         RemediationState::StillPresent => {
-            println!("\n\x1b[1;31m==================================================");
-            println!("RESULT: ISSUE STILL DETECTED");
-            println!("==================================================\x1b[0m");
-            println!("{explanation}");
-            println!("\nThe issue was still observed during active challenge probes.");
-            println!("Run `mailent fix --rollback {}` if you wish to restore the previous configuration.", diff.backup_path.display());
+            println!("\n── 󰅖 Issue Still Detected ──");
+            println!("  {explanation}");
+            println!("\n  Run `mailent fix --rollback {}` to restore previous configuration.\n", diff.backup_path.display());
         }
         _ => {
-            println!("\n\x1b[1;33m==================================================");
-            println!("RESULT: VERIFICATION INCONCLUSIVE");
-            println!("==================================================\x1b[0m");
-            println!("{explanation}");
+            println!("\n── 󰀦 Verification Inconclusive ──");
+            println!("  {explanation}\n");
         }
     }
 
@@ -281,44 +287,43 @@ fn resolve_finding(target: &str) -> (String, Option<Finding>) {
 }
 
 fn print_remediation_plan(plan: &RemediationPlan) {
-    println!("Mailent Remediation Plan");
-    println!("========================");
-    println!("Finding:         {} ({})", plan.finding_title, plan.rule_id);
-    println!("Severity:        {}", plan.severity);
-    println!("Target Service:  {} ({})", plan.service_kind, plan.config_path.display());
-    println!("Target Endpoint: {}", plan.target_endpoint);
+    println!("\n── 󰒓 Mailent Remediation Plan ──");
+    println!("  󰀦 Finding:   {} ({})", plan.finding_title, plan.rule_id);
+    println!("  󰞀 Severity:  {}", plan.severity);
+    println!("  󰒋 Service:   {} ({})", plan.service_kind, plan.config_path.display());
+    println!("  󰒍 Endpoint:  {}", plan.target_endpoint);
     println!();
-    println!("Planned Changes ({}):", plan.config_path.display());
+    println!("  󰒓 Planned Changes ({}):", plan.config_path.display());
     for change in &plan.changes {
         if let Some(ref old) = change.old_value {
-            println!("  ~ {}: \"{}\" -> \"{}\"", change.parameter, old, change.new_value);
+            println!("    ~ {}: \"{}\" -> \"{}\"", change.parameter, old, change.new_value);
         } else {
-            println!("  + {} = \"{}\"", change.parameter, change.new_value);
+            println!("    + {} = \"{}\"", change.parameter, change.new_value);
         }
-        println!("    ({})", change.description);
+        println!("      ({})", change.description);
     }
     println!();
-    println!("Safety & Rollback:");
-    println!("  • Backup destination:     {}", plan.backup_path.display());
-    println!("  • Pre-reload validation:  {}", plan.validation_cmd);
-    println!("  • Service reload command: {}", plan.reload_cmd);
+    println!("  󰛄 Safety & Rollback:");
+    println!("    󰈙 Backup:    {}", plan.backup_path.display());
+    println!("    󰞀 Validate:  {}", plan.validation_cmd);
+    println!("    󰑓 Reload:    {}", plan.reload_cmd);
     println!();
-    println!("Active Verification Steps:");
+    println!("  󱐋 Active Verification Steps:");
     for (i, step) in plan.verification_steps.iter().enumerate() {
-        println!("  {}. {}", i + 1, step);
+        println!("    {}. {}", i + 1, step);
     }
+    println!();
 }
 
 fn print_guided_remediation(rule_id: &str, title: &str, reason: &str, instructions: &[String]) {
-    println!("Guided Remediation Only");
-    println!("=======================");
-    println!("Finding:   {} ({})", title, rule_id);
-    println!("\nNotice:\n  {}", reason);
-    println!("\nRecommended Remediation Steps:");
+    println!("\n── 󰒓 Guided Remediation Only ──");
+    println!("  󰀦 Finding:   {} ({})", title, rule_id);
+    println!("\n  󰞀 Notice:\n    {}", reason);
+    println!("\n  󰄬 Recommended Remediation Steps:");
     for inst in instructions {
-        println!("  {}", inst);
+        println!("    {}", inst);
     }
-    println!("\nAfter making these adjustments, verify your changes by running: `mailent scan <domain>`");
+    println!("\n  󰈙 Verify your changes anytime with: `mailent scan <domain>`\n");
 }
 
 fn save_audit_record(record: &mailent_domain::RemediationRecord, diff: &adapter::AppliedDiff) {

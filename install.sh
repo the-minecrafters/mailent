@@ -114,9 +114,7 @@ else
 fi
 
 # 6. Next Steps Guidance
-echo -e "\n╔══════════════════════════════════════════════════════════════╗"
-echo -e "║                      GETTING STARTED                         ║"
-echo -e "╚══════════════════════════════════════════════════════════════╝"
+echo -e "\n── 󰒍 Getting Started ──"
 echo -e "1. Connect this machine to your Mailent workspace:"
 echo -e "   ${BOLD}${GREEN}mailent login${NC}"
 echo -e ""

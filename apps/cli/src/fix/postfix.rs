@@ -124,6 +124,29 @@ impl PostfixAdapter {
             _ => false,
         }
     }
+
+    pub fn sync_to_container_if_running(config_path: &Path) {
+        let path_str = config_path.to_string_lossy();
+        if path_str.contains(".tmp") || path_str.contains("temp") || path_str.contains("/tmp/tmp") {
+            return;
+        }
+        for engine in &["podman", "docker"] {
+            if let Ok(output) = Command::new(engine).args(&["ps", "--format", "{{.Names}}"]).output() {
+                let names = String::from_utf8_lossy(&output.stdout);
+                for target_container in &["mail-server", "postfix", "mail"] {
+                    if names.lines().any(|l| l.trim() == *target_container) {
+                        let _ = Command::new(engine)
+                            .args(&[
+                                "cp",
+                                &config_path.to_string_lossy(),
+                                &format!("{target_container}:/etc/postfix/main.cf"),
+                            ])
+                            .output();
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl Default for PostfixAdapter {
@@ -345,6 +368,8 @@ impl ServiceAdapter for PostfixAdapter {
             return Err(e);
         }
 
+        Self::sync_to_container_if_running(&plan.config_path);
+
         Ok(AppliedDiff {
             service_kind: ServiceKind::Postfix,
             config_path: plan.config_path.clone(),
@@ -395,20 +420,38 @@ impl ServiceAdapter for PostfixAdapter {
     }
 
     fn reload_service(&self) -> Result<(), String> {
-        let output = Command::new("postfix").arg("reload").output().map_err(|e| {
-            format!("Failed to execute `postfix reload`: {e}")
-        })?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("`postfix reload` failed: {stderr}"));
+        // 1. Try host postfix command first
+        if let Ok(output) = Command::new("postfix").arg("reload").output() {
+            if output.status.success() {
+                return Ok(());
+            }
         }
 
-        Ok(())
+        // 2. If host postfix is not available or failed, check for podman/docker container
+        for engine in &["podman", "docker"] {
+            if let Ok(output) = Command::new(engine).args(&["ps", "--format", "{{.Names}}"]).output() {
+                let names = String::from_utf8_lossy(&output.stdout);
+                for target_container in &["mail-server", "postfix", "mail"] {
+                    if names.lines().any(|l| l.trim() == *target_container) {
+                        let rel = Command::new(engine)
+                            .args(&["exec", target_container, "postfix", "reload"])
+                            .output();
+                        if let Ok(rel_out) = rel {
+                            if rel_out.status.success() {
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Err("`postfix reload` failed (neither host postfix nor container reloaded successfully)".to_string())
     }
 
     fn rollback(&self, backup_path: &Path, config_path: &Path) -> Result<(), String> {
         restore_backup(backup_path, config_path)?;
+        Self::sync_to_container_if_running(config_path);
         let _ = self.reload_service();
         Ok(())
     }

@@ -442,7 +442,7 @@ fn remediation_facts(finding: &Finding) -> (String, String, String, String) {
     match finding.rule_id.as_str() {
         "STARTTLS_MISSING" => (
             "The captured SMTP endpoint did not offer a TLS upgrade.".into(),
-            finding.remediation.clone(),
+            format!("{} (One-shot fix: sudo mailent fix STARTTLS_MISSING --yes)", finding.remediation),
             "STARTTLS advertised and accepted, followed by an established TLS handshake.".into(),
             "Run a live SMTP STARTTLS check on this server. A timeout or failed connection leaves the result inconclusive.".into(),
         ),
@@ -450,7 +450,7 @@ fn remediation_facts(finding: &Finding) -> (String, String, String, String) {
             "Legacy TLS allows downgrade-adjacent attacks and fails modern compliance \
              baselines; TLS 1.0/1.1 are formally deprecated by RFC 8996."
                 .to_string(),
-            "Disable TLS 1.0/1.1 on the mail service and retain TLS 1.2/1.3 as required."
+            "Disable TLS 1.0/1.1 on the mail service and retain TLS 1.2/1.3 as required (One-shot fix: sudo mailent fix TLS_LEGACY_VERSION --yes)."
                 .to_string(),
             "TLS 1.2 minimum, TLS 1.3 preferred; legacy protocol versions disabled.".to_string(),
             "After the change, run a live Mailent check against the endpoint: it must \

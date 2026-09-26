@@ -4,16 +4,14 @@ use std::time::Instant;
 use crate::credentials::{credentials_path, load_credentials};
 
 pub async fn run_doctor(server_override: Option<String>) -> Result<(), String> {
-    println!("\n╔══════════════════════════════════════════════════════════╗");
-    println!("║             MAILENT SYSTEM DIAGNOSTICS (DOCTOR)          ║");
-    println!("╚══════════════════════════════════════════════════════════╝\n");
+    println!("\n── 󰙨 Mailent System Diagnostics (Doctor) ──\n");
 
     let mut all_ok = true;
 
     // 1. Operating System and Architecture
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
-    println!("[✓] Platform: {} ({})", os, arch);
+    println!("  󰄬 Platform:     {} ({})", os, arch);
 
     // 2. Credentials and Device Identity
     let creds = load_credentials();
@@ -23,27 +21,21 @@ pub async fn run_doctor(server_override: Option<String>) -> Result<(), String> {
 
     let token_opt = match &creds {
         Some(c) => {
-            println!("[•] Sign-in saved; checking workspace access…");
-            println!("    • Installation:     {}", c.device_name);
-            println!("    • Device ID:       {}", c.device_id);
-            println!(
-                "    • Organization:    {}",
-                c.organization_id
-                    .map(|id| id.to_string())
-                    .unwrap_or_else(|| "None".to_string())
-            );
-            println!("    • Config File:     {}", credentials_path().display());
+            println!("  󰒍 Identity:     {} ({})", c.device_name, c.device_id);
+            if let Some(oid) = c.organization_id {
+                println!("  󰞀 Organization: {}", oid);
+            }
+            println!("  󰈙 Config File:  {}", credentials_path().display());
             Some(c.device_token.clone())
         }
         None => {
-            println!("[!] Authentication: Not configured");
-            println!("    Notice: Run 'mailent login' to link this device to an organization.");
+            println!("  󰀦 Authentication: Not configured (run 'mailent login' to link device)");
             None
         }
     };
 
     // 3. Control Plane Connectivity
-    print!("[*] Checking workspace connectivity ({})... ", server_url);
+    print!("  󱐋 Workspace:    Connecting to {}… ", server_url);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()
@@ -55,7 +47,7 @@ pub async fn run_doctor(server_override: Option<String>) -> Result<(), String> {
         Ok(resp) if resp.status().is_success() => {
             let elapsed = start.elapsed();
             println!(
-                "\r[✓] Workspace reachable at {} ({} ms)",
+                "\r  󰄬 Workspace:    Reachable at {} ({} ms)",
                 server_url,
                 elapsed.as_millis()
             );
@@ -70,20 +62,20 @@ pub async fn run_doctor(server_override: Option<String>) -> Result<(), String> {
                     .await
                 {
                     Ok(dev_resp) if dev_resp.status().is_success() => {
-                        println!("    • Workspace connection verified");
+                        println!("  󰄬 Token Check:  Workspace connection verified");
                     }
                     Ok(dev_resp) => {
                         if let Some(c) = &creds {
                             crate::credentials::handle_rejection(dev_resp.status(), c)?;
                         }
                         println!(
-                            "    [!] Workspace access rejected (HTTP {})",
+                            "  󰀦 Token Check:  Workspace access rejected (HTTP {})",
                             dev_resp.status()
                         );
                         all_ok = false;
                     }
                     Err(e) => {
-                        println!("    [!] Failed to verify device token: {e}");
+                        println!("  󰀦 Token Check:  Failed to verify device token: {e}");
                         all_ok = false;
                     }
                 }
@@ -91,34 +83,32 @@ pub async fn run_doctor(server_override: Option<String>) -> Result<(), String> {
         }
         Ok(resp) => {
             println!(
-                "\r[!] Workspace returned HTTP {} from {}",
+                "\r  󰅖 Workspace:    Returned HTTP {} from {}",
                 resp.status(),
                 health_url
             );
             all_ok = false;
         }
         Err(e) => {
-            println!("\r[✗] Unable to reach workspace at {}: {}", server_url, e);
-            println!("    Notice: Make sure the Mailent server is running.");
+            println!("\r  󰅖 Workspace:    Unable to reach {} ({})", server_url, e);
             all_ok = false;
         }
     }
 
     // 4. DNS Resolution Test
-    print!("[*] Testing DNS resolution... ");
     match tokio::net::lookup_host("smtp.gmail.com:25").await {
         Ok(mut addrs) => {
             if let Some(addr) = addrs.next() {
                 println!(
-                    "\r[✓] DNS resolution operational (resolved smtp.gmail.com -> {})",
+                    "  󰄬 DNS Resolver: Operational (resolved smtp.gmail.com -> {})",
                     addr.ip()
                 );
             } else {
-                println!("\r[!] DNS resolution returned no addresses");
+                println!("  󰀦 DNS Resolver: Returned no addresses");
             }
         }
         Err(e) => {
-            println!("\r[!] DNS resolution warning: {}", e);
+            println!("  󰀦 DNS Resolver: Warning: {}", e);
         }
     }
 
@@ -126,47 +116,45 @@ pub async fn run_doctor(server_override: Option<String>) -> Result<(), String> {
     match Command::new("openssl").arg("version").output() {
         Ok(output) if output.status.success() => {
             let ver = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            println!("[✓] TLS Cryptography: {}", ver);
+            println!("  󰌆 Cryptography: {}", ver);
         }
         _ => {
-            println!("[✓] TLS Cryptography: Built-in Rustls / native TLS provider");
+            println!("  󰌆 Cryptography: Built-in Rustls / native TLS provider");
         }
     }
 
     // Zeek is a required product dependency, not an optional diagnostic.
     match crate::locate_zeek(None) {
-        Ok(path) => println!("[✓] Required Zeek 8+: {}", path.display()),
+        Ok(path) => println!("  󰏗 Zeek 8+:      {}", path.display()),
         Err(error) => {
-            println!("[✗] {error}");
+            println!("  󰅖 Zeek 8+:      {error}");
             all_ok = false;
         }
     }
 
     // Companion service state
     let service_state = crate::companion::check_service_state(false);
-    println!("[•] Companion Service (systemd --user): {}", service_state);
+    println!("  󱐋 Companion:    {} (systemd --user)", service_state);
 
     // Local loopback bridge check
     let (bridge_ready, _) = crate::companion::check_bridge_readiness(15488).await;
     if bridge_ready {
-        println!("[✓] Loopback Bridge: Ready on http://127.0.0.1:15488");
+        println!("  󰒋 Loopback:     Ready on http://127.0.0.1:15488");
     } else {
-        println!("[•] Loopback Bridge: Offline (start service with 'mailent companion start' or debug with 'mailent companion run')");
+        println!("  󰒋 Loopback:     Offline (mailent companion start)");
     }
 
     if let Some(creds) = &creds {
         crate::installation::report_best_effort(creds, &server_url, None).await;
     }
 
-    println!("\n------------------------------------------------------------");
+    println!();
     if all_ok {
-        println!(
-            "Status: Required dependencies are ready. Mail-server reachability depends on this network."
-        );
+        println!("  󰄬 Status: All required system diagnostics passed.");
     } else {
-        println!("Status: Diagnostics completed with warnings/issues above.");
+        println!("  󰀦 Status: Diagnostics completed with warnings/issues above.");
     }
-    println!("------------------------------------------------------------\n");
+    println!();
 
     if all_ok {
         Ok(())

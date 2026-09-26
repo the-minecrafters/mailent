@@ -274,23 +274,21 @@ WantedBy=default.target
         unit_path
     };
 
-    println!("\n╔══════════════════════════════════════════════════════════╗");
-    println!("║          MAILENT COMPANION INSTALLED SUCCESSFULLY        ║");
-    println!("╚══════════════════════════════════════════════════════════╝");
-    println!("  • Service Unit:    {}", unit_path.display());
+    println!("\n── 󰄬 Mailent Companion Installed Successfully ──");
+    println!("  󰈙 Service Unit:  {}", unit_path.display());
     println!(
-        "  • Mode:            {}",
+        "  󰒓 Mode:          {}",
         if system {
             "system service"
         } else {
             "user service"
         }
     );
-    println!("  • Device Name:     {}", creds.device_name);
-    println!("  • Device ID:       {}", creds.device_id);
-    println!("  • Workspace:       {}", creds.server_url);
-    println!("  • Local Bridge:    http://127.0.0.1:15488");
-    println!("  • Auto-start:      Enabled (restart on failure)");
+    println!("  󰒍 Device Name:   {}", creds.device_name);
+    println!("  󰌆 Device ID:     {}", creds.device_id);
+    println!("  󰞀 Workspace:     {}", creds.server_url);
+    println!("  󰒋 Local Bridge:  http://127.0.0.1:15488");
+    println!("  󱐋 Auto-start:    Enabled (restart on failure)");
     println!("\nCompanion service is now active and ready for workspace execution.");
     println!("Check companion status at any time with: mailent companion status\n");
 
@@ -388,29 +386,27 @@ fn run_uninstall(system: bool) -> Result<(), String> {
 async fn run_status(system: bool) -> Result<(), String> {
     let creds = load_credentials();
 
-    println!("\n╔══════════════════════════════════════════════════════════╗");
-    println!("║                MAILENT COMPANION STATUS                  ║");
-    println!("╚══════════════════════════════════════════════════════════╝\n");
+    println!("\n── 󱐋 Mailent Companion Status ──\n");
 
     let service_state = check_service_state(system);
 
-    println!("  • Service State:     {}", service_state);
+    println!("  󱐋 Service State:   {}", service_state);
     println!(
-        "  • Service Scope:     {}",
+        "  󰒓 Service Scope:   {}",
         if system { "system" } else { "user" }
     );
 
     match &creds {
         Some(c) => {
-            println!("  • Device Name:       {}", c.device_name);
-            println!("  • Device ID:         {}", c.device_id);
+            println!("  󰒍 Device Name:     {}", c.device_name);
+            println!("  󰌆 Device ID:       {}", c.device_id);
             println!(
-                "  • Organization:      {}",
+                "  󰞀 Organization:    {}",
                 c.organization_id
                     .map(|id| id.to_string())
                     .unwrap_or_else(|| "Default".to_string())
             );
-            println!("  • Workspace:         {}", c.server_url);
+            println!("  󰞀 Workspace:       {}", c.server_url);
 
             let client = reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))
@@ -445,10 +441,10 @@ async fn run_status(system: bool) -> Result<(), String> {
                             .and_then(|t| t.as_str())
                             .unwrap_or("Never");
 
-                        println!("  • Workspace Link:    Connected (authenticated)");
-                        println!("  • Readiness:         {}", if agent_status == "idle" { "Ready" } else { agent_status });
-                        println!("  • Completed Checks:  {}", completed_jobs);
-                        println!("  • Last Heartbeat:    {}", last_heartbeat);
+                        println!("  󰄬 Workspace Link:  Connected (authenticated)");
+                        println!("  󰄬 Readiness:       {}", if agent_status == "idle" { "Ready" } else { agent_status });
+                        println!("  󰈙 Completed Checks:{}", completed_jobs);
+                        println!("  󰅐 Last Heartbeat:  {}", last_heartbeat);
                     }
                 }
                 Ok(resp) => {
@@ -456,17 +452,17 @@ async fn run_status(system: bool) -> Result<(), String> {
                         return Ok(());
                     }
                     println!(
-                        "  • Workspace Link:    Unavailable (HTTP {})",
+                        "  󰀦 Workspace Link:  Unavailable (HTTP {})",
                         resp.status()
                     );
                 }
                 Err(e) => {
-                    println!("  • Workspace Link:    Unreachable ({})", e);
+                    println!("  󰅖 Workspace Link:  Unreachable ({})", e);
                 }
             }
         }
         None => {
-            println!("  • Authentication:    Not configured (run 'mailent login' first)");
+            println!("  󰀦 Authentication:  Not configured (run 'mailent login' first)");
         }
     }
     println!();
@@ -499,15 +495,13 @@ pub async fn run_daemon(
         }
     });
 
-    println!("\n╔══════════════════════════════════════════════════════════╗");
-    println!("║             MAILENT LOCAL EXECUTION COMPANION            ║");
-    println!("╚══════════════════════════════════════════════════════════╝");
-    println!("  • Device:        {}", creds.device_name);
-    println!("  • Local Bridge:  http://127.0.0.1:{}", bridge_port);
-    println!("  • Zeek:          {}", zeek.display());
-    println!("  • Workspace:     {}", creds.server_url);
-    println!("  • Readiness:     Ready (accepting workspace execution)");
-    println!("\nPress Ctrl+C to stop.\n");
+    println!("\n── 󱐋 Mailent Execution Companion ──");
+    println!("  󰒍 Device:       {}", creds.device_name);
+    println!("  󰒋 Local Bridge: http://127.0.0.1:{}", bridge_port);
+    println!("  󰏗 Zeek:         {}", zeek.display());
+    println!("  󰞀 Workspace:    {}", creds.server_url);
+    println!("  󰄬 Readiness:    Ready (accepting workspace execution)");
+    println!("\n  Press Ctrl+C to terminate.\n");
 
     let mut poll = tokio::time::interval(Duration::from_secs(poll_interval.clamp(1, 30)));
     let mut heartbeat = tokio::time::interval(Duration::from_secs(heartbeat_interval.clamp(1, 30)));

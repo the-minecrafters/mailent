@@ -121,8 +121,14 @@ pub fn verify_remediation(
     let Some(result) = &probe.result else {
         return inconclusive("No active evidence");
     };
-    if result.error.is_some() {
-        return inconclusive("Transport verification reported an error");
+    if let Some(err) = &result.error {
+        let is_cert_issue = err.contains("certificate")
+            || err.contains("unknown issuer")
+            || err.contains("self-signed")
+            || err.contains("expired");
+        if !is_cert_issue || record.condition == RemediationCondition::CertificateValid {
+            return inconclusive(&format!("Transport verification reported an error: {err}"));
+        }
     }
     if result.resolved_ip.as_deref() != Some(record.before.flow.dst_ip.as_str()) {
         return inconclusive(

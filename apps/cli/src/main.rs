@@ -284,7 +284,7 @@ async fn run_analyze(
         .unwrap_or("capture.pcap")
         .to_string();
 
-    eprintln!("  [1/4] Validating capture file: {}", capture_name);
+    eprintln!("  [1/4] 󰈙 Validating capture file: {}", capture_name);
     let outcome = engine::execute_capture_analysis(engine::AnalysisOptions {
         capture_path: &capture_path,
         capture_name: Some(capture_name.clone()),
@@ -298,7 +298,7 @@ async fn run_analyze(
     })
     .await?;
 
-    eprintln!("  ✔ Analysis complete.\n");
+    eprintln!("  󰄬 Analysis complete.\n");
 
     if format == "json" {
         let output = serde_json::json!({
@@ -369,13 +369,13 @@ async fn run_scan(
     let scan_result = scanner
         .scan_domain_with_progress(&domain, |event| match event {
             mailent_scanner::ScanProgressEvent::DiscoveringDns { domain } => {
-                eprintln!("  [1/4] Discovering DNS records & mail servers for {domain}...");
+                eprintln!("  [1/4] 󰒋 Discovering DNS records & mail servers for {domain}…");
             }
             mailent_scanner::ScanProgressEvent::DnsDiscovered { endpoints_count } => {
-                eprintln!("        Discovered {endpoints_count} mail endpoint(s)");
+                eprintln!("        󰄬 Discovered {endpoints_count} mail endpoint(s)");
             }
             mailent_scanner::ScanProgressEvent::FetchingPolicies => {
-                eprintln!("  [2/4] Fetching MTA-STS and TLS-RPT policies...");
+                eprintln!("  [2/4] 󰛄 Fetching MTA-STS and TLS-RPT policies…");
             }
             mailent_scanner::ScanProgressEvent::ProbingEndpoint {
                 current,
@@ -383,13 +383,13 @@ async fn run_scan(
                 endpoint,
                 service,
             } => {
-                eprintln!("  [3/4] Probing endpoint [{current}/{total}] ({service} {endpoint})...");
+                eprintln!("  [3/4] 󰌾 Probing endpoint [{current}/{total}] ({service} {endpoint})…");
             }
             mailent_scanner::ScanProgressEvent::AnalyzingPosture => {
-                eprintln!("  [4/4] Computing cryptographic posture and generating reports...");
+                eprintln!("  [4/4] 󱐋 Computing cryptographic posture & reports…");
             }
             mailent_scanner::ScanProgressEvent::Complete => {
-                eprintln!("  ✔ Scan completed successfully.\n");
+                eprintln!("  󰄬 Scan completed successfully.\n");
             }
         })
         .await
@@ -520,14 +520,13 @@ async fn run_login(
     };
 
     println!();
-    println!("========================================================");
-    println!("  Connection code: \x1b[1;36m{}\x1b[0m", code);
+    println!("── 󰒍 Mailent Device Authorization ──");
+    println!("  󰌆 Pairing Code:  \x1b[1;36m{}\x1b[0m", code);
     println!(
-        "  Approve in Mailent Workspace:    \x1b[4m{}\x1b[0m",
+        "  󰞀 Workspace URL: \x1b[4m{}\x1b[0m",
         full_verify_url
     );
-    println!("========================================================");
-    println!("Waiting for approval...");
+    println!("  󱐋 Status:        Waiting for workspace approval…");
 
     let poll_url = format!(
         "{}/api/v1/devices/authorize/poll",
@@ -588,14 +587,14 @@ async fn run_login(
 
                 installation::report_best_effort(&creds, &server_url, None).await;
                 println!();
-                println!("\x1b[32m✔ Mailent installation connected!\x1b[0m");
-                println!("  Device Name:     {}", creds.device_name);
-                println!("  Device ID:       {}", creds.device_id);
+                println!("\x1b[32m󰄬 Mailent Device Connected!\x1b[0m");
+                println!("  󰒍 Device Name:   {}", creds.device_name);
+                println!("  󰌆 Device ID:     {}", creds.device_id);
                 if let Some(oid) = creds.organization_id {
-                    println!("  Organization ID: {}", oid);
+                    println!("  󰞀 Organization:  {}", oid);
                 }
                 println!(
-                    "  Credentials:     {}",
+                    "  󰈙 Credentials:   {}",
                     credentials::credentials_path().display()
                 );
 
@@ -604,10 +603,10 @@ async fn run_login(
                     match companion::auto_install_user_service() {
                         Ok(unit) => {
                             println!();
-                            println!("\x1b[32m✔ Background companion service installed and started (systemd --user).\x1b[0m");
-                            println!("  Service:         {}", unit.file_name().and_then(|n| n.to_str()).unwrap_or("mailent-companion.service"));
-                            println!("  Local Bridge:    http://127.0.0.1:15488 (ready)");
-                            println!("  Auto-start:      Enabled (restarts on failure and boots with user session)");
+                            println!("\x1b[32m󰄬 Background companion service active (systemd --user)\x1b[0m");
+                            println!("  󰒓 Service Unit:  {}", unit.file_name().and_then(|n| n.to_str()).unwrap_or("mailent-companion.service"));
+                            println!("  󰒋 Local Bridge:  http://127.0.0.1:15488");
+                            println!("  󱐋 Auto-start:    Enabled (restarts on failure)");
                             println!("\nYour workspace is now ready for local capture analysis and scans without keeping a terminal open.");
                         }
                         Err(e) => {
@@ -684,40 +683,40 @@ async fn run_status(server_override: Option<String>) -> Result<(), String> {
         .map_err(|e| format!("Failed to parse status response: {e}"))?;
 
     installation::report_best_effort(&creds, &server_url, None).await;
-    println!("Mailent CLI Status");
-    println!("------------------");
-    println!("Workspace Link:  \x1b[32mConnected (authenticated)\x1b[0m");
-    println!("Server:          {}", server_url);
-    println!("Device Name:     {}", creds.device_name);
-    println!("Device ID:       {}", creds.device_id);
+    println!("\n── 󰒍 Mailent CLI Status ──");
+    println!("  󰄬 Workspace Link:  \x1b[32mConnected (authenticated)\x1b[0m");
+    println!("  󰞀 Server:          {}", server_url);
+    println!("  󰒍 Device Name:     {}", creds.device_name);
+    println!("  󰌆 Device ID:       {}", creds.device_id);
     if let Some(org) = status_data.get("organization") {
         let org_name = org["name"].as_str().unwrap_or("Unknown");
         let org_id = org["id"].as_str().unwrap_or("Unknown");
-        println!("Organization:    {} ({})", org_name, org_id);
+        println!("  󰞀 Organization:    {} ({})", org_name, org_id);
     }
     println!(
-        "Credentials:     {}",
+        "  󰈙 Credentials:     {}",
         credentials::credentials_path().display()
     );
 
     let service_state = companion::check_service_state(false);
-    println!("Companion (svc): {}", service_state);
+    println!("  󱐋 Companion (svc): {}", service_state);
 
     let (bridge_ready, _) = companion::check_bridge_readiness(15488).await;
     if bridge_ready {
-        println!("Loopback Bridge: \x1b[32mReady (http://127.0.0.1:15488)\x1b[0m");
+        println!("  󰒋 Loopback Bridge: \x1b[32mReady (http://127.0.0.1:15488)\x1b[0m");
     } else {
-        println!("Loopback Bridge: \x1b[33mNot responding (port 15488)\x1b[0m");
+        println!("  󰒋 Loopback Bridge: \x1b[33mNot responding (port 15488)\x1b[0m");
     }
 
     match crate::engine::locate_zeek(None) {
         Ok(zeek_path) => {
-            println!("Zeek 8+:         \x1b[32mReady ({})\x1b[0m", zeek_path.display());
+            println!("  󰏗 Zeek 8+:         \x1b[32mReady ({})\x1b[0m", zeek_path.display());
         }
         Err(e) => {
-            println!("Zeek 8+:         \x1b[31m{}\x1b[0m", e);
+            println!("  󰏗 Zeek 8+:         \x1b[31m{}\x1b[0m", e);
         }
     }
+    println!();
 
     Ok(())
 }
@@ -765,32 +764,26 @@ fn print_capture_table(
     reports: &[PathBuf],
     warnings: &[String],
 ) {
-    println!("\n╔════════════════════════════════════════════════════════════════════════════╗");
-    println!("║                   MAILENT CAPTURE ANALYSIS                               ║");
-    println!("╚════════════════════════════════════════════════════════════════════════════╝");
-    println!("  Capture:       {}", capture_name);
-    println!("  SHA-256:       {}", capture_hash);
+    println!("\n── 󰇮 Mailent Capture Analysis ──");
+    println!("  󰈙 Capture:     {}", capture_name);
+    println!("  󰌆 SHA-256:     {}", capture_hash);
     println!(
-        "  Size:          {:.2} KiB ({} bytes)",
+        "  󰏗 Size:        {:.2} KiB ({} bytes)",
         size_bytes as f64 / 1024.0,
         size_bytes
     );
-    println!("  Analyzer:      {}", zeek_version);
+    println!("  󰒓 Analyzer:    {}", zeek_version);
     println!();
-    println!("┌────────────────────────────────────────────────────────────────────────────┐");
-    println!("│ SECURITY POSTURE & RISK VERDICT                                            │");
-    println!("├────────────────────────────────────────────────────────────────────────────┤");
-    println!("  Score:         {:.1} / 100", posture_score);
-    println!("  Grade:         {}", posture_grade);
-    println!("  Risk Level:    {}", risk_level);
-    println!("  Verdict:       {}", risk_rationale);
+    println!("── 󰞀 Security Posture & Risk Verdict ──");
+    println!("  󱐋 Score:       {:.1} / 100", posture_score);
+    println!("  󰄬 Grade:       {}", posture_grade);
+    println!("  󰀦 Risk Level:  {}", risk_level);
+    println!("  ❯ Verdict:     {}", risk_rationale);
     println!();
-    println!("┌────────────────────────────────────────────────────────────────────────────┐");
     println!(
-        "│ RECONSTRUCTED EMAIL SESSIONS ({} found)                                    │",
+        "── 󰇮 Reconstructed Email Sessions ({} found) ──",
         sessions.len()
     );
-    println!("├────────────────────────────────────────────────────────────────────────────┤");
     if sessions.is_empty() {
         println!("  No email sessions identified in capture.");
     }
@@ -803,72 +796,66 @@ fn print_capture_table(
             s.flow.dst_ip
         );
         if let Some(st) = &s.starttls_state {
-            println!("      STARTTLS:        {:?}", st);
+            println!("      󰌾 STARTTLS:    {:?}", st);
         }
         if let Some(v) = &s.tls_version {
-            println!("      TLS Version:     {}", v);
+            println!("      󰌆 TLS Version: {}", v);
         }
         if let Some(c) = &s.cipher_suite {
-            println!("      Cipher Suite:    {}", c.name);
+            println!("      󰒎 Cipher Suite:{}", c.name);
         }
         if let Some(ke) = &s.key_exchange {
-            println!("      Key Exchange:    {:?}", ke);
+            println!("      󰌆 Key Exchange:{:?}", ke);
         }
         if let Some(cert) = &s.certificate {
-            println!("      Certificate:     CN={}", cert.reference.subject);
-            println!("      Issuer:          {}", cert.reference.issuer);
+            println!("      󰈙 Certificate: CN={}", cert.reference.subject);
+            println!("      󰈙 Issuer:      {}", cert.reference.issuer);
             println!(
-                "      Validity:        {} -> {}",
+                "      󰅐 Validity:    {} -> {}",
                 cert.validity.not_before, cert.validity.not_after
             );
         }
     }
     println!();
-    println!("┌────────────────────────────────────────────────────────────────────────────┐");
     println!(
-        "│ POLICY & CRYPTOGRAPHIC FINDINGS ({} identified)                            │",
+        "── 󰀦 Policy & Cryptographic Findings ({} identified) ──",
         findings.len()
     );
-    println!("├────────────────────────────────────────────────────────────────────────────┤");
     if findings.is_empty() {
-        println!("  No cryptographic or policy non-compliances detected.");
+        println!("  󰄬 No cryptographic or policy non-compliances detected.");
     }
     for f in findings {
         println!("  • [{}] {} (rule: {})", f.severity, f.title, f.rule_id);
-        println!("    {}", f.description);
-        println!("    Remediation: {}", f.remediation);
+        println!("    ❯ {}", f.description);
+        println!("    󰒓 Remediation: {}", f.remediation);
     }
     println!();
     if !warnings.is_empty() {
-        println!("┌────────────────────────────────────────────────────────────────────────────┐");
-        println!("│ EVIDENCE GAPS & WARNINGS                                                   │");
-        println!("├────────────────────────────────────────────────────────────────────────────┤");
+        println!("── 󰀦 Evidence Gaps & Warnings ──");
         for w in warnings {
             println!("  ! {}", w);
         }
         println!();
     }
     if !reports.is_empty() {
-        println!("┌────────────────────────────────────────────────────────────────────────────┐");
-        println!("│ EXPORTED SECURITY REPORTS                                                  │");
-        println!("├────────────────────────────────────────────────────────────────────────────┤");
+        println!("── 󰈙 Exported Security Reports ──");
         for r in reports {
-            println!("  -> {}", r.display());
+            println!("  󰈙 {}", r.display());
         }
         println!();
     }
-    println!("══════════════════════════════════════════════════════════════════════════════\n");
 }
 
 fn print_scan_table(result: &mailent_scanner::InfrastructureScanResult, reports: &[PathBuf]) {
     let report = &result.report;
     let infra = report.infrastructure.as_ref();
 
-    println!("\n╔════════════════════════════════════════════════════════════════════════════╗");
-    println!("║                MAILENT DOMAIN INFRASTRUCTURE ASSESSMENT                    ║");
-    println!("╚════════════════════════════════════════════════════════════════════════════╝");
     println!(
-        "  Domain:        {}",
+        "\n── 󰇮 Mailent Assessment: {} ──",
+        report.metadata.target_domain.as_deref().unwrap_or("unknown")
+    );
+    println!(
+        "  󰈙 Domain:      {}",
         report
             .metadata
             .target_domain
@@ -876,46 +863,42 @@ fn print_scan_table(result: &mailent_scanner::InfrastructureScanResult, reports:
             .unwrap_or("unknown")
     );
     println!(
-        "  Endpoints:     {} checked ({} succeeded, {} failed/unreachable)",
+        "  󰒋 Endpoints:   {} checked ({} succeeded, {} failed/unreachable)",
         result.endpoints_checked, result.endpoints_succeeded, result.endpoints_failed
     );
     if let Some(inf) = infra {
-        println!("  DNSSEC:        {}", inf.dnssec_status);
+        println!("  󰌾 DNSSEC:      {}", inf.dnssec_status);
         println!(
-            "  MTA-STS:       {}",
+            "  󰛄 MTA-STS:     {}",
             inf.mta_sts_mode.as_deref().unwrap_or("Not published")
         );
         if let Some(details) = &inf.mta_sts_policy_details {
             println!("                 ({})", details);
         }
         println!(
-            "  TLS-RPT:       {}",
+            "  󰚩 TLS-RPT:     {}",
             inf.tls_rpt_destination
                 .as_deref()
                 .unwrap_or("Not published")
         );
     }
     println!();
-    println!("┌────────────────────────────────────────────────────────────────────────────┐");
-    println!("│ SECURITY POSTURE & RISK VERDICT                                            │");
-    println!("├────────────────────────────────────────────────────────────────────────────┤");
+    println!("── 󰞀 Security Posture & Risk Verdict ──");
     if let Some(p) = &report.posture {
-        println!("  Score:         {:.1} / 100", p.score);
-        println!("  Grade:         {}", p.grade);
+        println!("  󱐋 Score:       {:.1} / 100", p.score);
+        println!("  󰄬 Grade:       {}", p.grade);
     }
     println!(
-        "  Risk Level:    {}",
+        "  󰀦 Risk Level:  {}",
         result.assessment.ai_risk_classification
     );
-    println!("  Verdict:       {}", result.assessment.ai_risk_rationale);
+    println!("  ❯ Verdict:     {}", result.assessment.ai_risk_rationale);
     println!();
     if let Some(inf) = infra {
-        println!("┌────────────────────────────────────────────────────────────────────────────┐");
         println!(
-            "│ DISCOVERED ENDPOINTS & ACTIVE PROBE RESULTS ({} total)                      │",
+            "── 󰒋 Discovered Endpoints ({} total) ──",
             inf.discovered_endpoints.len()
         );
-        println!("├────────────────────────────────────────────────────────────────────────────┤");
         for ep in &inf.discovered_endpoints {
             println!(
                 "  [{}] {}:{} (priority: {})",
@@ -927,64 +910,75 @@ fn print_scan_table(result: &mailent_scanner::InfrastructureScanResult, reports:
                     .unwrap_or_else(|| "n/a".into())
             );
             if !ep.resolved_ips.is_empty() {
-                println!("      IP Addresses:    {}", ep.resolved_ips.join(", "));
+                println!("      󰒍 IPs:         {}", ep.resolved_ips.join(", "));
             }
-            println!("      STARTTLS:        {}", ep.starttls_status);
+            println!("      󰌾 STARTTLS:    {}", ep.starttls_status);
             if let Some(tls) = &ep.tls_version {
-                println!("      TLS Version:     {}", tls);
+                println!("      󰌆 TLS Version: {}", tls);
             }
             if let Some(c) = &ep.cipher {
-                println!("      Cipher Suite:    {}", c);
+                println!("      󰒎 Cipher Suite:{}", c);
             }
             if let Some(sub) = &ep.cert_subject {
-                println!("      Certificate:     CN={}", sub);
+                println!("      󰈙 Certificate: CN={}", sub);
             }
             if let Some(val) = &ep.cert_validity {
-                println!("      Validity:        {}", val);
+                println!("      󰅐 Validity:    {}", val);
             }
-            println!("      DANE Status:     {}", ep.dane_status);
+            println!("      󰛄 DANE Status: {}", ep.dane_status);
         }
         println!();
     }
-    println!("┌────────────────────────────────────────────────────────────────────────────┐");
     println!(
-        "│ POLICY & INFRASTRUCTURE FINDINGS ({} identified)                           │",
+        "── 󰀦 Findings ({} identified) ──",
         report.findings.len()
     );
-    println!("├────────────────────────────────────────────────────────────────────────────┤");
     if report.findings.is_empty() {
-        println!("  No policy violations detected.");
+        println!("  󰄬 No policy violations detected.");
     }
     for f in &report.findings {
         println!("  • [{}] {} (rule: {})", f.severity, f.title, f.rule_id);
-        println!("    {}", f.description);
+        println!("    ❯ {}", f.description);
+        match f.rule_id.as_str() {
+            "TLS_LEGACY_VERSION" => {
+                println!("    󱐋 \x1b[1;36mOne-Shot Fix:\x1b[0m sudo mailent fix TLS_LEGACY_VERSION --yes");
+            }
+            "STARTTLS_MISSING" => {
+                println!("    󱐋 \x1b[1;36mOne-Shot Fix:\x1b[0m sudo mailent fix STARTTLS_MISSING --yes");
+            }
+            _ => {}
+        }
     }
     if !report.remediation.is_empty() {
         println!();
-        println!("  Remediation Guidance:");
+        println!("  󰒓 Remediation Guidance:");
         for rem in &report.remediation {
             println!("  • {}", rem.title);
-            println!("    {}", rem.recommendation);
+            println!("    ❯ {}", rem.recommendation);
+            match rem.rule_id.as_str() {
+                "TLS_LEGACY_VERSION" => {
+                    println!("    󱐋 \x1b[1;36mOne-Shot Fix:\x1b[0m sudo mailent fix TLS_LEGACY_VERSION --yes");
+                }
+                "STARTTLS_MISSING" => {
+                    println!("    󱐋 \x1b[1;36mOne-Shot Fix:\x1b[0m sudo mailent fix STARTTLS_MISSING --yes");
+                }
+                _ => {}
+            }
         }
     }
     println!();
     if !report.evidence_gaps.is_empty() {
-        println!("┌────────────────────────────────────────────────────────────────────────────┐");
-        println!("│ COVERAGE GAPS & WARNINGS                                                   │");
-        println!("├────────────────────────────────────────────────────────────────────────────┤");
+        println!("── 󰀦 Coverage Gaps & Warnings ──");
         for g in &report.evidence_gaps {
             println!("  ! {}", g);
         }
         println!();
     }
     if !reports.is_empty() {
-        println!("┌────────────────────────────────────────────────────────────────────────────┐");
-        println!("│ EXPORTED SECURITY REPORTS                                                  │");
-        println!("├────────────────────────────────────────────────────────────────────────────┤");
+        println!("── 󰈙 Exported Security Reports ──");
         for r in reports {
-            println!("  -> {}", r.display());
+            println!("  󰈙 {}", r.display());
         }
         println!();
     }
-    println!("══════════════════════════════════════════════════════════════════════════════\n");
 }
