@@ -121,6 +121,51 @@ async fn timed_probe(
     Ok(result)
 }
 
+async fn connect_stream(
+    host: &str,
+    port: u16,
+    limits: &ProbeLimits,
+) -> Result<TcpStream, SmtpProbeError> {
+    let clean_host = host.trim_end_matches('.');
+    let mut addrs: Vec<std::net::SocketAddr> = match tokio::net::lookup_host((clean_host, port)).await {
+        Ok(iter) => iter.collect(),
+        Err(e) => {
+            return Err(if e.kind() == std::io::ErrorKind::ConnectionRefused {
+                SmtpProbeError::ConnectionRefused
+            } else {
+                SmtpProbeError::Io(e)
+            });
+        }
+    };
+    if addrs.is_empty() {
+        return Err(SmtpProbeError::Protocol("no addresses resolved for target".into()));
+    }
+    // Prefer IPv4 addresses for maximum local loopback and network compatibility
+    addrs.sort_by_key(|a| if a.is_ipv4() { 0 } else { 1 });
+
+    let mut last_err = None;
+    for addr in addrs {
+        match tokio::time::timeout(limits.connect_timeout, TcpStream::connect(addr)).await {
+            Ok(Ok(stream)) => return Ok(stream),
+            Ok(Err(e)) => last_err = Some(e),
+            Err(_) => {
+                last_err = Some(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "connect timed out",
+                ))
+            }
+        }
+    }
+    let err = last_err.unwrap_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::NotConnected, "connection failed")
+    });
+    if err.kind() == std::io::ErrorKind::ConnectionRefused {
+        Err(SmtpProbeError::ConnectionRefused)
+    } else {
+        Err(SmtpProbeError::Io(err))
+    }
+}
+
 async fn exchange(
     host: &str,
     port: u16,
@@ -128,19 +173,7 @@ async fn exchange(
     limits: &ProbeLimits,
     result: &mut ProbeResult,
 ) -> Result<(), SmtpProbeError> {
-    let stream = tokio::time::timeout(
-        limits.connect_timeout,
-        TcpStream::connect((host.trim_end_matches('.'), port)),
-    )
-    .await
-    .map_err(|_| SmtpProbeError::Timeout(limits.connect_timeout.as_secs()))?
-    .map_err(|e| {
-        if e.kind() == std::io::ErrorKind::ConnectionRefused {
-            SmtpProbeError::ConnectionRefused
-        } else {
-            SmtpProbeError::Io(e)
-        }
-    })?;
+    let stream = connect_stream(host, port, limits).await?;
     result.resolved_ip = Some(stream.peer_addr()?.ip().to_string());
     let mut reader = BufReader::new(stream);
     if let Some(identity) = ehlo {
@@ -311,19 +344,7 @@ pub async fn probe_imap_starttls(
     let started = Instant::now();
     let mut result = ProbeResult::unavailable(host, None);
     let work = async {
-        let stream = tokio::time::timeout(
-            limits.connect_timeout,
-            TcpStream::connect((host.trim_end_matches('.'), port)),
-        )
-        .await
-        .map_err(|_| SmtpProbeError::Timeout(limits.connect_timeout.as_secs()))?
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::ConnectionRefused {
-                SmtpProbeError::ConnectionRefused
-            } else {
-                SmtpProbeError::Io(e)
-            }
-        })?;
+        let stream = connect_stream(host, port, limits).await?;
         result.resolved_ip = Some(stream.peer_addr()?.ip().to_string());
         let mut reader = BufReader::new(stream);
         let greeting = read_bounded_single_line(&mut reader, limits.max_line_bytes).await?;
@@ -379,19 +400,7 @@ pub async fn probe_pop3_stls(
     let started = Instant::now();
     let mut result = ProbeResult::unavailable(host, None);
     let work = async {
-        let stream = tokio::time::timeout(
-            limits.connect_timeout,
-            TcpStream::connect((host.trim_end_matches('.'), port)),
-        )
-        .await
-        .map_err(|_| SmtpProbeError::Timeout(limits.connect_timeout.as_secs()))?
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::ConnectionRefused {
-                SmtpProbeError::ConnectionRefused
-            } else {
-                SmtpProbeError::Io(e)
-            }
-        })?;
+        let stream = connect_stream(host, port, limits).await?;
         result.resolved_ip = Some(stream.peer_addr()?.ip().to_string());
         let mut reader = BufReader::new(stream);
         let greeting = read_bounded_single_line(&mut reader, limits.max_line_bytes).await?;
