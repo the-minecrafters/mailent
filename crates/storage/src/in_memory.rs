@@ -111,6 +111,44 @@ impl InMemoryStorage {
     pub fn new() -> Self {
         Self::default()
     }
+
+    pub async fn reset_all_data(&self) {
+        self.remediations.write().await.clear();
+        self.assets.write().await.clear();
+        self.drift_events.write().await.clear();
+        self.findings.write().await.clear();
+        self.finding_assets.write().await.clear();
+        self.sessions.write().await.clear();
+        self.certificates.write().await.clear();
+        self.sensors.write().await.clear();
+        self.observations.write().await.clear();
+        self.evidence.write().await.clear();
+        self.mx_records.write().await.clear();
+        self.tlsa_records.write().await.clear();
+        self.mta_sts_policies.write().await.clear();
+        self.tls_rpt_policies.write().await.clear();
+        self.tls_rpt_reports.write().await.clear();
+        self.ct_certificates.write().await.clear();
+        self.ct_events.write().await.clear();
+        self.refresh_statuses.write().await.clear();
+        self.baselines.write().await.clear();
+        self.anomalies.write().await.clear();
+        self.investigations.write().await.clear();
+        self.decision_records.write().await.clear();
+        self.probe_runs.write().await.clear();
+        self.training_records.write().await.clear();
+        self.posture_snapshots.write().await.clear();
+        self.integrations.write().await.clear();
+        self.archived_reports.write().await.clear();
+        self.assessments.write().await.clear();
+        *self.organizations.write().await = vec![mailent_domain::Organization::default()];
+        self.organization_members.write().await.clear();
+        self.devices.write().await.clear();
+        self.device_challenges.write().await.clear();
+        self.device_tokens.write().await.clear();
+        self.agent_jobs.write().await.clear();
+        self.infrastructure_monitors.write().await.clear();
+    }
 }
 
 #[async_trait]

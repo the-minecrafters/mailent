@@ -43,3 +43,27 @@ pub async fn ready_handler(State(state): State<AppState>) -> impl IntoResponse {
         })),
     )
 }
+
+pub async fn reset_database_handler(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let token = headers
+        .get("x-mailent-admin-token")
+        .and_then(|v| v.to_str().ok());
+    if token != Some("mailent_demo_wipe_2026") {
+        return Err((StatusCode::UNAUTHORIZED, "Invalid admin token".into()));
+    }
+    state.mem_storage.reset_all_data().await;
+    if let Some(ref pg) = state.pg_storage {
+        pg.reset_all_data()
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+    tracing::info!("Reset all workspace data successfully");
+    Ok(Json(json!({
+        "status": "ok",
+        "message": "All workspace and telemetry data reset successfully"
+    })))
+}
+

@@ -53,6 +53,8 @@ pub struct AppState {
     pub intelligence_resolver: Arc<dyn DomainIntelligenceResolver>,
     pub baseline_analyzer: Arc<dyn BaselineAnalyzer>,
     pub decision_provider: Arc<dyn DecisionProvider>,
+    pub pg_storage: Option<Arc<PostgresStorage>>,
+    pub mem_storage: Arc<InMemoryStorage>,
 }
 
 impl AppState {
@@ -89,6 +91,8 @@ impl AppState {
             intelligence_resolver: Arc::new(MockDomainIntelligenceResolver::new()),
             baseline_analyzer: Arc::new(DefaultBaselineAnalyzer::new()),
             decision_provider: Arc::new(DisabledProvider),
+            pg_storage: None,
+            mem_storage: mem.clone(),
         }
     }
 
@@ -214,7 +218,7 @@ impl AppState {
                 tracing::warn!(
                     "No MAILENT_CLICKHOUSE_URL provided; using in-memory analytical storage"
                 );
-                (mem.clone(), mem)
+                (mem.clone(), mem.clone())
             };
 
         let intelligence_resolver: Arc<dyn DomainIntelligenceResolver> = if let Some(ref doh) =
@@ -304,6 +308,8 @@ impl AppState {
             intelligence_resolver,
             baseline_analyzer: Arc::new(DefaultBaselineAnalyzer::new()),
             decision_provider,
+            pg_storage: pg_storage.clone(),
+            mem_storage: mem.clone(),
         })
     }
 }
