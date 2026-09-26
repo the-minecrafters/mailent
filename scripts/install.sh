@@ -67,8 +67,12 @@ main() {
       podman|docker) ;;
       *) printf 'Zeek 8+ is required. Install Zeek, Podman, or Docker, then run this installer again. Nothing was installed.\n' >&2; return 1 ;;
     esac
-    printf 'Setting up required Zeek 8.0.4 with %s…\n' "$runtime"
-    "$runtime" pull docker.io/zeek/zeek:8.0.4
+    if ! "$runtime" image inspect docker.io/zeek/zeek:8.0.4 >/dev/null 2>&1; then
+      printf 'Setting up required Zeek 8.0.4 with %s…\n' "$runtime"
+      "$runtime" pull docker.io/zeek/zeek:8.0.4
+    else
+      printf 'Zeek 8.0.4 is ready (cached via %s).\n' "$runtime"
+    fi
     MAILENT_CONTAINER_RUNTIME="$runtime" "$mailent_work_dir/mailent-zeek" --version
   fi
   mkdir -p -- "$install_dir"
