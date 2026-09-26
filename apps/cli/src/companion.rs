@@ -300,6 +300,10 @@ WantedBy=default.target
 fn run_start(system: bool) -> Result<(), String> {
     require_systemd()?;
     locate_zeek(None)?;
+    let unit_path = get_unit_path(system)?;
+    if !unit_path.exists() {
+        return run_install(system);
+    }
     let mut cmd = Command::new("systemctl");
     if !system {
         cmd.arg("--user");

@@ -206,7 +206,7 @@ pub async fn run_active_verification(
         },
         flow: NetworkFlow {
             src_ip: "127.0.0.1".into(),
-            src_port: 0,
+            src_port: 49152,
             dst_ip: resolved_ip,
             dst_port: port,
         },

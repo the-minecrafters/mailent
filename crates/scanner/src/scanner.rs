@@ -1034,7 +1034,7 @@ fn probe_to_session(
         },
         flow: NetworkFlow {
             src_ip: "127.0.0.1".into(),
-            src_port: 0,
+            src_port: 49152,
             dst_ip: probe
                 .resolved_ip
                 .clone()
